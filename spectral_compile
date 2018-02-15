@@ -1,0 +1,118 @@
+#!/bin/bash
+# Script for compiling fortran source code, as user has specified. Then the runscript will integrate
+# it forward, produce output, etc.
+#------------------------------------------------------------------------------
+# Fix host-specific settings
+#------------------------------------------------------------------------------
+expname=hs
+hostname=${HOSTNAME%%.*} # trims e.g. monde.atmos.colostate.edu
+execdir=$PWD/$expname.$hostname # where code is compiled and executable is created
+if [[ "$hostname" == "olbers" ]]; then # netcdf-c lib is separate from netcdf-fortran lib
+  include=(/usr/local/mpich3/include /usr/local/netcdf4/include /usr/local/netcdf4-pgi/include)
+  links=(/usr/local/mpich3/lib /usr/local/netcdf4/lib /usr/local/netcdf4-pgi/lib /usr/local/hdf5/lib)
+  root=/home/ldavis/gfdl
+  pgi=/opt/pgi/linux86-64/2017/bin
+  fix=' -lcurl'
+elif [[ "$hostname" == "gauss" ]]; then # libs are together; slightly different naming (not sure why mpich and hdf5 have
+       # 'pgi' and 'gcc' options, should be copies; only netcdf-fortran can be compiled with either)
+  include=(/usr/local/mpich3-pgi /usr/local/netcdf4-pgi/include)
+  links=(/usr/local/mpich3-pgi/lib /usr/local/netcdf4-pgi /usr/local/hdf5-pgi/lib)
+  root=/home/ldavis/gfdl
+  pgi=/opt/pgi/linux86-64/2016/bin
+  fix=' -lcurl'
+elif [[ "$hostname" == "monde" ]]; then # everything is bunched together
+  include=(/usr/include/mpich-x86_64)
+  links=(/usr/lib64/mpich/lib)
+  root=/home/ldavis/gfdl
+  pgi=/opt/pgi/linux86-64/17.10/bin
+  fix=''
+elif [[ "$hostname" == "euclid" ]]; then # everything is bunched together
+  include=(/usr/local/include)
+  links=(/usr/local/lib)
+  root=/birner-home/ldavis/gfdl
+  pgi=/opt/pgi/linux86-64/2013/bin
+  fix=''
+else
+  echo "ERROR: Unknown host, must configure library and binary locations before running."
+  exit
+fi
+#------------------------------------------------------------------------------
+# Build executable model code and post-processing tool
+#------------------------------------------------------------------------------
+src=$root/src_$expname   # path to directory containing model source code
+mkmf=$root/bin/mkmf # path to executable mkmf
+pathnames=$src/path_names # stored in source directory
+mkmftemplate=$root/bin/mkmf.template # template of most basic settings
+mppnsource=$root/postprocessing/mppnccombine.c # source code
+cppdefs="-Duse_libMPI -Duse_netCDF" # not sure what this does
+flags_links="${links[@]/#/-L}" # search these paths for library files
+flags_include="${include[@]/#/-I}" # include flags
+echo $flags_links
+echo $flags_include
+flags_libs="-lmpl -lmpich -lfmpich -lmpichf90 -lnetcdff -lnetcdf -lhdf5_hl -lhdf5 -lm -lz $fix" # for mppnccombine
+# Make sure necessary things tools are in path
+if [ ! -d $execdir ]; then
+  mkdir $execdir
+else
+  # echo "WARNING: Removing old compiled source..."
+  echo "WARNING: Leaving old compiled source..."
+fi
+if [ ! -r $pathnames ]; then
+  echo "ERROR: Could not find path_names file $pathnames.."
+  exit
+fi
+if [ ! -d $src ]; then
+  echo "ERROR: Could not find source code directory $src."
+  exit
+fi
+if [ ! -r $mppnsource ]; then
+  echo "ERROR: Could not find mppnccombine source code."
+  exit
+fi
+if [ ! -r $mkmftemplate ]; then
+  echo "ERROR: Could not find mppnccombine source code."
+  exit
+fi
+if [ ! -r $mkmf ]; then
+  echo "ERROR: Could not find mkmf Makefile-generating outility $mkmf."
+  exit
+fi
+# Create mppnccombine; should supply with same libraries supplied to model executable through its makefile
+# $pgi/pgcc -O -o $mppnccombine -I$netcdfc/include -I$mpich/include $mppnsource $flags_links $flags_libs
+time=$(date +%s)
+echo "Generating mppnccombine executable..."
+$pgi/pgcc -O -o mppnccombine.$HOSTNAME $flags_include $mppnsource $flags_links $flags_libs
+  # -O[level] = set optimization level; sets to 2 if number not specified
+  # -o file = use this file as name of executable
+  # -Idirectory = add directory to compiler search path; these are 'header' files
+  # -Ldirectory = change the directory in which "linker" searches for libraries
+  # -llibrary = load lib<library>.a from the standard library directory (supplied by L?)
+  # ...the mpllibs in MPICH seem to only have .so instead of .a ... not sure what that means
+  # ...also it seems there is no libm.a or libz.a
+# Build makefile template (assumes pgi bin is on $PATH)
+cd $execdir # move to source
+cat > mkmf.template << DELIM
+CC = $pgi/pgcc
+FC = $pgi/pgf90
+LD = $pgi/pgf90
+CPPFLAGS = -Mmpi=mpich
+FFLAGS = -Mmpi=mpich -r8 -Ktrap=fp -pc 64 -O2
+LDFLAGS = $flags_links $flags_libs -Mmpi=mpich
+LIST = -Mlist
+DELIM
+cat $mkmftemplate >> mkmf.template # appends provided template to custom defs
+# Create makefile
+echo "Generating Makefile..."
+cat mkmf.template
+$mkmf -p fms.x -t mkmf.template -c "$cppdefs" -a $src $pathnames \
+  $src/shared/mpp/include $src/shared/include ${include[@]} # the other include files
+  # -p = program (name of final target)
+  # -t = template (list of MACROS/COMMANDS that get appended to beginning of final Makefile)
+  # -c = list of 'cpp #define's passed to source files (what?)
+  # -a = abspath, attaches 'abspath' (here, $src) to the FRONT of RELATIVE paths to the source file
+  # args (all the later stuff) = list of directories/files to be searched for targets and dependencies
+# Compile source
+echo "Compiling source code..."
+make -f Makefile
+echo "This script took $(expr $(date +%s) - $time) seconds."
+

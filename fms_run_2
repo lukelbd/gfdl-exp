@@ -1,0 +1,346 @@
+#!/bin/bash
+# The runscript, assumes model and mppnccombine are compiled
+# Make sure any subsequent commands will exit on error.. or don't
+# http://mywiki.wooledge.org/BashFAQ/105
+# set -e
+# Other initial stuff
+ulimit -s unlimited # set max open files
+cwd=$PWD                      # should be in runscript location
+hostname=$HOSTNAME            # host name
+scratch=/birner-scratch/$USER # for output
+exptype=${PWD##*/} # just name of cd, then parameter expansion operation (google this)
+  # two ## trims by longest matching case and one # by shortest matching case
+if [ "$hostname" = "olbers" ]; then
+  mpirun=/usr/local/mpich3/bin/mpirun
+elif [ "$hostname" = "gauss" ]; then
+  mpirun=/usr/local/mpich3-pgi/bin/mpirun
+elif [ "$hostname" = "euclid" ]; then # everything is in same lib/bin
+  mpirun=/usr/local/bin/mpirun
+else
+  echo "ERROR: Unknown host, must configure library and binary locations before running."
+  exit
+fi
+#------------------------------------------------------------------------------
+# Define the run variables
+#------------------------------------------------------------------------------
+# Most important settings
+control=true  # do control run?
+spindown=true # do spindown runs?
+dt_atmos=600  # time step, in seconds; default 10min
+npes=8        # processor count
+expname=t42l40_ka0 # ka goes to zero (or, fortran code says tau --> inf) at day 1000
+netcdfs=('8xdaily_inst' '8xdaily_ave' 'ave') # output NetCDF names
+# Timing
+# tend=1200 # final day; Jeremiah used 8000
+# tspindown=(300 400 500 600 700 800 900 1000 1100 1200) # main choice
+tstart=900   # first day of integration; set to 0 for new run.
+tspinup=1000 # when spin-up is completed
+tend=2000    # days after spin-up
+tdpindown=(1000 1100 1200 1300 1400 1500 1600 1700 1800 1900)
+delta_control=100
+delta_spindown=60
+# Test-run params
+# tend=10
+# tspindown=(10 20) # for test-run
+# delta_control=10
+# delta_spindown=10
+# Stupidly easy test-run
+# tend=2
+# tspindown=(1 2)
+# delta_control=1
+# delta_spindown=1
+# Variables for Newtonian cooling run, changes tau during integration (<0 == units 'days')
+ka="-40."    # atmosphere
+ks="-4."     # boundary layer
+kf="-1."     # Rayleigh damping
+# Output
+outdir=$scratch/$expname # where model is run and model output is produced
+logdir=$outdir/logs
+ncdir=$outdir/netcdf
+spindowndir=$outdir/spindown
+outfile=$logdir/$expname.out
+errfile=$logdir/$expname.err
+# Input
+parameterdir=$cwd/run_parameters # where the namelist, field and diag_tables, initial conditions, etc. are kept
+namelist=$parameterdir/$expname/namelists            # path to namelist file
+diagtable=$parameterdir/$expname/diag_table          # path to diagnositics table
+fieldtable=$parameterdir/$expname/field_table        # path to field table (specifies tracers)
+topo_input=$parameterdir/$expname/topography.data.nc # path to topography input file (optional), must request it in namelist
+execdir=$cwd/exec.$hostname                          # where code is compiled and executable is created
+mppnccombine=$cwd/../../bin/mppnccombine.$hostname   # path to executable mppnccombine
+# execdir=$cwd/exec
+# mppnccombine=$cwd/../../bin/mppnccombine             # path to executable mppnccombine
+
+#------------------------------------------------------------------------------
+# Preparations
+#------------------------------------------------------------------------------
+# Check that executables, namelists, etc. are present
+if [ ! -x $execdir/fms.x ]; then # x for 'executable'
+  echo "ERROR: The executable $execdir/fms.x is missing."
+  exit
+fi
+if [ ! -x $mppnccombine ]; then
+  echo "ERROR: The mpp combine executable $mppnccombine is missing."
+  exit
+fi
+if [ ! -r $namelist ]; then
+  echo "ERROR: The namelist file $namelist is missing or not readable."
+  exit
+fi
+if [ ! -r $diagtable ]; then
+  echo "ERROR: The diag table $diagtable is missing or not readable."
+  exit
+fi
+if [ ! -r $fieldtable ]; then
+  echo "ERROR: The field table $fieldtable is missing or not readable."
+  exit
+fi
+# Make the output directories
+if [ ! -d $outdir ]; then 
+  mkdir $outdir
+fi
+if [ ! -d $logdir ]; then
+  mkdir $logdir
+fi
+if [ ! -d $ncdir ]; then
+  mkdir $ncdir
+fi
+#------------------------------------------------------------------------------
+# Functions
+#------------------------------------------------------------------------------
+# Namelist creation (note no end-of-line comments allowed in input.nml)
+function setup() {
+  # Set up working directory for model run, including the named parameters
+  if [ -d $1 ]; then
+    echo "WARNING: working directory $1 already exists. Deleting it and its contents..."
+    rm -r $1
+  fi
+  mkdir $1
+  cd $1
+  mkdir RESTART # model spits out stuff here, can be accepted as input to new iteration
+  mkdir INPUT   # model reads from this
+
+  # Set up run length, and transfer parameter files, and the executable.
+  # The << DELIM ... DELIM below takes each line as standard input for the cat command,
+  # whose standard output we flush/overwrite into a new input.nml file
+  # Options:
+  #   days: days to run for
+  #   dt_atmos: time-step for integration
+  #   current_time: for changing current time relative to base time (although does RESTART do that?)
+  cat > tmp.nml << DELIM
+&main_nml
+   days   = $delta,
+   dt_atmos = $dt_atmos
+/
+DELIM
+   
+  # The parameter files, etc.
+  # Move them to the current working directory
+  # namelist $delta $dt_atmos $ka $ks $kf # create namelist file
+  # diagtable $mode
+  # fieldtable $mode
+  cat $namelist >> tmp.nml  # this pipes standard output, but >> APPENDS instead of overwriting
+  cp $diagtable diag_table    # enforce standard filename convention
+  cp $fieldtable field_table  # enforce standard filename convention
+  cp $execdir/fms.x fms.x   # put the executable in working directory; was generated where this runscript sits
+  if [ -r $topo_input ]; then # topo file should still be ignored, if specify 'flat' in namelist
+    cp $topo_input $current_workdir/INPUT/topography.data.nc
+  fi
+}
+
+# Function for restarting model; put correct files in correct place so 
+# fms.x can read them and continue iteration from a previous state.
+# Take two arguments:
+#   1) previous working directory
+#   2) current working directory
+function copy() {
+  # Verify that necessary files are intact, for each model type
+  # First, any model type needs this file
+  if [ ! -r $1/RESTART/atmos_model.res ]; then # r for 'readable'
+    echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+    echo "Missing: atmos_model.res!"
+    exit
+  fi
+  # Spectral model
+  if [ "$exptype" = "spectral" ]; then
+    if [ ! -r $1/RESTART/atmosphere.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing atmosphere.res.nc!'
+      exit
+    fi
+    if [ ! -r $1/RESTART/spectral_dynamics.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing: spectral_dynamics.res.nc!'
+      exit
+    fi
+  # FV model
+  elif [ "$exptype" = "fv" ]; then
+    if [ ! -r $1/RESTART/atmos_tracers.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing atmos_tracers.res.nc!'
+      exit
+    fi
+    if [ ! -r $1/RESTART/fv_rst.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing: fv_rst.res.nc!'
+      exit
+    fi
+    if [ ! -r $1/RESTART/fv_srf_wnd.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing fv_srf_wnd.res.nc!'
+      exit
+    fi
+  # BGrid model
+  elif [ "$exptype" = "bgrid" ]; then
+    if [ ! -r $1/RESTART/atmos_tracers.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing atmos_tracers.res.nc!'
+      exit
+    fi
+    if [ ! -r $1/RESTART/bgrid_prog_var.res.nc ]; then
+      echo "ERROR: Missing or unreadable restart files from $1/RESTART/"
+      echo 'Missing: bgrid_prog_var.res.nc!'
+      exit
+    fi
+  fi
+  
+  # Copy over relevant files
+  echo "Moving restart files from $1/RESTART to working directory $PWD/INPUT..."
+  cp $1/RESTART/atmos_model.res INPUT/atmos_model.res
+  if [ "$exptype" = "spectral" ]; then # just a dummy 1==1? then easy to port this runscript elsewhere.
+    cp $1/RESTART/atmosphere.res.nc INPUT/atmosphere.res.nc
+    cp $1/RESTART/spectral_dynamics.res.nc INPUT/spectral_dynamics.res.nc
+  elif [ "$exptype" = "fv" ]; then
+    cp $1/RESTART/atmos_tracers.res.nc INPUT/atmos_tracers.res.nc
+    cp $1/RESTART/fv_rst.res.nc INPUT/fv_rst.res.nc
+    cp $1/RESTART/fv_srf_wnd.res.nc INPUT/fv_srf_wnd.res.nc
+  elif [ "$exptype" = "bgrid" ];  then
+    cp $1/RESTART/atmos_tracers.res.nc INPUT/atmos_tracers.res.nc
+    cp $1/RESTART/bgrid_prog_var.res.nc INPUT/bgrid_prog_var.res.nc
+  fi
+}
+
+# Run the model and output netcdf files
+function iterate() {
+  # Run the model; to specify remote host, use -H <hostname> or -host <hostname>
+  $mpirun -np $npes ./fms.x 1>> $outfile 2>> $logfile
+      # 1 is descriptor for 'standard output', 2 for 'standard error', >> appends instead
+      # of overwriting if it exists (as opposed to > )
+  
+  # Combine netcdf files, if run with multiple processors
+  # Parallelization produces output for different regions in working dir, then we combine them
+  # Will be formatted .0000, .0001, etc. and the .0000 selects each of atmos_average and atmos_daily,
+  # or whatever was specified by diag_table, then combines them individually
+  for ncfile in $(/bin/ls *.nc.0000); do
+    echo "Combinine files: $(ls ${ncfile%%.*}.nc.* | xargs) into ${ncfile%%.*}.nc"
+    $mppnccombine -r ${ncfile%%.*}.nc ${ncfile%%.*}.nc.*
+  done # -r flag says to remove the decomposed .0000 files after they are combined
+      # -first arg is output (this parameter expansion deletes longest trailing pattern;
+      #   note that ## would select+delete longest leading pattern)
+      # -second arg is input (all the nc files)
+    
+  # Old lines, checking output
+  # pgdbg -mpi:/usr/local/versions/mpich2-pgi-1.4.1p1/bin/mpirun -np $npes ./fms.x
+  # $mpirun -np $npes ./fms.x 1>> $outfile 2>> $errfile
+  # for ncfile in `/bin/ls *.nc.0000 2> /dev/null`; do
+  # # Did it actually run?
+  # # Check for the output. If it's missing, exit.
+  # for file in "${netcdfs[@]}"; do
+  #   if [ ! -r "$file" ]; then
+  #     echo "$file.nc is missing. Chances are the model crashed on this iteration."
+  #     echo 'The script did not complete successfully.'
+  #     exit
+  #   fi
+  # done
+}
+
+#------------------------------------------------------------------------------
+# Run the model in blocks of $delta days for control, then choose starting
+# points from control for spin-down ensemble experiments
+#------------------------------------------------------------------------------
+# First, control run; then will pick days from that run to start up the spin-down tests
+if $control; then
+  # Prepare for the loop
+  delta=$delta_control
+  pday=$(expr $tstart - $delta)
+  cday=$(expr $tstart)
+  nday=$(expr $tstart + $delta)
+  
+  # Start
+  origin=$(date +%s)
+  while [ "$nday" -le "$tend" ]; do
+    # Message and reset timer
+    echo "Running from day $cday to day $nday."
+    time=$(date +%s)
+    
+    # Set things up
+    # current_workdir=$outdir/d$(printf "%04d" $cday)
+    previous_workdir=$outdir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
+    current_workdir=$outdir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+    setup "$current_workdir"          # sets up working directory for model run
+    if [ "$cday" -gt 0 ]; then # at initial time, fday==delta, so no restart
+      copy "$previous_workdir"     # add restart files
+    fi
+    cat tmp.nml | sed "s/KA/$ka/g" | sed "s/KS/$ks/g" | sed "s/KF/$kf/g" \
+      | sed "s/NPES/$npes/g" > input.nml # modifies namelist
+
+    # RUN THE MODEL and COMBINE OUTPUT
+    # mv $file $ncdir/control.$file.d$(printf "%04d" $cday).nc
+    iterate
+    for file in "${netcdfs[@]}"; do
+      mv $file.nc $ncdir/control.$file.d$(printf "%04d" $cday)-d$(printf "%04d" $nday).nc
+    done
+    # mv 8xdaily_inst.nc $ncdir/control.8xdaily_inst.d$(printf "%04d" $cday).nc
+    # mv 8xdaily_ave.nc $ncdir/control.8xdaily_ave.d$(printf "%04d" $cday).nc
+    # mv ave.nc $ncdir/control.ave.d$(printf "%04d" $cday).nc
+    # mv atmos_daily.nc $ncdir/control.daily.d$(printf "%04d" $cday).nc
+    # mv atmos_average.nc $ncdir/control.ave.d$(printf "%04d" $cday).nc
+
+    # Step things forward, for next iteration
+    elapsed=$(expr $(date +%s) - $time)
+    echo "Time elapsed: $elapsed seconds"
+    pday=$(expr $cday)
+    cday=$(expr $pday + $delta)
+    nday=$(expr $cday + $delta)
+  done
+  echo "The control run completed successfully in $(expr $(date +%s) - $origin) seconds!"
+fi
+
+# Next, the spin-down runs
+# Turn of Newtonian cooling for $delta days from various starting points
+if $spindown; then
+  delta=$delta_spindown
+  origin=$(date +%s)
+  for sday in "${tspindown[@]}"; do
+    # Message and reset timer
+    echo "Running spindown from day $sday of control for $delta days."
+    time=$(date +%s)
+
+    # Set things up
+    restart_dir=$outdir/d$(printf "%04d" $(expr $sday - $delta_control))-d$(printf "%04d" $sday)
+    current_workdir=$outdir/d$(printf "%04d" $sday)-spindown
+    setup "$current_workdir"
+    copy "$restart_dir"
+    cat tmp.nml | sed "s/KA/0\./g" | sed "s/KS/0\./g" | sed "s/KF/0\./g" \
+      | sed "s/NPES/$npes/g" > input.nml # modifies namelist
+
+    # RUN THE MODEL and COMBINE OUTPUT
+    # mv $file $ncdir/spindown.$file.d$(printf "%04d" $sday).nc
+    iterate
+    for file in "${netcdfs[@]}"; do
+      mv $file.nc $ncdir/spindown.$file.d$(printf "%04d" $sday).nc
+    done
+    # mv 8xdaily_inst.nc $ncdir/spindown.8xdaily_inst.d$(printf "%04d" $sday).nc
+    # mv 8xdaily_ave.nc $ncdir/spindown.8xdaily_ave.d$(printf "%04d" $sday).nc
+    # mv ave.nc $ncdir/spindown.ave.d$(printf "%04d" $sday).nc
+    # mv atmos_daily.nc $ncdir/spindown.daily.d$(printf "%04d" $sday).nc
+    # mv atmos_average.nc $ncdir/spindown.ave.d$(printf "%04d" $sday).nc
+
+    # Success message
+    echo "Spindown from $sday completed successfully in $(expr $(date +%s) - $time) seconds"
+  done
+  echo "The spindown runs completed successfuly in $(expr $(date +%s) - $origin) seconds!"
+fi
+
+# Exit
+exit

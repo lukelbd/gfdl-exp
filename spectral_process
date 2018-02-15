@@ -1,0 +1,181 @@
+#!/bin/bash
+################################################################################
+# File for processing results of GFDL model runs AS THEY ARE PRODUCED; use this
+# in parallel after every model step while next model step is simultaneously running.
+# ---------
+# Summary of current variables:
+# * with longitude-data:
+#   p, t, u, v, z, vor, omega, teq, D, pt, pv s
+#   forget dthdp (only will want lapse rate to diagnose mean climate/tropopause
+#   heights and can use the mean t/theta fields), but keep S; has physical interpretation
+# * without longitude-data:
+#   t, u, v, z, vor, omega, teq, D, dthdp, pt, pv, s, **NEW** EHF, EMF, EPF, EKE, C, KE
+# Tips:
+# Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
+# directory to see list of files where diag_fields are registered.
+################################################################################
+# Process the results and put in convenient location
+# Global vars
+t0=$(date +%s)  # starting time
+keeplons=$1     # whether to keep longitudinal data
+basedir=${0%/*} # same location as this file; trim filename from right
+mppnccombine=$basedir/mppnccombine.$HOSTNAME # combine; needs to have been compiled here
+nclscript=$basedir/spectral_process.ncl      # processing with NCL
+interpscript=$basedir/spectral_interp.ncl    # interpolation script with NCL
+cdoscript=$basedir/spectral_process.cdo      # processing with CDO
+timmean= # currently not implemented; might change mind later
+# get_timmean=$2 # whether to get time-mean
+# $get_timmean && timmean="-timmean " || timmean=""
+# Double check some stuff
+if [ -z "$keeplons" ]; then
+  echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
+  exit 4
+fi
+if ! hash ncl 2>/dev/null; then
+  echo "ERROR: NCL is not in $PATH." >log.ncl
+  exit 4
+fi
+if ! hash cdo 2>/dev/null; then
+  echo "ERROR: CDO is not in $PATH." >log.ncl
+  exit 4
+fi
+if ! hash ncrename 2>/dev/null || ! hash ncks 2>/dev/null; then
+  echo "ERROR: NCO is not in $PATH." >log.ncl
+  exit 4
+fi
+if [ ! -x $mppnccombine ]; then
+  echo "ERROR: The mpp combine executable $mppnccombine is missing."
+  exit 4
+fi
+if [ ! -x $cdoscript ]; then
+  echo "ERROR: The CDO script for processing data is missing."
+  exit 4
+fi
+if [ ! -r $nclscript ]; then
+  echo "ERROR: The NCL script for processing data is missing."
+  exit 4
+fi
+
+################################################################################
+# Combine the files produced in parallel
+# And check if any netCDF output; see: https://stackoverflow.com/q/2937407/4970632
+# if ! compgen -G *.nc > /dev/null; then
+# if [ ! -n "$(find . -maxdepth 1 -name "*.nc" -print -quit)" ]; then
+# if ! stat -t *.nc > /dev/null 2>&1; then
+t=$(date +%s)
+for ncfile in *.nc.0000; do
+  if [ "$ncfile" == "*.nc.0000" ]; then # make sure nullglob turned off
+    echo "ERROR: No output netcdf files found."
+    exit 1 # tell invoking shell that previous model failed
+  fi # then combine, if any exist
+  files=(${ncfile%%.*}.nc*) # put into array
+  echo "Combining files: ${files[@]} into ${ncfile%%.*}.nc"
+  $mppnccombine -r ${ncfile%%.*}.nc ${files[@]}
+done # -r flag says to remove the decomposed .0000 files after they are combined
+  # first arg is output, remaining args are all input
+echo "  * Time for combining files: $(($(date +%s) - $t))s."
+
+################################################################################
+# THE STDOUT OF THESE LINES IS AN OVERVIEW; SEPARATE STDOUTS FOR CDO/NCL STEPS
+# CAN BE FOUND IN SEPARATE LOGS; CHECK THOSE LOGS IF WE HAVE AN ERROR
+# Before, this function also accepted averaged data; not anymore, but these are
+#   some approaches for testing if file has averaged data
+# * [[ " $(cdo -s showname $ncfile) " =~ " time_bounds " ]] # CDO test if averaged
+#   isaveraged="print(isfilevar(addfile(\"$ncfile\",\"r\"),\"time_bounds\"))"
+# * [ $(ncl -Q -n <<< "$isaveraged") == "False" ] # NCL test if averaged
+# * [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
+[ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
+for ncfile in *.nc; do
+  outfile="../netcdf/${ncfile%%.*}.${PWD##*/}.nc" # longitude-averaged data
+  origfile="../netcdf/${ncfile%%.*}ORIG.${PWD##*/}.nc" # original data
+  # origfile="../netcdf/${ncfile%%.*}_lons.${PWD##*/}.nc"
+  ncrename -d pfull,mlev $ncfile &>/dev/null # dimensions
+  ncrename -d phalf,ilev $ncfile &>/dev/null
+  ncrename -v pfull,mlev $ncfile &>/dev/null # variables of same name
+  ncrename -v phalf,ilev $ncfile &>/dev/null
+  ############################################################################
+  # 1) Get quantities with NCL operations, and add them to the original file
+  # We're fixing what ain't broke; using NCL for interpolation because it was just
+  # so ugly to have to get NCL params, then set z-axis with CDO, then interpolate with
+  # NCL, then go back to CDO for the final processing; also the old workflow required
+  # re-creating huge files multiple times (in setzaxis, and in both NCL exits)
+  t=$(date +%s)
+  echo "Interpolating with NCL and computing parameters..."
+  # Just call NCL with the input script; also pass a variable
+  ncl -n -Q "filename=\"$ncfile\"" $nclscript &>log.ncl #2> /dev/null
+    # -Q = no banner, -n = do not enumerate print statements
+  if [ ! -r ncl.nc ]; then 
+    echo "ERROR: Something failed in NCL script."
+    exit 2
+  fi
+  # Check for warnings in the NCL log
+  if egrep -q "^warning:|^fatal:" log.ncl || [ ! -r "ncl.nc" ]; then # if either string occurs on any line
+    echo "ERROR: Something failed in NCL script."
+    exit 2 # exit status of egrep will be 0 if got match (get to here), non-zero if no match
+  fi
+  # Management of file created
+  mv ncl.nc $ncfile # move old file on top of new file
+  ncrename -d lev_p,plev $ncfile &>/dev/null # dimensions
+  ncrename -v lev_p,plev $ncfile &>/dev/null # variables of same name
+  ncatted -a cartesian_axis,plev,c,c,"Z" $ncfile 2>/dev/null # fix p dimension
+  ncatted -a long_name,plev,c,c,"pressure level" $ncfile 2>/dev/null # fix p dimension
+  ncatted -a units,plev,c,c,"mb" $ncfile 2>/dev/null # fix p dimension
+  ncatted -a edges,lon,d,, $ncfile 2>/dev/null # fix p dimension
+  ncatted -a edges,lat,d,, $ncfile 2>/dev/null # fix p dimension
+  echo "  * Time for NCL processing: $(($(date +%s) - $t))s."
+  t=$(date +%s)
+
+  ##############################################################################
+  # 3) Get extra stuff with CDO commands (either simple zonal mean, or add some stuff)
+  # Some of these require the extra variables output by NCL; also meridional flux
+  # terms rely on NCL having set poleward==positive in each hemisphere
+  t=$(date +%s)
+  echo "Running CDO commands..."
+  $cdoscript $ncfile $outfile &>log.cdo
+  echo "  * Time for CDO commands: $(($(date +%s) - $t))s."
+
+  ##############################################################################
+  # 4) Tidy up
+  # [ -f out0.nc ] && ncks -A out0.nc $outfile # just appends data from out0.nc to out.nc
+  for out in out*.nc; do
+    [[ "$out" != "out*.nc" ]] && rm $out # remove intermediate files, if exist
+  done
+  for prep in prep*.nc; do
+    [[ "$prep" != "prep*.nc" ]] && rm $prep # remove intermediate files, if exist
+  done
+  if $keeplons; then
+    # Keep the old file
+    echo "Keeping longitude-resolution file..."
+    mv $ncfile $origfile # move the new one
+    # delnames=p,vor # we interpolated to pressure, and don't need vort
+    # cdo delname,$delnames $ncfile $origfile
+    # rm $ncfile # remove the old one
+  else
+    # Just delete it
+    echo "Removing longitude-resolution file..."
+    rm $ncfile # simple
+  fi
+done
+# Finally, echo time of finish
+echo $(($(date +%s) - $t0)) # prints UNIX time difference
+
+################################################################################
+# Old stuff
+# Previous CDO commands
+# cdo $flags chname,f0,EHF -zonmean $timmean \
+#   -mul -selvar,f0 $ncfile \
+#        -div -mul -sub -selvar,pt $ncfile -enlarge,$ncfile -zonmean -selvar,pt $ncfile \
+#                  -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
+#             -selvar,dthdp $ncfile \
+# cdo $flags chname,u,KE $timmean \
+#   -add -divc,9.81 -divc,2 -add -sqr -selvar,u out1.nc \
+#                                -sqr -selvar,v out1.nc \
+#        -selvar,EKE out5.nc \
+#   out7.nc # the total kinetic energy
+# Whitespace-safe option for looping through glob results:
+# find . -iname "*.nc.0000" | while read ncfile; do
+# find . -iname "*.nc" | while read file; do
+# Note: 'read' reads each line from standard input and splits line into variable names
+# requested (e.g. could have read a b c <<< "foo bar baz"); the while works because exit
+# status is 1 during read process, and is 0 when reaching end of file/data stream
+

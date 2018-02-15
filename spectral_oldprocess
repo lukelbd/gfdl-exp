@@ -1,0 +1,349 @@
+#!/bin/bash
+################################################################################
+# File for processing results of GFDL model runs AS THEY ARE PRODUCED; use this
+# in parallel after every model step while next model step is simultaneously running.
+# ---------
+# Summary of current variables:
+# * with longitude-data:
+#   p, t, u, v, z, vor, omega, teq, D, pt, pv s
+#   forget dthdp (only will want lapse rate to diagnose mean climate/tropopause
+#   heights and can use the mean t/theta fields), but keep S; has physical interpretation
+# * without longitude-data:
+#   t, u, v, z, vor, omega, teq, D, dthdp, pt, pv, s, **NEW** EHF, EMF, EPF, EKE, C, KE
+# Tips:
+# Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
+# directory to see list of files where diag_fields are registered.
+################################################################################
+# Process the results and put in convenient location
+# Global vars
+t0=$(date +%s)  # starting time
+keeplons=$1     # whether to keep longitudinal data
+basedir=${0%/*} # same location as this file; trim filename from right
+mppnccombine=$basedir/mppnccombine.$HOSTNAME # combine; needs to have been compiled here
+nclscript=$basedir/spectral_oldprocess.ncl      # processing with NCL
+cdoscript=$basedir/spectral_oldprocess.cdo      # processing with CDO
+timmean= # currently not implemented; might change mind later
+# get_timmean=$2 # whether to get time-mean
+# $get_timmean && timmean="-timmean " || timmean=""
+# Double check some stuff
+if [ -z "$keeplons" ]; then
+  echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
+  exit 4
+fi
+if ! hash ncl 2>/dev/null; then
+  echo "ERROR: NCL is not in $PATH." >log.ncl
+  exit 4
+fi
+if ! hash cdo 2>/dev/null; then
+  echo "ERROR: CDO is not in $PATH." >log.ncl
+  exit 4
+fi
+if ! hash ncrename 2>/dev/null || ! hash ncks 2>/dev/null; then
+  echo "ERROR: NCO is not in $PATH." >log.ncl
+  exit 4
+fi
+if [ ! -x $mppnccombine ]; then
+  echo "ERROR: The mpp combine executable $mppnccombine is missing."
+  exit 4
+fi
+if [ ! -x $cdoscript ]; then
+  echo "ERROR: The CDO script for processing data is missing."
+  exit 4
+fi
+if [ ! -r $nclscript ]; then
+  echo "ERROR: The NCL script for processing data is missing."
+  exit 4
+fi
+
+################################################################################
+# Combine the files produced in parallel
+# And check if any netCDF output; see: https://stackoverflow.com/q/2937407/4970632
+# if ! compgen -G *.nc > /dev/null; then
+# if [ ! -n "$(find . -maxdepth 1 -name "*.nc" -print -quit)" ]; then
+# if ! stat -t *.nc > /dev/null 2>&1; then
+t=$(date +%s)
+for ncfile in *.nc.0000; do
+  if [ "$ncfile" == "*.nc.0000" ]; then # make sure nullglob turned off
+    echo "ERROR: No output netcdf files found."
+    exit 1 # tell invoking shell that previous model failed
+  fi # then combine, if any exist
+  files=(${ncfile%%.*}.nc*) # put into array
+  echo "Combining files: ${files[@]} into ${ncfile%%.*}.nc"
+  $mppnccombine -r ${ncfile%%.*}.nc ${files[@]}
+done # -r flag says to remove the decomposed .0000 files after they are combined
+  # first arg is output, remaining args are all input
+echo "  * Time for combining files: $(($(date +%s) - $t))s."
+
+################################################################################
+# THE STDOUT OF THESE LINES IS AN OVERVIEW; SEPARATE STDOUTS FOR CDO/NCL STEPS
+# CAN BE FOUND IN SEPARATE LOGS; CHECK THOSE LOGS IF WE HAVE AN ERROR
+[ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
+for ncfile in *.nc; do
+  outfile="../netcdf/${ncfile%%.*}.${PWD##*/}.nc" # longitude-averaged data
+  origfile="../netcdf/${ncfile%%.*}ORIG.${PWD##*/}.nc" # original data
+  # origfile="../netcdf/${ncfile%%.*}_lons.${PWD##*/}.nc"
+  ############################################################################
+  # 0) Pre-processing steps. CDO expects levels to be named mlev/ilev for
+  # middle/intermediate levs, so change dim names. Can't be done in CDO. Also
+  # get the interpolants: we choose these to be roughly ~"average" pressure of hybrid coords
+  #  * example of variable deletion: ncks -O -x -v bhalf $ncfile $ncfile
+  #  * why I can read-write same file: http://nco.sourceforge.net/nco.html#Temporary-Output-Files
+  #  * try zaxisdes to see if CDO detects the hybrid axis correctly
+  t=$(date +%s)
+  # First change the names to ECHAM conventions for CDO
+  # Behavior of commands can be weird; I tried them 50 times and sometimes get
+  # errors when trying to put them all together. Just run them separately, they are cheap.
+  ncrename -d pfull,mlev $ncfile # dimensions
+  ncrename -d phalf,ilev $ncfile
+  ncrename -v pfull,mlev $ncfile # variables of same name
+  ncrename -v phalf,ilev $ncfile
+  # Next output the coordinates into a separate file; NCL can't completely overwrite
+  # variable dimensions/name/etc., would require delete which it can't do
+  # Also can't use CDO delname because CDO cannot find variables that don't fit
+  # into its model of (x by y by z)/(x by y by z by t), e.g. hybrid coords
+  coordsfile=coords.nc
+  ncks -v hyai,hybi $ncfile $coordsfile # put coords here
+  ncks -O -x -v hyai,hybi $ncfile $ncfile # delete from original
+  # Get the pressure suitable for interpolation with a quick python script
+  # Should be fast since coordsfile is so teeny tiny
+  python > plevels.txt << EOF
+import numpy as np
+import netCDF4 as nc4
+with nc4.Dataset("$coordsfile") as f:
+    hyai = f['hyai'][:]
+    hybi = f['hybi'][:]
+psurf = 101325 # average surface pressure
+phalf = hyai + hybi*psurf
+pfull = (phalf[1:] + phalf[:-1])/2
+# Print, or save into file
+print(",".join("%.f" % i for i in pfull.flat)) # just print output we want
+# plevels = np.savetxt("plevels.txt", pfull, fmt="%.f", delimiter='', newline=',')
+EOF
+  if [ ! -r plevels.txt ]; then
+    echo "ERROR: Failed reading hybrid coordinates."
+    exit 4
+  fi
+  # Get a nice grid of coefficients for this coordinate system
+  # See: https://stackoverflow.com/q/15192847/4970632
+  # Was tricky to save the data as columns; anyway this generated a grid description
+  # Output "vct" stands for "vertical coordinate table"
+  python > vct.txt << EOF
+import numpy as np
+import netCDF4 as nc4
+with nc4.Dataset("$coordsfile") as f:
+    hyai = f['hyai'][:]
+    hybi = f['hybi'][:]
+# Print, or save into file
+for i,(a,b) in enumerate(zip(hyai,hybi)):
+    print("%02.f"%i, "%.10f"%a, "%.10f"%b)
+# np.savetxt('vct.txt', np.column_stack((range(len(hyai)),hyai,hybi)), newline='\n', fmt='%.10f') # this was ugly
+EOF
+  # And finally generate a z-axis description
+  # This can be fed into "setzaxis", which changes dimensions and does a whole
+  # bunch of stuff that makes ml2pl function work properly
+  python > zaxis.txt << EOF
+import numpy as np
+import netCDF4 as nc4
+with nc4.Dataset("$coordsfile") as f:
+    hyai = f['hyai'][:]
+    hybi = f['hybi'][:]
+# Print data and collect
+print("zaxistype = hybrid")
+print("size      = " + str(len(hyai)-1))
+print("levels    = " + " ".join("%.f"%i for i in range(1,len(hyai)))) # e.g. 1 to 41-1=40
+print("vctsize   = " + str(len(hyai)*2)) # number of stuff in table
+print("vct       = " + " ".join("%.f"%i for i in hyai))
+print("            " + " ".join("%.10f"%i for i in hybi))
+  # format is super weird but vct is just A vals in one row, B vals in other
+EOF
+  echo "  * Time for pre-processing with NCO and python: $(($(date +%s) - $t))s."
+
+  # Before, this function also accepted averaged data; not anymore, but these are
+  # some approaches for testing if file has averaged data
+  # [[ " $(cdo -s showname $ncfile) " =~ " time_bounds " ]] # CDO test if averaged
+  # isaveraged="print(isfilevar(addfile(\"$ncfile\",\"r\"),\"time_bounds\"))"
+  # [ $(ncl -Q -n <<< "$isaveraged") == "False" ] # NCL test if averaged
+  # [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
+  ############################################################################
+  # 1) Get quantities with NCL operations, and add them to the original file
+  # * Don't fix what ain't broke! Could rewrite the below to work for the constant-pressure
+  #   files and put interpolation before this, but the bottleneck is generally PV calculation
+  #   and algorithm for hybrid-coords probably no faster than algorithm for p-coords
+  # * Anyway probably want to calculate anything requiring interpolation (e.g. static
+  #   stability) before doing some kind of interpolation. Better resolution.
+  t=$(date +%s)
+  echo "Computing NCL parameters..."
+  # Just call NCL with the input script; also pass a variable
+  ncl -n -Q "filename=\"$ncfile\"" $nclscript &>log.ncl #2> /dev/null
+  # ncl -n -Q "filename=\"$ncfile\"" "filecoords=\"$coordsfile\"" $nclscript &>log.ncl #2> /dev/null
+    # -Q = no banner, -n = do not enumerate print statements
+  # Check for warnings in the NCL log
+  if egrep -q "^warning:|^fatal:" log.ncl; then # if either string occurs on any line
+    echo "ERROR: Something failed in NCL script."
+    exit 2 # exit status of egrep will be 0 if got match (get to here), non-zero if no match
+  fi
+  echo "  * Time for NCL processing: $(($(date +%s) - $t))s."
+  t=$(date +%s)
+
+  ############################################################################
+  # 2) Interpolate to approx half-pressure levels with CDO
+  # Get the half-levels using a simple python script and the module netCDF4; this
+  # module should be installed with netCDF4
+  # Some notes during the "learning" process:
+  #   * cdo will treat hyai and hybi as invisible; can only handle
+  #       simple netcdf files with simple grids; need to use ncks for this
+  #   * you also cannot use "ncks -v hyai,hybi coords.nc; cdo enlarge,<infile> coords.nc"
+  #       because CDO will not read coords.nc at all.
+  #   * use "cat plevels.txt | sed 's/,/ /g' | wc -w" to get level count
+  # 2a) NCL version.
+  # Interpolate onto the pressure-levels file created before, using
+  # the NCL interpolation scheme; behavior of CDO approach was strange in tropics
+  # cp $ncfile ${ncfile%%.*}MODEL.nc
+  echo "Interpolating coordinates..."
+  ncl -n -Q &>log.interp << EOF
+f = addfile("$ncfile", "r")
+c = addfile("coords.nc", "r")
+; First get central coordinates
+p0   = 101325. ; reference pressure
+p0mb = 1013.25 ; in mb for function input
+hyai = c->hyai / p0
+hybi = c->hybi
+nedges  = dimsizes(hyai)
+hyam = (hyai(0:nedges-2) + hyai(1:nedges-1))/2 ; the middle A coefs
+hybm = (hybi(0:nedges-2) + hybi(1:nedges-1))/2 ; the middle B coefs
+; Next run interpolation
+; Note setzaxis changed the file; now z-axis is called lev, not mlev
+t     = f->t
+u     = f->u
+v     = f->v
+z     = f->z
+pt    = f->pt
+pv    = f->pv
+vor   = f->vor
+omega = f->omega
+slp  = f->slp
+pout = (/$(cat plevels.txt)/) / 100
+if t!0.ne."time" .or. t!1.ne."mlev" .or. t!2.ne."lat" .or. t!3.ne."lon"
+    print("fatal:Unexpected dimension names or order. Should be time by lev by lat by lon.")
+    exit ; makes life easier to be able to make this assumption
+end if
+tout = vinth2p(t, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+    ; number-args is interp-type (1 for linear, 2 for log), 2nd one is not used
+uout     = vinth2p(u, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+vout     = vinth2p(v, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+zout     = vinth2p(z, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+pvout    = vinth2p(pv, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+vorout   = vinth2p(vorout, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+omegaout = vinth2p(omegaout, hyam, hybm, pout, slp, 1, p0mb, 1, True)
+; Re-compute potential temperature and static stability
+; Do this to avoid unnecessary repeat of vertical interpolation
+dimlev = 1 ; level dimension
+p0    = 1000. ; default [units = mb]
+pt    = t*(p0/conform(t,pout,dimlev))^0.286 ; pot_temp procedure does this
+s = -(t/pt)*center_finite_diff_n(pt,p,False,0,dimlev) ; the static stability itself
+    ; * option 3 allows treating dimension as cyclic
+    ; * option 4 is "not currently implemented"; ignore
+    ; * option 5 is the derivative dimension
+; Then write new data
+f = addfile("${ncfile%%.*}NCL.nc","c")
+f->s = s
+f->pt = pt
+f->t = tout
+f->u = uout
+f->v = vout
+f->z = zout
+f->pv = pvout
+f->vor = vorout
+f->omega = omegaout
+EOF
+  echo "  * Time for interpolating to pressure coordinates with NCL: $(($(date +%s) - $t))s."
+  t=$(date +%s)
+  # 2b) CDO version (so far did not work; see "interpolation" folder in Tau directory
+  # on home laptop).
+  # Part 1: # MUST change standard_name attribute so CDO will detect surface
+  # pressure; this is CF convention name; and it's all we have to do!
+  #   * first command is slow because need to make copy with setzaxis; obviously not
+  #     ideal workflow but still probably faster than any NCL approach
+  #   * second command is fast because it's a 1-level variable
+  # ncatted -O -a standard_name,slp,c,c,"surface_air_pressure" $ncfile
+  # ncap2 -O -s 'zs=slp; zs(:,:,:)=0' $ncfile prep2.nc
+  echo "Interpolating coordinates..."
+  cdo -setattribute,slp@standard_name="surface_air_pressure" \
+      -setattribute,t@standard_name="air_temperature" \
+      -setzaxis,zaxis.txt -delname,p $ncfile prep1.nc 2>/dev/null
+  cdo -setattribute,zs@standard_name="surface_geopotential" \
+      -setattribute,zs@long_name="surface geopotential" \
+      -setattribute,zs@units="m" \
+      -setmisstoc,0 -setrtomiss,0,1000000 -setname,zs -selname,slp $ncfile prep2.nc 2>/dev/null
+  echo "  * Time for setting things up before interpolation: $(($(date +%s) - $t))s."
+  t=$(date +%s)
+  # Part 2: Interpolate onto the pressure-levels file created before
+  #   * will overwrite the old $ncfile with this new, interpolated one
+  #   * results here turned out weird in tropics-surface; identially weird when using
+  #     just prep1.nc (CDO detects geopotential in bottom layer)
+  EXTRAPOLATE=1 cdo -O ml2pl,$(cat plevels.txt) -merge 'prep?.nc' $ncfile 2>/dev/null
+  echo "  * Time for interpolating to pressure coordinates with CDO: $(($(date +%s) - $t))s."
+  # # Delete some extra variables that we don't need
+  # delnames=p,vor # we interpolated to pressure, and don't need vort
+  # cdo delname,$delnames $ncfile "../netcdf/${ncfile%%.*}ORIG.${PWD##*/}.nc"
+  # rm $ncfile # remove the old one
+
+  ##############################################################################
+  # 3) Get extra stuff with CDO commands (either simple zonal mean, or add some stuff)
+  # Some of these require the extra variables output by NCL; also meridional flux
+  # terms rely on NCL having set poleward==positive in each hemisphere
+  t=$(date +%s)
+  echo "Running CDO commands..."
+  $cdoscript $ncfile $outfile &>log.cdo
+  echo "  * Time for CDO commands: $(($(date +%s) - $t))s."
+
+  #########
+  # TESTING
+  exit 0
+  #########
+
+  ##############################################################################
+  # 4) Tidy up
+  # [ -f out0.nc ] && ncks -A out0.nc $outfile # just appends data from out0.nc to out.nc
+  for out in out*.nc; do
+    [[ "$out" != "out*.nc" ]] && rm $out # remove intermediate files, if exist
+  done
+  for prep in prep*.nc; do
+    [[ "$prep" != "prep*.nc" ]] && rm $prep # remove intermediate files, if exist
+  done
+  if $keeplons; then
+    # Keep the old file
+    echo "Keeping longitude-resolution file..."
+    mv $ncfile $origfile # move the new one
+    # delnames=p,vor # we interpolated to pressure, and don't need vort
+    # cdo delname,$delnames $ncfile $origfile
+    # rm $ncfile # remove the old one
+  else
+    # Just delete it
+    echo "Removing longitude-resolution file..."
+    rm $ncfile # simple
+  fi
+done
+# Finally, echo time of finish
+echo $(($(date +%s) - $t0)) # prints UNIX time difference
+
+################################################################################
+# Old stuff
+# Previous CDO commands
+# cdo $flags chname,f0,EHF -zonmean $timmean \
+#   -mul -selvar,f0 $ncfile \
+#        -div -mul -sub -selvar,pt $ncfile -enlarge,$ncfile -zonmean -selvar,pt $ncfile \
+#                  -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
+#             -selvar,dthdp $ncfile \
+# cdo $flags chname,u,KE $timmean \
+#   -add -divc,9.81 -divc,2 -add -sqr -selvar,u out1.nc \
+#                                -sqr -selvar,v out1.nc \
+#        -selvar,EKE out5.nc \
+#   out7.nc # the total kinetic energy
+# Whitespace-safe option for looping through glob results:
+# find . -iname "*.nc.0000" | while read ncfile; do
+# find . -iname "*.nc" | while read file; do
+# Note: 'read' reads each line from standard input and splits line into variable names
+# requested (e.g. could have read a b c <<< "foo bar baz"); the while works because exit
+# status is 1 during read process, and is 0 when reaching end of file/data stream
+
