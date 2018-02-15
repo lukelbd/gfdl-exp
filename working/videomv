@@ -1,0 +1,29 @@
+#!/bin/bash
+# Move video files to a data directory with convenient names
+# Why make this? Because right now all my data is on scratch, in general want
+# EVERYTHING plottable to be backed up... but filesystem only has 29GB total
+# use so maybe my allocation is tiny there... actually THIS IS DUMB because files
+# are 6GB so DON'T USE THIS... just keep those files on scratch
+expname=hs
+shopt -s nullglob # want an empty iteration instead of literal character
+if [ "$HOSTNAME" != "euclid" ]; then
+  echo "ERROR: Must be logged into Euclid to run this."
+  exit 1
+fi
+# Iterate over files and copy them
+newloc=/birner-home/ldavis/videos
+for d in $HOME/$expname*; do
+  for movie in $d/netcdf/*lons.d????-d????.nc; do
+    directory=${movie%/netcdf/*} # fancy
+    parent=${directory##*/} # fancier
+    read -p "Copy file: $parent/${movie##*/}?" choice
+    case "$choice" in 
+      y|Y )
+        dest="$newloc/$parent-video.nc"
+        echo "Copying to $dest..."
+        rsync --progress $movie $dest;;
+        # cp $movie $dest;;
+      * )
+    esac
+  done
+done
