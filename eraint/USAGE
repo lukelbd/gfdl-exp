@@ -1,0 +1,48 @@
+MDATA1:
+Filesystem Size  Used Avail Use% Mounted on
+/dev/sda6  6.8T  125G  6.7T   2% /mdata1
+0    /mdata1/hein
+0    /mdata1/davet
+0    /mdata1/jingyuanl
+0    /mdata1/ldavis
+0    /mdata1/swills
+0    /mdata1/yingli
+125G /mdata1/old
+125G /mdata1
+
+MDATA2:
+Filesystem Size  Used Avail Use% Mounted on
+/dev/sdb1  7.3T  3.6T  3.8T  49% /mdata2
+0    /mdata2/hein
+0    /mdata2/davet
+0    /mdata2/jingyuanl
+0    /mdata2/ldavis
+0    /mdata2/swills
+3.5T /mdata2/yingli
+100G /mdata2/old
+3.6T /mdata2
+
+MDATA3:
+Filesystem Size  Used Avail Use% Mounted on
+/dev/sdc1  7.3T  3.8T  3.6T  52% /mdata3
+0    /mdata3/hein
+0    /mdata3/davet
+0    /mdata3/jingyuanl
+0    /mdata3/ldavis
+0    /mdata3/swills
+2.8T /mdata3/yingli
+911G /mdata3/old
+3.7T /mdata3
+
+MDATA4:
+Filesystem Size  Used Avail Use% Mounted on
+/dev/sdd1  7.3T  5.3T  2.0T  73% /mdata4
+0    /mdata4/hein
+0    /mdata4/davet
+0    /mdata4/jingyuanl
+0    /mdata4/ldavis
+0    /mdata4/swills
+5.2T /mdata4/yingli
+96G  /mdata4/old
+0    /mdata4/old.mdata7
+5.3T /mdata4
