@@ -52,7 +52,7 @@ of the dynamical cores of atmospheric general circulation models.
 
 ## Diagnostic Table Information
 * Note that **comments** in `diag_table` (lines starting with `#`) can only come after the header lines, and cannot interrupt "sections".
-* Note that all **strings** must be in double quotes.
+* Note that **strings** must be in double quotes.
 1. **Header**: 2 lines: (1) Experiment title and (2) base date for netCDF output (default, 0000-00-00 00:00:00)
 2. **Output Files**: 6 comma-separated values: (1) file name string, (2) output frequency, (3) output frequency units, (4) file format, (5) time units, and (6) `long_name` for time axis
   * `output frequency`:
