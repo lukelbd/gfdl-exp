@@ -1,4 +1,4 @@
-## NAMELIST USEAGE
+## Namelist Parameter Information
 1. Spectral dynamics namelist
   * `damping_option`: default, leave alone
   * `damping_order`: 4 = del8 diffusion; leave at that
@@ -50,9 +50,8 @@ of the dynamical cores of atmospheric general circulation models.
  increase the domain stack size found in the core-specific namelist files. The new stack
  size should be greater than or equal to the number printed in the error message."
 
-## DIAGNOSTIC TABLE USEAGE
-* NOTE THAT COMMENTS CAN ONLY COME AFTER EVERYTHING; FIRST TWO LINES MUST BE OCCUPIED
-BY THE ABOVE, THEN EMPTY LINE, THEN HEADER, THEN OUTPUT SECTION, THEN THE SAME FOR FIELD ENTRIES
+## Diagnostic Table Information
+* Note that **comments** in `diag_table` can only come after everything; first two lines must be occupied by the above, then empty line, then header, then output section, then the same for field entries
 1. Header
 Experiment title and base date for netCDF output (default, 0000-00-00 00:00:00)
 2. Output files
