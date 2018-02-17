@@ -56,26 +56,26 @@ of the dynamical cores of atmospheric general circulation models.
 Experiment title and base date for netCDF output (default, 0000-00-00 00:00:00)
 2. Output files
 Format: file name, output frequency, output frequency units, file format, time units, and `long_name` for time axis
-  * output frequency:
+  * `output frequency`:
         >0 = output frequency in units 'units'
          0 = output at EVERY TIMESTEP,
         -1 = output at the END OF RUN
-  * frequency units: use years, months, days, minutes, hours, seconds
-  * format: 1 = netCDF (the ONLY supported format... so, not sure why it has a column)
-  * time units: time axis for output NetCDF, use days, minutes, hours, seconds
+  * `frequency units`: use years, months, days, minutes, hours, seconds
+  * `format`: 1 = netCDF (the ONLY supported format... so, not sure why it has a column)
+  * `time units`: time axis for output NetCDF, use days, minutes, hours, seconds
 3. Diagnostic field entries
 Format: module name, model field name, output field name, file name, time sampling for getting the
 averages (currently, only support averaging over ALL time steps of model run), whether we take time
 average as True/False (should match the filename), other options (not implemented),
 and packing value (1=double [64], 2=float [32], 4=16-bit integer)
-  * temp: temperature
-  * ps: surface pressure
-  * pk: pressure on each height level
-  * teq: equilibrium temperature (will just output what the relaxation profile was; useful
+  * `temp`: temperature
+  * `ps`: surface pressure
+  * `pk`: pressure on each height level
+  * `teq`: equilibrium temperature (will just output what the relaxation profile was; useful
     for comparison purposes; since it is constant in time, want mean)
-  * bk: the sigma coordinates (constant in time, want mean)
-  * pk: the pressure coordinates (non-constant in time, sigma=p/ps(t) where p is a constant)
-  * height: geopotential height at level centers
-  * ucomp, vcomp: components of horizontal wind
-  * vor, div: vorticity, divergence
+  * `bk`: the sigma coordinates (constant in time, want mean)
+  * `pk`: the pressure coordinates (non-constant in time, sigma=p/ps(t) where p is a constant)
+  * `height`: geopotential height at level centers
+  * `ucomp`, `vcomp`: components of horizontal wind
+  * `vor`, `div`: vorticity, divergence
 
