@@ -51,8 +51,8 @@ of the dynamical cores of atmospheric general circulation models.
  size should be greater than or equal to the number printed in the error message."
 
 ## Diagnostic Table Information
-* Note that **comments** in `diag_table` can only come after everything; first two lines must be occupied by the above, then empty line, then header, then output section, then the same for field entries
-* Note that all **strings** must be in double quotes
+* Note that **comments** in `diag_table` (lines starting with `#`) can only come after the header lines, and cannot interrupt "sections".
+* Note that all **strings** must be in double quotes.
 1. **Header**: 2 lines: (1) Experiment title and (2) base date for netCDF output (default, 0000-00-00 00:00:00)
 2. **Output Files**: 6 comma-separated values: (1) file name string, (2) output frequency, (3) output frequency units, (4) file format, (5) time units, and (6) `long_name` for time axis
   * `output frequency`:
@@ -62,7 +62,7 @@ of the dynamical cores of atmospheric general circulation models.
   * `frequency units`: use years, months, days, minutes, hours, seconds
   * `format`: 1 = netCDF (the **only** supported format... so, not sure why it has a column)
   * `time units`: time axis for output NetCDF, use days, minutes, hours, seconds
-3. **Diagnostic field**: 8 comma-separated values: module name that can export these param-names, module param-name (see below), output param-name, file name string, time sampling for getting the averages (currently, only support averaging over ALL time steps of model run), whether we take time average as FORTRAN boolean `.true.`/`.false.` (must match file settings), other options (not implemented; use dummy string `"none"`), and packing value (`1`=double [64], `2`=float [32] (best for most applications), `4`=16-bit integer)
+3. **Diagnostic field**: 8 comma-separated values: (1) module name that can export these param-names, (2) module param-name (see below), (3) output param-name, (4) file name string, (5) time sampling for getting the averages (currently, only support averaging over ALL time steps of model run), (6) whether we take time average as FORTRAN boolean `.true.`/`.false.` (must match file settings), (7) other options (not implemented; use dummy string `"none"`), (8) and packing value (`1`=double [64], `2`=float [32] (best for most applications), `4`=16-bit integer)
   * `temp`: temperature
   * `ps`: surface pressure
   * `pk`: pressure on each height level
