@@ -4,54 +4,28 @@
 #  * 12 cores: 100-day Spindown run, T39 60lats was 1022 seconds
 #  * 8 cores: 10-day Control run, T42 64lats was 140 seconds
 #  * 12 cores: 10-day Spindown run, T39 60lats was 111 seconds
+### General settings first
 ulimit -s unlimited # set max open files
 filename=4xdaily_inst # name for output files
 exptype=spectral # change this for different file
 # expname=pk # can be "hs", "hs", or "pk"
 expname=hs # can be "hs", "hs", or "pk"
 expopt=r # r for changing radiation, f for friction, rs for radiation but match surface
-levels=40 # specifier for level configuration
-cores=8 # cores for run
-NTRUNC=42 # truncation number specifier
-if [ ! -z $1 ]; then
-  levels=$1 # optional override
-fi
+cores=8 # cores for run; make sure is appropriate for truncation numbers requested
 if [ "$expname" != "hs" ] && [ "$expname" != "pk" ]; then
   echo "ERROR: Unknown experiment type ${expname}."
   exit 1
 fi
-if [[ ! "$levels" =~ ^[0-9]+$ ]] && [ "$levels" != "jer" ] && [ "$levels" != "era" ]; then
-  echo "ERROR: Unknown experiment level specifier ${levels}."
-  exit 1
-fi
-
-################################################################################
-# Locations of compiled model and other directories/functions
-# To try out ALTERNATE method, use spectral_oldprocess instead of spectral_process
-# This was back when we tried to interpolate with CDO, which was ugly
-################################################################################
-# if [ "$HOSTNAME" == "olbers" ]; then
-#   mpirun=/usr/local/mpich3/bin/mpirun
-#   scratch=/home/ldavis # no good place on this server
-#   storage=/home/ldavis
-if [ "$HOSTNAME" == "gauss" ]; then
-  mpirun=/usr/local/mpich3-pgi/bin/mpirun
-  scratch=/birner-scratch/ldavis # need to use special scratch directory
-  storage=/home/ldavis
-elif [ "$HOSTNAME" == "euclid" ]; then # everything is in same lib/bin
-  mpirun=/usr/local/bin/mpirun
-  scratch=/home/ldavis # not mounted, so plenty of space
-  storage=/birner-home/ldavis
-else
-  echo "ERROR: Unknown host, must configure library and binary locations before running."
-  exit
-fi
-fms=$PWD/$expname.$HOSTNAME/fms.x # location of executables
-topo=$PWD/topography.data.nc # path to topography input file (optional), must request it in namelist
-process=$PWD/spectral_process # the script for on-the-fly processing
-postprocess=$PWD/spectral_postprocess # the script for post-processing
-# { . activate ncl_stable; } || { echo "ERROR: ncl_stable environment does not exist. Must install it "\
-#   "with \"conda create -n ncl_stable -c conda-forge ncl\"."; exit; } # activate NCL environment
+### Most basic Namelist params (rest are below)
+DAYS=100 # time-interval for stopping, saving, and restarting control run 
+DT=600 # time step, in seconds; default 10min
+KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
+KAS=(10 40 160) # Held-Suarez results
+NTRUNCS=(42 63 85) # truncation number specifier
+LEVS=(40 era) # for now number means even-sigma, era is ERA-Interim version
+KSTRATS=(20) # one KSTRAT for now
+# KAS=(160 10 2.5 1 0.5 0.25 0.1) # need to re-run, need both hemispheres
+  # but will just re-run from day 1000 for each to get output
 
 ################################################################################
 # Define the run variables
@@ -82,14 +56,6 @@ trunout=600 # how long to run equilibrium?
 # tspindown=(1000 2300 3300 3700 5700)
 # tskip=({00..89}00) # skip these start times for spindown runs
 # tskip=({0..8}00) # skip these days
-### Most basic Namelist params (rest are below)
-DAYS=100 # time-interval for stopping, saving, and restarting control run 
-DT=600 # time step, in seconds; default 10min
-KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
-KAS=(10 40 160) # Held-Suarez results
-KSTRATS=(20) # one KSTRAT for now
-# KAS=(160 10 2.5 1 0.5 0.25 0.1) # need to re-run, need both hemispheres
-  # but will just re-run from day 1000 for each to get output
 ### Testing
 if $testing; then # overwrite some settings
   KAS=(40)
@@ -124,6 +90,34 @@ if $testing; then # overwrite some settings
   # tspinstart=0 # start 0 days after tspindown
   # trunout=1 # run 1 day to equilibrium
 fi
+
+################################################################################
+# Locations of compiled model and other directories/functions
+# To try out ALTERNATE method, use spectral_oldprocess instead of spectral_process
+# This was back when we tried to interpolate with CDO, which was ugly
+################################################################################
+# if [ "$HOSTNAME" == "olbers" ]; then
+#   mpirun=/usr/local/mpich3/bin/mpirun
+#   scratch=/home/ldavis # no good place on this server
+#   storage=/home/ldavis
+if [ "$HOSTNAME" == "gauss" ]; then
+  mpirun=/usr/local/mpich3-pgi/bin/mpirun
+  scratch=/birner-scratch/ldavis # need to use special scratch directory
+  storage=/home/ldavis
+elif [ "$HOSTNAME" == "euclid" ]; then # everything is in same lib/bin
+  mpirun=/usr/local/bin/mpirun
+  scratch=/home/ldavis # not mounted, so plenty of space
+  storage=/birner-home/ldavis
+else
+  echo "ERROR: Unknown host, must configure library and binary locations before running."
+  exit
+fi
+fms=$PWD/$expname.$HOSTNAME/fms.x # location of executables
+topo=$PWD/topography.data.nc # path to topography input file (optional), must request it in namelist
+process=$PWD/spectral_process # the script for on-the-fly processing
+postprocess=$PWD/spectral_postprocess # the script for post-processing
+# { . activate ncl_stable; } || { echo "ERROR: ncl_stable environment does not exist. Must install it "\
+#   "with \"conda create -n ncl_stable -c conda-forge ncl\"."; exit; } # activate NCL environment
 
 ################################################################################
 # Helper functions for model runs
@@ -275,7 +269,7 @@ trsink             = -4.,
 EOF
   fi
   # Vertical coordinates
-  if [ "$levels" == "jer" ]; then
+  if [ "$LEV" == "jer" ]; then
     cat >> input.nml << EOF
 &vert_coordinate_nml
     pk(1)=0.000e+00,   bk(1)=0.000e+00,
@@ -321,7 +315,7 @@ EOF
     pk(41)=0.000e+00,  bk(41)=1.000e+00
 /
 EOF
-  elif [ "$levels" == "era" ]; then
+  elif [ "$LEV" == "era" ]; then
     # These are the ERA-Interim and ERA40 levels from file "ecmwf-L60.txt" in Gauss home
     # Maybe better way to do this; parse the file automatically instead of in VIM manually
     #  * See http://vim.wikia.com/wiki/Generating_a_column_of_increasing_numbers (command not available)
@@ -481,7 +475,9 @@ function Restart() {
 }
 
 ################################################################################
-# Run the model and output netcdf files
+# Function for running the next model step from a previous step,
+# applying post-processing to a previous model step in the background, and organizing
+# all the NetCDF files
 ################################################################################
 function Iterate() {
   netcdfoff=$1
@@ -546,18 +542,26 @@ function Iterate() {
 ################################################################################
 estatus=0 # initialize exit status
 # Run multiple experiments consecutively
-echo "$cores processors: Truncation number $NTRUNC with $NLATS latitudes."
-for NTRUNC in 42 63 85; do
-for levels in 40 jer era; do
+for NTRUNC in ${NTRUNCS[@]}; do
+for LEV in ${LEVS[@]}; do
+# Verify the resolution options are valid
+# Only a couple LEV options
+if [[ ! "$LEV" =~ ^[0-9]+$ ]] && [ "$LEV" != "jer" ] && [ "$LEV" != "era" ]; then
+  echo "ERROR: Unknown experiment level specifier ${LEV}."
+  exit 1
+fi
 case $NTRUNC in
   42) NLATS=64 ;;
   63) NLATS=96 ;;
   85) NLATS=128 ;; 
   *) echo "ERROR: invalid number of cores."; exit ;;
 esac
+# Iterate through experiments; these loops define the namelist
+# params we change for models with same resolution
+echo "$cores processors: Truncation number $NTRUNC with $NLATS latitudes."
 for KSTRAT in ${KSTRATS[@]}; do
 for KA in ${KAS[@]}; do
-  expdir="t${NTRUNC}l${levels}_${expname}${expopt}$(printf "%08.3f" $KA)"
+  expdir="t${NTRUNC}l${LEV}_${expname}${expopt}$(printf "%08.3f" $KA)"
   $testing && expdir="test"
   echo "Current cooling rate: $KA days."
   echo "Current experiment directory: $expdir."
@@ -574,12 +578,12 @@ for KA in ${KAS[@]}; do
   # FRICTION SPEED
   KF=1 # Rayleigh damping
   # NEXT, COORDINATE SYSTEM
-  if [ "$levels" == "jer" ] || [ "$levels" == "era" ]; then # Jeremiah's input coordinates
+  if [ "$LEV" == "jer" ] || [ "$LEV" == "era" ]; then # Jeremiah's input coordinates
     COORD=input # add a group to input.nml
-    [ "$levels" == "jer" ] && NLEVS=40 || NLEVS=60 # number of levels
+    [ "$LEV" == "jer" ] && NLEVS=40 || NLEVS=60 # number of levels
   else
     COORD=even_sigma # even pressure spacing
-    NLEVS="$levels" # levels variable should just encode number desired
+    NLEVS="$LEV" # levels variable should just encode number desired
   fi
   echo "Vertical coordinate system: $COORD with $NLEVS levels."
   # BASIC MESSAGE
