@@ -420,8 +420,8 @@ EOF
 "dynamics",   "temp",           "t",     "$filename", "all", .false., "none", 2,
 "dynamics",   "ucomp",          "u",     "$filename", "all", .false., "none", 2,
 "dynamics",   "vcomp",          "v",     "$filename", "all", .false., "none", 2,
-"dynamics",   "height",         "z",     "$filename", "all", .false., "none", 2
-"dynamics",   "slp",            "slp",   "$filename", "all", .false., "none", 2
+"dynamics",   "height",         "z",     "$filename", "all", .false., "none", 2,
+"dynamics",   "slp",            "slp",   "$filename", "all", .false., "none", 2,
 "dynamics",   "omega",          "omega", "$filename", "all", .false., "none", 2,
 "dynamics",   "bk",             "hybi",  "$filename", "all", .false., "none", 2,
 "dynamics",   "pk",             "hyai",  "$filename", "all", .false., "none", 2,

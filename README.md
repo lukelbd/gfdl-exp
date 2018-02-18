@@ -1,4 +1,4 @@
-## NAMELIST USEAGE
+## Namelist Parameter Information
 1. Spectral dynamics namelist
   * `damping_option`: default, leave alone
   * `damping_order`: 4 = del8 diffusion; leave at that
@@ -50,33 +50,27 @@ of the dynamical cores of atmospheric general circulation models.
  increase the domain stack size found in the core-specific namelist files. The new stack
  size should be greater than or equal to the number printed in the error message."
 
-## DIAGNOSTIC TABLE USEAGE
-* NOTE THAT COMMENTS CAN ONLY COME AFTER EVERYTHING; FIRST TWO LINES MUST BE OCCUPIED
-BY THE ABOVE, THEN EMPTY LINE, THEN HEADER, THEN OUTPUT SECTION, THEN THE SAME FOR FIELD ENTRIES
-1. Header
-Experiment title and base date for netCDF output (default, 0000-00-00 00:00:00)
-2. Output files
-Format: file name, output frequency, output frequency units, file format, time units, and `long_name` for time axis
-  * output frequency:
+## Diagnostic Table Information
+* Note that **comments** in `diag_table` (lines starting with `#`) can only come after the header lines, and cannot interrupt "sections".
+* Note that **strings** must be in double quotes.
+1. **Header**: 2 lines: (1) Experiment title and (2) base date for netCDF output (default, 0000-00-00 00:00:00)
+2. **Output Files**: 6 comma-separated values: (1) file name string, (2) output frequency, (3) output frequency units, (4) file format, (5) time units, and (6) `long_name` for time axis
+  * `output frequency`:
         >0 = output frequency in units 'units'
-         0 = output at EVERY TIMESTEP,
-        -1 = output at the END OF RUN
-  * frequency units: use years, months, days, minutes, hours, seconds
-  * format: 1 = netCDF (the ONLY supported format... so, not sure why it has a column)
-  * time units: time axis for output NetCDF, use days, minutes, hours, seconds
-3. Diagnostic field entries
-Format: module name, model field name, output field name, file name, time sampling for getting the
-averages (currently, only support averaging over ALL time steps of model run), whether we take time
-average as True/False (should match the filename), other options (not implemented),
-and packing value (1=double [64], 2=float [32], 4=16-bit integer)
-  * temp: temperature
-  * ps: surface pressure
-  * pk: pressure on each height level
-  * teq: equilibrium temperature (will just output what the relaxation profile was; useful
+         0 = output at every timestep
+        -1 = output at the end of run
+  * `frequency units`: use years, months, days, minutes, hours, seconds
+  * `format`: 1 = netCDF (the **only** supported format... so, not sure why it has a column)
+  * `time units`: time axis for output NetCDF, use days, minutes, hours, seconds
+3. **Diagnostic field**: 8 comma-separated values: (1) module name that can export these param-names, (2) module param-name (see below), (3) output param-name, (4) file name string, (5) time sampling for getting the averages (currently, only support averaging over ALL time steps of model run), (6) whether we take time average as FORTRAN boolean `.true.`/`.false.` (must match file settings), (7) other options (not implemented; use dummy string `"none"`), (8) and packing value (`1`=double [64], `2`=float [32] (best for most applications), `4`=16-bit integer)
+  * `temp`: temperature
+  * `ps`: surface pressure
+  * `pk`: pressure on each height level
+  * `teq`: equilibrium temperature (will just output what the relaxation profile was; useful
     for comparison purposes; since it is constant in time, want mean)
-  * bk: the sigma coordinates (constant in time, want mean)
-  * pk: the pressure coordinates (non-constant in time, sigma=p/ps(t) where p is a constant)
-  * height: geopotential height at level centers
-  * ucomp, vcomp: components of horizontal wind
-  * vor, div: vorticity, divergence
+  * `bk`: the sigma coordinates (constant in time, want mean)
+  * `pk`: the pressure coordinates (non-constant in time, sigma=p/ps(t) where p is a constant)
+  * `height`: geopotential height at level centers
+  * `ucomp`, `vcomp`: components of horizontal wind
+  * `vor`, `div`: vorticity, divergence
 

@@ -33,6 +33,7 @@ originals
 copies
 __old__
 __trash__
+__pycache__
 
 # Compiled source #
 ###################
