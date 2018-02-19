@@ -48,6 +48,8 @@ u_in     = f->u
 v_in     = f->v
 z_in     = f->z
 omega_in = f->omega
+rdamp_in = f->rdamp
+ndamp_in = f->ndamp
 ; vor_in   = f->vor
 if t_in!0.ne."time" .or. t_in!1.ne."mlev" .or. t_in!2.ne."lat" .or. t_in!3.ne."lon"
     print("fatal:Unexpected dimension names or order. Should be time by mlev by lat by lon.")
@@ -66,12 +68,17 @@ u     = vinth2p(u_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 v     = vinth2p(v_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 z     = vinth2p(z_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 omega = vinth2p(omega_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
+rdamp = vinth2p(rdamp_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
+ndamp = vinth2p(ndamp_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 ; vor   = vinth2p(vor_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 copy_VarAtts(t_in,t)
 copy_VarAtts(u_in,u)
 copy_VarAtts(v_in,v)
 copy_VarAtts(z_in,z)
 copy_VarAtts(omega_in,omega)
+copy_VarAtts(rdamp_in,rdamp)
+copy_VarAtts(ndamp_in,ndamp)
+rdamp@long_name = "dissipative heating from Rayleigh damping"
 ; copy_VarAtts(vor_in,vor)
 ; Get the pressure output
 p = t&lev_p * 100 ; back to Pa for derivatives
@@ -164,10 +171,10 @@ print("Writing to new output file...")
 setfileoption("nc","Format","LargeFile") ; see: http://www.ncl.ucar.edu/FAQ/#file_io_004
   ; recommended for files >2GB, and my output file may be that big
 o = addfile("ncl.nc","c")
-o->rdamp = f->rdamp ; holdovers on single presure levels
-o->ndamp = f->ndamp ; holdovers on single presure levels
-o->slp = f->slp
+o->slp = f->slp ; holdovers on single presure levels
 o->omega = omega ; these variables were interpolated
+o->rdamp = rdamp
+o->ndamp = ndamp
 o->t = t
 o->u = u
 o->v = v
