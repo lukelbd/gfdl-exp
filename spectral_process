@@ -17,7 +17,7 @@
 # Process the results and put in convenient location
 # Global vars
 t0=$(date +%s)  # starting time
-keeplons=$1     # whether to keep longitudinal data
+netcdfkeep=$1     # whether to keep longitudinal data
 basedir=${0%/*} # same location as this file; trim filename from right
 hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
 mppnccombine=$basedir/mppnccombine.$hostname # combine; needs to have been compiled here
@@ -28,20 +28,20 @@ timmean= # currently not implemented; might change mind later
 # get_timmean=$2 # whether to get time-mean
 # $get_timmean && timmean="-timmean " || timmean=""
 # Double check some stuff
-if [ -z "$keeplons" ]; then
+if [ -z "$netcdfkeep" ]; then
   echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
   exit 4
 fi
 if ! hash ncl 2>/dev/null; then
-  echo "ERROR: NCL is not in $PATH." >log.ncl
+  echo "ERROR: NCL is not in $PATH."
   exit 4
 fi
 if ! hash cdo 2>/dev/null; then
-  echo "ERROR: CDO is not in $PATH." >log.ncl
+  echo "ERROR: CDO is not in $PATH."
   exit 4
 fi
 if ! hash ncrename 2>/dev/null || ! hash ncks 2>/dev/null; then
-  echo "ERROR: NCO is not in $PATH." >log.ncl
+  echo "ERROR: NCO is not in $PATH."
   exit 4
 fi
 if [ ! -x $mppnccombine ]; then
@@ -144,7 +144,7 @@ for ncfile in *.nc; do
   for prep in prep*.nc; do
     [[ "$prep" != "prep*.nc" ]] && rm $prep # remove intermediate files, if exist
   done
-  if $keeplons; then
+  if $netcdfkeep; then
     # Keep the old file
     echo "Keeping longitude-resolution file..."
     mv $ncfile $origfile # move the new one

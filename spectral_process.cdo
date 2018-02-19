@@ -53,6 +53,14 @@ ncatted -O -a long_name,EMF,m,c,"eddy momentum flux" $out 2>/dev/null
 ncatted -O -a units,EMF,m,c,"m2/s2" $out 2>/dev/null
 echo "  * Time for eddy momentum flux: $(($(date +%s) - $t))s."
 t=$(date +%s)
+out=out4.nc
+cdo $flags chname,t,VHF -zonmean $timmean \
+  -mul -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
+       -sub -selvar,omega $ncfile -enlarge,$ncfile -zonmean -selvar,omega $ncfile \
+  $out #2> /dev/null # vertical heat flux
+ncatted -O -a long_name,VHF,m,c,"vertical heat flux" $out 2>/dev/null
+ncatted -O -a units,VHF,m,c,"W/m2" $out 2>/dev/null
+echo "  * Time for vertical heat flux: $(($(date +%s) - $t))s."
 # Omit PV because it is only really relevant on theta-surfaces
 # cdo $flags chname,pv,EPF -zonmean $timmean \
 #   -mul -sub -selvar,pv $ncfile -enlarge,$ncfile -zonmean -selvar,pv $ncfile \
@@ -66,7 +74,7 @@ t=$(date +%s)
 # * EKE and KE should be multiplied by level width dP; final units are J/m2
 # * CKE should be multiplied by level width over pressure dP/P; units don't change
 t=$(date +%s)
-out=out4.nc
+out=out5.nc
 cdo $flags chname,u,EKE $timmean -divc,9.81 -divc,2 \
   -add -zonmean -sqr -sub -selvar,u $ncfile -enlarge,$ncfile -zonmean -selvar,u $ncfile \
        -zonmean -sqr -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
@@ -75,14 +83,14 @@ echo "  * Time for EKE: $(($(date +%s) - $t))s."
 ncatted -O -a long_name,EKE,m,c,"eddy kinetic energy" $out 2>/dev/null
 ncatted -O -a units,EKE,m,c,"J/m2 Pa" $out 2>/dev/null
 t=$(date +%s)
-out=out5.nc
-cdo $flags chname,t,CKE $timmean -divc,9.81 -mulc,287 \
-  -zonmean -mul -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
-                -sub -selvar,omega $ncfile -enlarge,$ncfile -zonmean -selvar,omega $ncfile \
-  $out #2> /dev/null # vertical heat flux
-ncatted -O -a long_name,CKE,m,c,"kinetic energy generation" $out 2>/dev/null
-ncatted -O -a units,CKE,m,c,"W/m2" $out 2>/dev/null
-echo "  * Time for KE generation term: $(($(date +%s) - $t))s."
+# This aint right
+# cdo $flags chname,t,CKE $timmean -divc,9.81 -mulc,287 \
+#   -zonmean -mul -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
+#                 -sub -selvar,omega $ncfile -enlarge,$ncfile -zonmean -selvar,omega $ncfile \
+#   $out #2> /dev/null # vertical heat flux
+# ncatted -O -a long_name,CKE,m,c,"kinetic energy generation" $out 2>/dev/null
+# ncatted -O -a units,CKE,m,c,"W/m2" $out 2>/dev/null
+# echo "  * Time for KE generation term: $(($(date +%s) - $t))s."
 # Omit total KE because it can be calculated on-the-fly very easily
 # t=$(date +%s)
 # cdo $flags chname,u,KE $timmean -divc,9.81 -divc,2 \
