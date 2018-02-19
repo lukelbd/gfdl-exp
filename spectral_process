@@ -19,7 +19,8 @@
 t0=$(date +%s)  # starting time
 keeplons=$1     # whether to keep longitudinal data
 basedir=${0%/*} # same location as this file; trim filename from right
-mppnccombine=$basedir/mppnccombine.$HOSTNAME # combine; needs to have been compiled here
+hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
+mppnccombine=$basedir/mppnccombine.$hostname # combine; needs to have been compiled here
 nclscript=$basedir/spectral_process.ncl      # processing with NCL
 interpscript=$basedir/spectral_interp.ncl    # interpolation script with NCL
 cdoscript=$basedir/spectral_process.cdo      # processing with CDO
