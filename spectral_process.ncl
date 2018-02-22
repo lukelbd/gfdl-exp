@@ -87,7 +87,7 @@ p = t&lev_p * 100 ; back to Pa for derivatives
 calctime1 = toint(systemfunc("date +%s"))
 print("    - Time for NCL interpolation: " + tostring(calctime1-interptime) + "s.")
 print("  * Total time for NCL setup: " + tostring(calctime1-readtime) + "s.")
-print("Computing other parameters...")
+print("Getting other parameters...")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Get static stability using the source code procedure
