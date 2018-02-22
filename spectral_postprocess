@@ -59,7 +59,7 @@ function Edit() {
     echo "ERROR: Could not find file $file."
     exit 1
   fi
-  ncatted -O -a edges,pfull,d,, $file 2>/dev/null
+  # ncatted -O -a edges,pfull,d,, $file 2>/dev/null
   # Get hemisphere-means next; same operation for everything
   # Should be last so easy to remove from workflow; won't penalize the post-processing
   # speed very much probably

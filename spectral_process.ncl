@@ -50,6 +50,8 @@ z_in     = f->z
 omega_in = f->omega
 rdamp_in = f->rdamp
 ndamp_in = f->ndamp
+slp      = f->slp
+delete(f) ; delete to save memory
 ; vor_in   = f->vor
 if t_in!0.ne."time" .or. t_in!1.ne."mlev" .or. t_in!2.ne."lat" .or. t_in!3.ne."lon"
     print("fatal:Unexpected dimension names or order. Should be time by mlev by lat by lon.")
@@ -63,7 +65,7 @@ print("    - Time for NCL reading and setup: " + tostring(interptime-readtime) +
 ; Apply the interpolation to some variables
 ; Will then get other parameters
 t = vinth2p(t_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-    ; number-args is interp-type (1 for linear, 2 for log), 2nd one is not used
+  ; number-args is interp-type (1 for linear, 2 for log), 2nd one is not used
 u     = vinth2p(u_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 v     = vinth2p(v_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
 z     = vinth2p(z_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
@@ -85,7 +87,7 @@ p = t&lev_p * 100 ; back to Pa for derivatives
 calctime1 = toint(systemfunc("date +%s"))
 print("    - Time for NCL interpolation: " + tostring(calctime1-interptime) + "s.")
 print("  * Total time for NCL setup: " + tostring(calctime1-readtime) + "s.")
-print("Computing PV and other terms...")
+print("Getting other parameters...")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Get static stability using the source code procedure
@@ -171,7 +173,7 @@ print("Writing to new output file...")
 setfileoption("nc","Format","LargeFile") ; see: http://www.ncl.ucar.edu/FAQ/#file_io_004
   ; recommended for files >2GB, and my output file may be that big
 o = addfile("ncl.nc","c")
-o->slp = f->slp ; holdovers on single presure levels
+o->slp = slp ; holdovers on single presure levels
 o->omega = omega ; these variables were interpolated
 o->rdamp = rdamp
 o->ndamp = ndamp
