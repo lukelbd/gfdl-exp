@@ -14,21 +14,17 @@
 # Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
 # directory to see list of files where diag_fields are registered.
 ################################################################################
-# Process the results and put in convenient location
 # Global vars
-t0=$(date +%s)  # starting time
-netcdfkeep=$1     # whether to keep longitudinal data
-basedir=${0%/*} # same location as this file; trim filename from right
+t0=$(date +%s)           # starting time
+nckeep=$1                # whether to keep longitudinal data
+basedir=${0%/*}          # same location as this file; trim filename from right
 hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
 mppnccombine=$basedir/${hostname}_mppnccombine # combine; needs to have been compiled here
-nclscript=$basedir/spectral_process.ncl      # processing with NCL
-interpscript=$basedir/spectral_interp.ncl    # interpolation script with NCL
-cdoscript=$basedir/spectral_process.cdo      # processing with CDO
-timmean= # currently not implemented; might change mind later
-# get_timmean=$2 # whether to get time-mean
-# $get_timmean && timmean="-timmean " || timmean=""
+nclscript=$basedir/drycore_process.ncl        # processing with NCL
+interpscript=$basedir/drycore_interp.ncl      # interpolation script with NCL
+cdoscript=$basedir/drycore_process.cdo        # processing with CDO
 # Double check some stuff
-if [ -z "$netcdfkeep" ]; then
+if [ -z "$nckeep" ]; then
   echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
   exit 4
 fi
@@ -144,7 +140,7 @@ for ncfile in *.nc; do
   for prep in prep*.nc; do
     [[ "$prep" != "prep*.nc" ]] && rm $prep # remove intermediate files, if exist
   done
-  if $netcdfkeep; then
+  if $nckeep; then
     # Keep the old file
     echo "Keeping longitude-resolution file..."
     mv $ncfile $origfile # move the new one

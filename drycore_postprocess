@@ -1,0 +1,359 @@
+#!/bin/bash
+#------------------------------------------------------------------------------
+# Perform post-processing of final model results, to be used for plots and display
+# First parse args and declare a nice wrapper function
+shopt -s nullglob
+climate=true # get the climate stuff?
+tau=false # get tau?
+eofs=false # get EOFs?
+spindown=false # get spindown ensemble?
+equilibrium=false # get supposed "equilibrium" climate?
+diffs=false # get the ensemble analysis of equilibrium stuff?
+flags="-s -O" # overwrite existing output, and suppress extra messages
+# Check the host name
+hostname="${HOSTNAME%%.*}"
+if [ "$hostname" == "gauss" ]; then
+  scratch=/birner-scratch/ldavis # need to use special scratch directory
+  storage=/home/ldavis
+elif [ "$hostname" == "monde" ]; then
+  scratch=/mdata1/ldavis
+  storage=/home/ldavis
+elif [ "$hostname" == "euclid" ]; then # everything is in same lib/bin
+  scratch=/home/ldavis # not mounted, so plenty of space
+  storage=/birner-home/ldavis
+else echo "ERROR: Unknown host ${hostname}." && exit 1
+fi
+# Ensure environment variables are set
+if [ -z $FILENAME ] || [ -z $EXPDIR ] || [ -z $EXPREF ] || [ -z $SPINDOWNOPT ]; then
+  echo "ERROR: An environmental variable is unset."
+  exit 1
+fi
+if [ ! -d $scratch/$EXPDIR ]; then
+  echo "ERROR: The experiment directory $scratch/$EXPDIR does not exist."
+  exit 1
+fi
+if [ ! -d $scratch/$EXPREF ]; then
+  echo "ERROR: The reference experiment directory $scratch/$EXPREF does not exist."
+  exit 1
+fi
+# Set up destination coordinates for comparison with ERA-Interim
+# and with other datasets
+cwd=$PWD # save location
+griddes=eraint_griddes.txt && hinterp="-remapycon,$cwd/${griddes}"
+vinterp="-intlevel,1,2,3,5,7,10,20,30,50,70,100,125,150,175,200,225,250,300,350,400,450,500,550,600,650,700,750,775,800,825,850,875,900,925,950,975,1000"
+[ ! -r $cwd/$griddes ] && echo "ERROR: Could not find grid description file $cwd/${griddes}." && exit 1
+
+#------------------------------------------------------------------------------
+# Control climate data, and reference to other control climates
+function Climate() {
+  shopt -s nullglob # will return empty if no match
+  # files=($input/${FILENAME}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc) # collect into array
+  files=($input/${FILENAME}.d[1-9][0-9][0-9][0-9]-d[1-9][0-9][0-9][0-9].nc) # collect into array
+  if [ -z $files ]; then
+    echo "WARNING: Could not find any control-run/climate files."
+    return 1
+  fi
+  echo "Getting climate from files ${files[@]##*/}..."
+  ntime=$(cdo -s ntime ${files[0]}) # test time
+  [ $ntime -eq 1 ] && timmean="" || timmean="-timmean"
+  [ -z "$timmean" ] && echo "Time-mean of control files already taken." \
+    || echo "Control files need time-mean."
+  commands=("${files[@]/#/${timmean} }") # the hashtag-search prepends; a %-search would append
+  # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc
+  echo "Calculating ensemble mean."
+  cdo $flags ensmean ${commands[@]} ens.nc
+  echo "Interpolating result."
+  cdo $flags $vinterp $hinterp ens.nc ${fclimate}.nc #2>>$log # the averages at each time
+  rm ens.nc
+}
+
+#------------------------------------------------------------------------------
+# Function to get EOFs and PCs of data
+function EOF() {
+  levidx=$1
+  shopt -s nullglob # will return empty if no match
+  if [ -z $levidx ]; then
+    echo "ERROR: Must supply level index to EOF function."
+    exit 1
+  fi
+  # Initial check
+  # Limit to first 1000 days for now; for consistency between experiments
+  files=($input/${FILENAME}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc) # collect into array
+  files=($input/${FILENAME}.d1[0-9]00-d[1-2][0-9]00.nc) # collect into array
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "WARNING: No files available for getting wind EOF."
+    return 1
+  fi
+  # Series
+  neof=5 # number of EOFs
+  series=series$levidx.nc # name of time series
+  commands=(${files[@]/#/-selname,u -sellevidx,$levidx })
+    # the hashtag-search prepends to each array element; a %-search would append
+  echo "Getting time series at level $levidx from files ${files[@]##*/}."
+  cdo $flags mergetime ${commands[@]} $series
+  # Iterate through regions
+  export CDO_WEIGHT_MODE=on
+  regions=(NH SH)
+  for region in ${regions[@]}; do
+    echo "Region $region."
+    if [ "$region" == NH ]; then
+      selection="-sellonlatbox,-180,180,0,90" # north-hemisphere selection
+      gridbox="-gridboxsum,1,32"
+    elif [ "$region" == SH ]; then
+      selection="-sellonlatbox,-180,180,-90,0" # south-hemisphere selection
+      gridbox="-gridboxsum,1,32"
+    elif [ "$region" == GLOBE ]; then
+      selection="" # entire globe
+      gridbox="-gridboxsum,1,64" # entire globe
+    else
+      echo "ERROR: Unknown region $region."
+      return 1
+    fi
+    eigfile=evals$region$levidx.nc # here, time dimension is EOF
+    eoffile=evecs$region$levidx.nc # here, time dimension
+    pcfile=pcs$region$levidx.nc # here, 
+    # Get the EOFs themselves
+    echo "Getting EOFs from the time series at level $levidx."
+    cdo $flags eof,$neof -setname,EOF -detrend $selection $series \
+      $eigfile $eoffile # save eigenvalues and eigenvectors
+    # Next the PCs; must do it manually, but very simple calculation; eofcoeff not needed
+    # Will area-weight the full time series, multiply it by each EOF, and standardize the
+    # final result; will create one file for each EOF, then merge them
+    unset pcs # completely wipe bash array and all elements
+    for ieof in $(seq 1 $neof); do # see: https://stackoverflow.com/a/169517/4970632
+      i=$(expr $ieof - 1) # bash arrays start at 0, CDO selection starts at 1
+      pcs[$i]+="-setname,PC$ieof $gridbox -mul " # get dot product of following two results:
+      pcs[$i]+="-mul $selection $series -gridweights $eoffile " # weighted data
+      pcs[$i]+="-seltimestep,$ieof $eoffile" # and eigenvector
+    done
+    echo "Getting PCs from the time series at level $levidx."
+    cdo $flags merge ${pcs[@]} $pcfile # merge results of the multiplications
+    cdo $flags div -sub $pcfile -timmean $pcfile \
+      -timstd $pcfile ${pcfile%.*}_std.nc # sub mean, divide by std
+    mv ${pcfile%.*}_std.nc $pcfile # overwrite original
+    # Finally, get EOFs in physical units by multiplying the standardized
+    # values by the original data; result is "anomaly associated with 1 stdev
+    # variation of the PC time series"
+    echo "Getting EOFs in physical units."
+    cdo $flags -timmean -mul -enlarge,$eoffile $pcfile \
+      $selection $series eofs$region$levidx.nc # EOFs in physical units;
+        # dot product, divided by number of times; remember series is stored without
+        # picking hemisphere, so should enlarge to match eoffile
+  done # iteration through regions
+}
+
+#------------------------------------------------------------------------------
+# Equilibrium data, or time-mean of certain number of days at certian point in spindown
+# Currently, just final 100 days
+function Equilibrium() {
+  shopt -s nullglob # will return empty if no match
+  # TIME-MEAN OF LAST BLOCK (supposed "EQUILIBRIUM")
+  # Only do if last block is at FAR ENOUGH TIME
+  outfiles=()
+  ### TEMPORARY FIX; CAN CHANGE THIS LOOP IF YOU WANT
+  for tspindown in {10..11}00; do
+    files=($input/${FILENAME}.d$tspindown-spindown$SPINDOWNOPT-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc)
+    echo "Number of files in $tspindown run: ${#files[@]}."
+    [ ${#files[@]} -le 1 ] && continue
+      # this is PATCH for old workflow where we only did 100-day spindowns
+    cdo $flags timmean ${files[-1]} $fequilibrium-$tspindown.nc #2>>$log # just want last one, alphabetically sorted; will vary length of run
+    outfiles+=($fequilibrium-$tspindown.nc)
+  done
+  # ENSEMBLE-MEAN OF THE EQUILIBRIUM CLIMATES
+  echo "Getting ensemble mean equilibrium climate from ${outfiles[@]}..."
+  cdo $flags ensmean ${outfiles[@]} $fequilibrium-ensemble.nc
+}
+# Spindown data, or progress of given spindown with time-resolution preserved
+function Spindown() {
+  # MERGE all blocks into single time-series
+  # for tspindown in {10..99}00; do
+  outfiles=() # record files created
+  list=({10..60}00)
+  list=(1000) # just this one, for now
+  for tspindown in ${list[@]}; do
+    files=($input/${FILENAME}.d$tspindown-spindown$SPINDOWNOPT-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc)
+    echo "Number of files in $tspindown run: ${#files[@]}."
+    [ ${#files[@]} -le 2 ] && continue
+      # this is PATCH for old stupid workflow where we only saved first 100 days + last 100 days
+    cdo $flags mergetime ${files[@]} $fspindown-$tspindown.nc #2>>$log
+    outfiles+=($fspindown-$tspindown.nc)
+  done
+  if false; then
+    # From results, get ENSEMBLE MEAN of full spindown process
+    echo "Getting spindown ensemble from files ${outfiles[@]##*/}..."
+    cdo $flags ensmean ${outfiles[@]} $fspindown-ensemble.nc #2>>$log
+  fi
+}
+# Finally get ensemble-statistics for equilibrium climate files
+# Get the selected difference for given days, and statistics
+function Diffs() {
+  region=$1
+  tspindown1=$2
+  tspindown2=$3
+  if [ -z $region ] || [ -z $tspindown1 ] || [ -z $tspindown2 ]; then
+    echo "ERROR: Must supply Diffs() function with region and times you wish to compare."
+    return 1
+  fi
+  # Get list of files
+  shopt -s nullglob
+  file1=$fequilibrium-$tspindown1$region.nc
+  file2=$fequilibrium-$tspindown2$region.nc
+  files=($fequilibrium-[0-9][0-9][0-9][0-9]$region.nc)
+  if [ -z $files ]; then
+    echo "WARNING: Could not find any equilibrium climate files."
+    return 1
+  fi
+  echo $file1
+  echo $file2
+  if [ ! -r $file1 ] || [ ! -r $file2 ]; then
+    echo "WARNING: Could not find the selected equilibrium climate files."
+    return 1
+  fi
+  # Our selected difference
+  echo "First the selected difference."
+  cdo $flags sub $file1 $file2 $fequilibrium-diff$region.nc
+  # Bootstrap the differences
+  echo "Next bootstrap random differences, and get the standard deviation."
+  length=${#files[@]}
+  for i in {1..1000}; do
+    ch1=$(expr $RANDOM % $length) # random int32, find remainder
+    ch2=$(expr $RANDOM % $length)
+    while [ $ch1 -eq $ch2 ]; do
+      ch2=$(expr $RANDOM % $length) # repeat until two DIFFERENT choices
+    done
+    cdo $flags sub ${files[$ch1]} ${files[$ch2]} boot$(printf "%04d" $i)$region.nc
+  done
+  # Just get every single possible difference instead
+  # echo "Next get the difference of every single possible pair, and percentiles."
+  # maxid=$(expr ${#files[@]} - 1) # maximum ID is length - 1
+  # for ch1 in $(seq 0 $maxid); do
+  #   for ch2 in $(seq $(expr $ch1 + 1) $maxid); do
+  #     cdo $flags sub ${files[$ch1]} ${files[$ch2]} \
+  #       boot$(printf "%02d" $ch1)$(printf "%02d" $ch2)$region.nc
+  #   done
+  # done
+  # Standard deviation and percentiles of differences
+  files=(boot[0-9][0-9][0-9][0-9]$region.nc) # will delete these later
+  cdo $flags ensstd ${files[@]} $fequilibrium-diffstd$region.nc
+  if [ -x /usr/bin/cdo ]; then # anaconda version still uses integer params
+    /usr/bin/cdo -s -O enspctl,2.5 ${files[@]} $fequilibrium-difflo$region.nc
+    /usr/bin/cdo -s -O enspctl,97.5 ${files[@]} $fequilibrium-diffhi$region.nc
+      # apparently if try to use -P flag, will NOT EXEUCTE IN PARALLEL
+  else echo "WARNING: Could not find CDO version with float-parameter percentile."
+  fi
+  rm ${files[@]} # remove the helper files
+  # cdo $flags ensstd1 ${files[@]} $fequilibrium-std.nc
+}
+
+#------------------------------------------------------------------------------
+# Directories
+input=$scratch/$EXPDIR/netcdf # location of data
+if [ ! -d $input ]; then
+  echo "ERROR: Could not find input directory $input."
+  exit 1
+fi
+outputbase=$storage/data # general output location
+[ ! -d $outputbase ] && mkdir $outputbase
+output=$outputbase/$EXPDIR # directory for this experiment
+[ ! -d $output ] && mkdir $output
+refloc=$outputbase/$EXPREF # reference directory
+cd $output # move here
+# File management/names
+fclimate=${FILENAME}.climate # output prefix
+fspindown=${FILENAME}.spindown$SPINDOWNOPT # output prefix (need spindown info)
+fequilibrium=${FILENAME}.equilibrium$SPINDOWNOPT # output prefix (need spindown info)
+# Log prefix
+[ ! -d log ] && mkdir log
+log=log/ # put in subdirectory
+
+#----------------------------------------------------------------------------
+# Climate processing
+$climate && { # needs to be done before other stuff
+  echo "Control climate."
+  Climate &>${log}climate & # this must finish before others
+  # wait
+  }
+
+#----------------------------------------------------------------------------
+# Spindown processing
+$spindown && {
+  echo "Processing the spindown$SPINDOWNOPT data."
+  Spindown &>${log}spindown$SPINDOWNOPT &
+  wait
+  }
+# Statistics on multiple spindown results
+if $diffs; then
+  regions=(NH SH)
+  for region in ${regions[@]}; do
+    echo "Getting difference-equilibrium-stats for ${region}."
+    if [ "$region" == "NH" ]; then
+      tspindown1=2300 # high PC
+      tspindown2=3700 # low PC
+    elif [ "$region" == "SH" ]; then
+      tspindown1=3300 # low PC
+      tspindown2=5700 # high PC
+    else
+      echo "ERROR: Unknown region $region."
+      return 1
+    fi
+    Diffs $region $tspindown1 $tspindown2 &>${log}diffs$region &
+    # wait
+  done
+  wait
+fi
+# "Equilibrium" climates
+# TODO needs work, equilibium state not established
+# # $equilibrium && {
+# #   echo "Getting the equlibrium$SPINDOWNOPT climates."
+# #   Equilibrium &>${log}equilibrium$SPINDOWNOPT &
+# #   wait
+# #   }
+
+#----------------------------------------------------------------------------
+# Compute spindown rate
+file2=${fclimate}AVE.nc
+file1=${fspindown}-ensembleAVE.nc
+file3=${fequilibrium}-ensembleAVE.nc
+if $tau && [ -r $file1 ] && [ -r $file2 ] && [ -r $file3 ]; then
+  echo "Esimating tau/timescales."
+  python3 &>${log}tau << EOF
+from drycore_postprocess import tau # file with all python utilities
+tau("$file1", climate="$file2", equilibrium="$file3", output="$output", ka=$ka, ks=4)
+EOF
+elif $tau; then echo "WARNING: One of the files needed for spindown fitting is not available."
+fi
+
+#----------------------------------------------------------------------------
+# Compute EOFs
+if $eofs; then
+  # Get the eigenvectors, eigenalues, PCs, and EOFs in physical units
+  levidxs=({13..36}) # from below 300mb to above 900mb (index 1 is first, not 0)
+  echo "Getting EOF stuff."
+  for levidx in ${levidxs[@]}; do
+    EOF $levidx &>${log}eof$levidx & # send to background, every time
+  done
+  wait
+  # Combine all the files across levels after parallel processing
+  # Default behavior of "merge" will combine same-name variables with identical grids
+  # but different pressure levels -- neat!
+  echo "Combining output files and removing old ones."
+  regions=(NH SH)
+  prefixes=(evecs evals pcs eofs)
+  for prefix in ${prefixes[@]}; do
+    for region in ${regions[@]}; do
+      files=($prefix$region[0-9][0-9].nc)
+      if [ ${#files[@]} -eq 0 ]; then
+        echo "WARNING: Could not find any $prefix files for $region."
+        continue
+      fi
+      cdo $flags merge ${files[@]} ${FILENAME}.$prefix$region.nc &>${log}$prefix$region &
+    done
+  done
+  wait # finish parallel
+  rm evecs*.nc evals*.nc pcs*.nc eofs*.nc series*.nc # delete series
+fi
+
+#----------------------------------------------------------------------------
+# Go back to script directory
+cd $cwd
+

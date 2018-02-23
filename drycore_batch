@@ -1,0 +1,88 @@
+#!/bin/bash
+# Use this to loop through spectral_run function
+set -e # exit if runscript triggered error
+
+# Tasks to run
+RUN=false # run the model?
+POST=true # run post-processing on the model results?
+SPINDOWN=false # do spindown runs?
+CONTROL=true  # do control run?
+TESTING=false # testing
+NEWEXPER=false # do not write to existing experiment directories?
+INIT=false # just show the initial state of model?
+
+# Variables without loops
+CORES=16 # core count
+DAYS=100 # time step for pausing model to output results
+DT=600 # time step in seconds
+KSOPT=4 # near-surface timescale or the word 'scale'
+
+# Variables with loops
+# KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
+NTRUNCS=(42) # truncation numbers
+LEVS=(40) # vertical coordinate specifiers
+KTS=(20) # one KT for now
+KFS=(0.25 0.5 1 2 4)
+KAS=(10 20 40 80 160)
+KFS=(0.5 1 2)
+KAS=(20 40 80)
+
+# Control experiment timing
+TSTART=0 # first day of integration; set to 0 for new run.
+TEND=2000 # last day of integration after spin-up
+TKEEP=({00..99}00) # when to keep longitude info?
+TRECORD=({10..99}00) # start days where we record 100-day control blocks
+TRECORD=({00..99}00) # start days where we record 100-day control blocks
+
+# Spindown experiment timing
+TCONTROL=(1000) # just one equilibrium run, for testing?
+TCONTROL=({17..59}00) # last time stopped at day 1500 run
+TSPINSTART=100 # start day for spindown (in days after tcontrol)
+TSPINEND=600 # how long to run equilibrium?
+  # so an extra 500 days for each
+
+# Override for test experiments
+if $TESTING; then # overwrite some settings
+  NEWEXPER=false NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
+  DAYS=1
+  TSTART=0 TEND=10
+  TCONTROL=(10) TSPINSTART=0 TSPINEND=10
+  # TSTART=0 TEND=1
+  # TSTART=1000 TEND=1010 PDAY=900 # pday is override
+  # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
+fi
+
+# The experiment names
+TOPOFILE= # path to file e.g. $PWD/topo.nc
+SPINDOWNOPT=1 # the spindown option; 1 for radiation off,
+FILENAME=4xdaily_inst # name for output files
+EXPTYPE=spectral # change this for different file
+EXPNAME=hs # can be "hs", "hs", or "pk"
+
+# Run multiple experiments consecutively
+for NTRUNC in ${NTRUNCS[@]}; do
+  for LEV in ${LEVS[@]}; do
+    for KT in ${KTS[@]}; do # stratosphere timescales
+      for KA in ${KAS[@]}; do # troposphere timescales
+        for KF in ${KFS[@]}; do # friction timescales
+          # Experiment directory
+          EXPREF="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" 40)f$(printf "%08.3f" 1)"
+          EXPDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
+          $TESTING && EXPDIR="test" # override
+          echo "Current experiment directory: ${EXPDIR}."
+          # Call run script
+          if $RUN && ! { $NEWEXPER && -d /mdata1/ldavis/$EXPDIR; }; then
+            [ $KSOPT == "scale" ] && KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") || KS=$KSOPT
+            echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
+            echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
+            source drycore_run # can read variables declared here
+          fi
+          # Call post-process script
+          if $POST && [ -d /mdata1/ldavis/$EXPDIR ]; then
+            source drycore_postprocess
+          fi
+        done
+      done
+    done
+  done
+done
