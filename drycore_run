@@ -64,8 +64,8 @@ else
 fi
 # Executable check
 fms=$PWD/${hostname}_${EXPNAME}/fms.x # location of executables
-process=$PWD/drycore_process # the script for on-the-fly processing
-postprocess=$PWD/drycore_postprocess # the script for post-processing
+process=$PWD/process # the script for on-the-fly processing
+postprocess=$PWD/postprocess # the script for post-processing
 if [ ! -x $fms ]; then # x for 'executable'
   echo "ERROR: The executable $fms is missing."
   exit 1
@@ -139,12 +139,14 @@ function Setup() {
     [[ "$KF" =~ "." ]] && KFI="-$KF" || KFI="-${KF}." # negative num = units days
   fi
   # The initial namelist, basic stuff
-  # Note dt_atmos is the ATCUAL timestep, and other fields are how long to run the model
-  # for; can be combinations of "days", "hours", "minutes", "seconds"
+  # The dt_atmos is actual timestep and settings 'days' 'hours' etc. dnote how long to run it
+  IDT=$DT IDAYS=$DAYS ISECONDS=0 # default number of seconds
+  [ ! -z $INIT ] && $INIT && IDT=$DT ISECONDS=$(($DT * 10)) IDAYS=0 # initialization condition
   cat > input.nml << EOF
 &main_nml
-days     = $DAYS,
-dt_atmos = $DT,
+dt_atmos = $IDT,
+days     = $IDAYS,
+seconds  = $ISECONDS
 /
 &fms_nml
 domains_stack_size = 800000,
@@ -368,10 +370,12 @@ EOF
 0 0 0 0 0 0
 EOF
   if $ncrecord; then echo "Recording data."
+  FREQUENCY=6 UNITS=hours 
+  [ ! -z $INIT ] && $INIT && FREQUENCY=0 UNITS=seconds
   cat >> diag_table << EOF
 # Filenames (name, save-frequency [-1==at end, 0==all, >0==units], save-frequency units, 
 # format [1 = netCDF, only supported format], time dimension units, time dimension names)
-"$FILENAME",  6,   "hours",  1,  "days",  "time",
+"$FILENAME",  $FREQUENCY,   "$UNITS",  1,  "days",  "time",
 # Variables to save (module name, fortran name, save name, file name, time-sampling freq 
 # for averages, whether we take average, other options, and save size [currently F32]; 
 # note cannot save time-average data in same file as non-time-average data, it seems)

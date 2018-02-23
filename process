@@ -20,9 +20,8 @@ nckeep=$1                # whether to keep longitudinal data
 basedir=${0%/*}          # same location as this file; trim filename from right
 hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
 mppnccombine=$basedir/${hostname}_mppnccombine # combine; needs to have been compiled here
-nclscript=$basedir/drycore_process.ncl        # processing with NCL
-interpscript=$basedir/drycore_interp.ncl      # interpolation script with NCL
-cdoscript=$basedir/drycore_process.cdo        # processing with CDO
+nclscript=$basedir/process_ncl.ncl # processing with NCL
+cdoscript=$basedir/process_cdo     # processing with CDO
 # Double check some stuff
 if [ -z "$nckeep" ]; then
   echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."

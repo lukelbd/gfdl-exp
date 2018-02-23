@@ -24,8 +24,8 @@ LEVS=(40) # vertical coordinate specifiers
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KFS=(0.5 1 2)
-KAS=(20 40 80)
+# KFS=(0.5 1 2)
+# KAS=(20 40 80)
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.
