@@ -79,7 +79,7 @@ function EOF() {
   # Initial check
   # Limit to first 1000 days for now; for consistency between experiments
   files=($input/${FILENAME}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc) # collect into array
-  files=($input/${FILENAME}.d1[0-9]00-d[1-2][0-9]00.nc) # collect into array
+  files=($input/${FILENAME}.d1[0-9][0-9][0-9]-d[1-2][0-9][0-9][0-9].nc) # collect into array
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "WARNING: No files available for getting wind EOF."
     return 1

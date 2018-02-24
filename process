@@ -21,35 +21,40 @@ basedir=${0%/*}          # same location as this file; trim filename from right
 hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
 mppnccombine=$basedir/${hostname}_mppnccombine # combine; needs to have been compiled here
 nclscript=$basedir/process_ncl.ncl # processing with NCL
-cdoscript=$basedir/process_cdo     # processing with CDO
+basicscript=$basedir/process_basic     # processing with CDO
+energyscript=$basedir/process_energy     # processing with CDO
 # Double check some stuff
 if [ -z "$nckeep" ]; then
   echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
-  exit 4
+  exit 999
 fi
 if ! hash ncl 2>/dev/null; then
   echo "ERROR: NCL is not in $PATH."
-  exit 4
+  exit 999
 fi
 if ! hash cdo 2>/dev/null; then
   echo "ERROR: CDO is not in $PATH."
-  exit 4
+  exit 999
 fi
 if ! hash ncrename 2>/dev/null || ! hash ncks 2>/dev/null; then
   echo "ERROR: NCO is not in $PATH."
-  exit 4
+  exit 999
 fi
 if [ ! -x $mppnccombine ]; then
   echo "ERROR: The mpp combine executable $mppnccombine is missing."
-  exit 4
+  exit 999
 fi
-if [ ! -x $cdoscript ]; then
-  echo "ERROR: The CDO script for processing data is missing."
-  exit 4
+if [ ! -x $basicscript ]; then
+  echo "ERROR: The script $basicscript is missing."
+  exit 999
+fi
+if [ ! -x $energyscript ]; then
+  echo "ERROR: The script $energyscript is missing."
+  exit 999
 fi
 if [ ! -r $nclscript ]; then
-  echo "ERROR: The NCL script for processing data is missing."
-  exit 4
+  echo "ERROR: The script $nclscript is missing."
+  exit 999
 fi
 
 ################################################################################
@@ -110,6 +115,7 @@ for ncfile in *.nc; do
     exit 2 # exit status of egrep will be 0 if got match (get to here), non-zero if no match
   fi
   # Management of file created
+  # Will overwrite original because haven't lost information yet
   mv ncl.nc $ncfile # move old file on top of new file
   ncrename -d lev_p,plev $ncfile &>/dev/null # dimensions
   ncrename -v lev_p,plev $ncfile &>/dev/null # variables of same name
@@ -126,28 +132,49 @@ for ncfile in *.nc; do
   # Some of these require the extra variables output by NCL; also meridional flux
   # terms rely on NCL having set poleward==positive in each hemisphere
   t=$(date +%s)
-  echo "Running CDO commands..."
-  $cdoscript $ncfile $outfile &>log.cdo
-  echo "  * Time for CDO commands: $(($(date +%s) - $t))s."
+  echo "Getting basic parameters..."
+  $basicscript $ncfile &>log.basic
+  echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
 
   ##############################################################################
-  # 4) Tidy up
-  # [ -f out0.nc ] && ncks -A out0.nc $outfile # just appends data from out0.nc to out.nc
-  for out in out*.nc; do
-    [[ "$out" != "out*.nc" ]] && rm $out # remove intermediate files, if exist
-  done
-  for prep in prep*.nc; do
-    [[ "$prep" != "prep*.nc" ]] && rm $prep # remove intermediate files, if exist
-  done
+  # 4) Get energy terms in another file
+  # Some of these require the extra variables output by NCL; also meridional flux
+  # terms rely on NCL having set poleward==positive in each hemisphere
+  t=$(date +%s)
+  echo "Getting Lorenz energy cycle terms..."
+  $energyscript $ncfile &>log.energy
+  echo "  * Time for getting energy terms with CDO: $(($(date +%s) - $t))s."
+
+  ##############################################################################
+  # 5) Tidy up
+  # First combine files we are keeping
+  # Must merge energy terms first so singleton longitude latitude dimensions become x y
+  t=$(date +%s)
+  echo "Merging all the terms into one file..."
+  cdo -O -s merge energy?.nc basic?.nc $outfile
+  echo "  * Time for merging all the terms into one file: $(($(date +%s) - $t))s."
+  # Then remove the temporary files
+  rm energy?.nc
+  rm basic?.nc
   if $nckeep; then
     # Keep the old file
-    echo "Keeping longitude-resolution file..."
-    mv $ncfile $origfile # move the new one
-    # delnames=p,vor # we interpolated to pressure, and don't need vort
-    # cdo delname,$delnames $ncfile $origfile
-    # rm $ncfile # remove the old one
+    # Also get divergence, vorticity, streamfunction, and velocity potential
+    t=$(date +%s)
+    echo "Keeping longitude-resolution file and calculating extra terms..."
+    cdo -O -s -uv2dv -selname,u,v $ncfile dv0.nc 1>/dev/null
+    cdo -O -s -invertlat -sp2gp -dv2ps dv0.nc dv1.nc 1>/dev/null # default names are fine
+    cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc # better names
+    echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
+    if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
+      echo "WARNING: Could not get the vorticity/divergence/streamfunction terms."
+      rm dv?.nc # remove any that may exist
+      mv $ncfile $origfile
+    else
+      cdo -O -s -merge $ncfile dv1.nc dv2.nc $origfile
+      rm dv?.nc $ncfile
+    fi
   else
-    # Just delete it
+    # Delete the old file
     echo "Removing longitude-resolution file..."
     rm $ncfile # simple
   fi

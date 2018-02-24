@@ -469,8 +469,9 @@ function Iterate() {
       case $estatus in
         1) echo "Something failed in model integration. Check log.model" ;;
         2) echo "Something failed in the NCL script. Check log.ncl" ;;
-        3) echo "Something failed in the CDO commands. Check log.cdo" ;;
-        4) echo "Check log.process; other/miscellaneous failure." ;;
+        3) echo "Something failed in the basic CDO commands. Check log.basic" ;;
+        4) echo "Something failed in the Lorenz cycle CDO commands. Check log.energy" ;;
+        *) echo "Check log.process; other/miscellaneous failure." ;;
       esac
       exit 1
     fi
@@ -514,7 +515,7 @@ if $CONTROL; then
     exit 1
   fi
   # PREPARE FOR THE LOOP
-  echo "Running control experiment from day $TSTART to day $tend."
+  echo "Running control experiment from day $TSTART to day $TEND."
   origin=$(date +%s) # start time
   radiationoff=false # we still have radiation now
   surfaceoff=false
