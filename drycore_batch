@@ -3,8 +3,8 @@
 set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
+RUN=true # run the model?
+POST=false # run post-processing on the model results?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 TESTING=false # testing
@@ -24,15 +24,14 @@ LEVS=(40) # vertical coordinate specifiers
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-# KFS=(0.5 1 2)
-# KAS=(20 40 80)
+KFS=(0.5 1 2)
+KAS=(20 40 80)
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.
 TEND=2000 # last day of integration after spin-up
-TKEEP=({00..99}00) # when to keep longitude info?
-TRECORD=({10..99}00) # start days where we record 100-day control blocks
-TRECORD=({00..99}00) # start days where we record 100-day control blocks
+TRECORD=({0000..9999}) # when to record anything at all?
+TKEEP=(1000) # when to retain longitude info?
 
 # Spindown experiment timing
 TCONTROL=(1000) # just one equilibrium run, for testing?
@@ -43,13 +42,13 @@ TSPINEND=600 # how long to run equilibrium?
 
 # Override for test experiments
 if $TESTING; then # overwrite some settings
-  NEWEXPER=false NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
   DAYS=1
-  TSTART=0 TEND=10
+  TSTART=0 TEND=1
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
   # TSTART=0 TEND=1
   # TSTART=1000 TEND=1010 PDAY=900 # pday is override
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
+  TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
 fi
 
 # The experiment names
