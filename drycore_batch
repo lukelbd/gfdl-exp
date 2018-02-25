@@ -3,13 +3,17 @@
 set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=true # run the model?
-POST=false # run post-processing on the model results?
+RUN=false # run the model?
+POST=true # run post-processing on the model results?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 TESTING=false # testing
 NEWEXPER=false # do not write to existing experiment directories?
 INIT=false # just show the initial state of model?
+
+# Vars for post processing function
+CLIMOSTART=1000
+CLIMOEND=2000
 
 # Variables without loops
 CORES=16 # core count
@@ -59,11 +63,15 @@ EXPTYPE=spectral # change this for different file
 EXPNAME=hs # can be "hs", "hs", or "pk"
 
 # Run multiple experiments consecutively
+cwd=$(pwd)
 for NTRUNC in ${NTRUNCS[@]}; do
   for LEV in ${LEVS[@]}; do
     for KT in ${KTS[@]}; do # stratosphere timescales
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
+          # Ensure are still in same directory
+          [ $KA == 20 ] && [ $KF == 0.5 ] && continue
+          cd $cwd
           # Experiment directory
           EXPREF="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" 40)f$(printf "%08.3f" 1)"
           EXPDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
@@ -78,7 +86,7 @@ for NTRUNC in ${NTRUNCS[@]}; do
           fi
           # Call post-process script
           if $POST && [ -d /mdata1/ldavis/$EXPDIR ]; then
-            source drycore_postprocess
+            source postprocess
           fi
         done
       done

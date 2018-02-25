@@ -24,7 +24,8 @@ elif [ "$hostname" == "euclid" ]; then # everything is in same lib/bin
 else echo "ERROR: Unknown host ${hostname}." && exit 1
 fi
 # Ensure environment variables are set
-if [ -z $FILENAME ] || [ -z $EXPDIR ] || [ -z $EXPREF ] || [ -z $SPINDOWNOPT ]; then
+# Days variable is so we can iterate through all possible file combinations
+if [ -z $DAYS ] || [ -z $FILENAME ] || [ -z $EXPDIR ] || [ -z $EXPREF ] || [ -z $SPINDOWNOPT ]; then
   echo "ERROR: An environmental variable is unset."
   exit 1
 fi
@@ -44,27 +45,52 @@ vinterp="-intlevel,1,2,3,5,7,10,20,30,50,70,100,125,150,175,200,225,250,300,350,
 [ ! -r $cwd/$griddes ] && echo "ERROR: Could not find grid description file $cwd/${griddes}." && exit 1
 
 #------------------------------------------------------------------------------
+# Directories
+input=$scratch/$EXPDIR/netcdf # location of data
+if [ ! -d $input ]; then
+  echo "ERROR: Could not find input directory $input."
+  exit 1
+fi
+outputbase=$storage/data # general output location
+[ ! -d $outputbase ] && mkdir $outputbase
+output=$outputbase/$EXPDIR # directory for this experiment
+[ ! -d $output ] && mkdir $output
+refloc=$outputbase/$EXPREF # reference directory
+cd $output # move here
+# File management/names
+fclimate=${FILENAME}.climate # output prefix
+fspindown=${FILENAME}.spindown$SPINDOWNOPT # output prefix (need spindown info)
+fequilibrium=${FILENAME}.equilibrium$SPINDOWNOPT # output prefix (need spindown info)
+# Log prefix
+# [ ! -d log ] && mkdir log
+# log=log/ # put in subdirectory
+log=log_
+
+#------------------------------------------------------------------------------
 # Control climate data, and reference to other control climates
 function Climate() {
   shopt -s nullglob # will return empty if no match
-  # files=($input/${FILENAME}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc) # collect into array
-  files=($input/${FILENAME}.d[1-9][0-9][0-9][0-9]-d[1-9][0-9][0-9][0-9].nc) # collect into array
-  if [ -z $files ]; then
-    echo "WARNING: Could not find any control-run/climate files."
-    return 1
-  fi
-  echo "Getting climate from files ${files[@]##*/}..."
+  [ -z $CLIMOSTART ] && CLIMOSTART=0 # start of climate days
+  [ -z $CLIMOEND ] && CLIMOEND=9999 # end of climate days
+  files=() && daystrings=() # initialize
+  for file in $input/${FILENAME}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+    daystring=${file#$input/${FILENAME}.} daystring=${daystring%.nc}
+    day1=${daystring%%-*} day1=${day1#d}
+    day2=${daystring##*-} day2=${day2#d}
+    [ $day1 -ge $CLIMOSTART ] && [ $day2 -le $CLIMOEND ] && files+=($file) && daystrings+=($daystring)
+  done
+  echo "Getting climate from file days ${daystrings[@]}..."
   ntime=$(cdo -s ntime ${files[0]}) # test time
   [ $ntime -eq 1 ] && timmean="" || timmean="-timmean"
   [ -z "$timmean" ] && echo "Time-mean of control files already taken." \
     || echo "Control files need time-mean."
   commands=("${files[@]/#/${timmean} }") # the hashtag-search prepends; a %-search would append
-  # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc
   echo "Calculating ensemble mean."
   cdo $flags ensmean ${commands[@]} ens.nc
   echo "Interpolating result."
   cdo $flags $vinterp $hinterp ens.nc ${fclimate}.nc #2>>$log # the averages at each time
-  rm ens.nc
+  rm ens.nc # remove helper file
+  # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc # chain failed
 }
 
 #------------------------------------------------------------------------------
@@ -244,27 +270,6 @@ function Diffs() {
   rm ${files[@]} # remove the helper files
   # cdo $flags ensstd1 ${files[@]} $fequilibrium-std.nc
 }
-
-#------------------------------------------------------------------------------
-# Directories
-input=$scratch/$EXPDIR/netcdf # location of data
-if [ ! -d $input ]; then
-  echo "ERROR: Could not find input directory $input."
-  exit 1
-fi
-outputbase=$storage/data # general output location
-[ ! -d $outputbase ] && mkdir $outputbase
-output=$outputbase/$EXPDIR # directory for this experiment
-[ ! -d $output ] && mkdir $output
-refloc=$outputbase/$EXPREF # reference directory
-cd $output # move here
-# File management/names
-fclimate=${FILENAME}.climate # output prefix
-fspindown=${FILENAME}.spindown$SPINDOWNOPT # output prefix (need spindown info)
-fequilibrium=${FILENAME}.equilibrium$SPINDOWNOPT # output prefix (need spindown info)
-# Log prefix
-[ ! -d log ] && mkdir log
-log=log/ # put in subdirectory
 
 #----------------------------------------------------------------------------
 # Climate processing
