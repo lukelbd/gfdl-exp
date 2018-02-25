@@ -1,6 +1,6 @@
 #!/bin/bash
 # Use this to loop through spectral_run function
-set -e # exit if runscript triggered error
+# set -e # exit if runscript triggered error
 
 # Tasks to run
 RUN=true # run the model?
@@ -9,6 +9,7 @@ SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 TESTING=false # testing
 NEWEXPER=false # do not write to existing experiment directories?
+NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
 
 # Variables without loops
@@ -19,13 +20,13 @@ KSOPT=4 # near-surface timescale or the word 'scale'
 
 # Variables with loops
 # KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
-NTRUNCS=(42) # truncation numbers
-LEVS=(40) # vertical coordinate specifiers
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KFS=(0.5 1 2)
-KAS=(20 40 80)
+KFS=(1)
+KAS=(40)
+NTRUNCS=(63 85) # truncation numbers
+LEVS=(40 era) # vertical coordinate specifiers
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.
@@ -59,11 +60,15 @@ EXPTYPE=spectral # change this for different file
 EXPNAME=hs # can be "hs", "hs", or "pk"
 
 # Run multiple experiments consecutively
-for NTRUNC in ${NTRUNCS[@]}; do
-  for LEV in ${LEVS[@]}; do
+cwd=$(pwd)
+for LEV in ${LEVS[@]}; do
+  for NTRUNC in ${NTRUNCS[@]}; do
     for KT in ${KTS[@]}; do # stratosphere timescales
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
+          # Ensure in same directory
+          [ $NTRUNC == 42 ] && [ $LEV == 40 ] && continue
+          cd $cwd
           # Experiment directory
           EXPREF="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" 40)f$(printf "%08.3f" 1)"
           EXPDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"

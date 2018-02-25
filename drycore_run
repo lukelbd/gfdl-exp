@@ -103,8 +103,13 @@ function Setup() {
   fi
   # Set up working directory, and move there
   if [ -d $cdir ]; then
-    echo "Working directory ${cdir##*/} already exists. Deleting..."
-    rm -r $cdir
+    if [ ! -z $NEWDAYS ] && $NEWDAYS; then
+      echo "Working directory ${cdir##*/} already exists. Canceling integration..."
+      return 1
+    else
+      echo "Working directory ${cdir##*/} already exists. Deleting..."
+      rm -r $cdir
+    fi
   else echo "Setting up work directory ${cdir##*/}..."
   fi
   mkdir $cdir
@@ -405,6 +410,8 @@ EOF
 # "dynamics",    "ps",         "p",      "6xdaily_inst",  "all",  .false.,  "none",  2,
 # "hs_forcing",  "tdt_ndamp",       "tdt_newtonian",  "6xdaily_inst",  "all",  .false.,  "none",  2,
 # "hs_forcing",  "tdt_diss_rdamp",  "tdt_rayleigh",   "6xdaily_inst",  "all",  .false.,  "none",  2,
+  # Ensure zero return-code if we get here
+  return 0
 }
 
 ################################################################################
@@ -535,9 +542,11 @@ if $CONTROL; then
     [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
     [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
     Setup $cdir $ncrecord # sets up working directory, cd into it
-    [ $cday -gt 0 ] && Restart $pdir # add restart files
-    $nckeep && echo "Keeping original longitude info."
-    Iterate $ncrecord $nckeep # run model
+    if [ $? == 0 ]; then
+      [ $cday -gt 0 ] && Restart $pdir # add restart files
+      $nckeep && echo "Keeping original longitude info."
+      Iterate $ncrecord $nckeep # run model
+    fi
     # STEP THINGS FORWARD, FOR NEXT ITERATION
     pday=$cday
     cday=$(($pday + $DAYS))
@@ -600,8 +609,10 @@ if $SPINDOWN; then
         }
       # RUN THE MODEL and COMBINE OUTPUT
       Setup $cdir $ncrecord # sets up working directory, cd into it
-      Restart $pdir # add restart files
-      Iterate $ncrecord $nckeep # run model
+      if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
+        Restart $pdir # add restart files
+        Iterate $ncrecord $nckeep # run model
+      fi
       # STEP THINGS FORWARD, FOR NEXT ITERATION
       pday=$cday # previous day
       cday=$(($pday + $DAYS))
