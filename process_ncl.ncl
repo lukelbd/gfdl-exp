@@ -22,7 +22,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Isobaric coordinate version
 ; First interpolate to pressure levels
-readtime = toint(systemfunc("date +%s"))
+notime = True
+if (.not. notime) then readtime = toint(systemfunc("date +%s")) else readtime = 0 end if
 print("Reading initial file and interpolating...")
 if (.not. isvar("filename")) then 
     q = integertochar(34) ; a double quote; only way to put inside string! yuck.
@@ -60,19 +61,20 @@ end if
 dimlev = 1 ; level dimension
 dimlat = 2 ; latitude dimension
 dimlon = 3 ; latitude dimension
-interptime = toint(systemfunc("date +%s"))
+if (.not. notime) then interptime = toint(systemfunc("date +%s")) else interptime = 0 end if
 print("    - Time for NCL reading and setup: " + tostring(interptime-readtime) + "s.")
 ; Apply the interpolation to some variables
 ; Will then get other parameters
-t = vinth2p(t_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
+hyam_norm = hyam/p0 ; required for vint2hp function
+t = vinth2p(t_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
   ; number-args is interp-type (1 for linear, 2 for log), 2nd one is not used
-u     = vinth2p(u_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-v     = vinth2p(v_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-z     = vinth2p(z_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-omega = vinth2p(omega_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-rdamp = vinth2p(rdamp_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-ndamp = vinth2p(ndamp_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
-; vor   = vinth2p(vor_in, hyam, hybm, poutm, slp, 1, p0mb, 1, True)
+u     = vinth2p(u_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
+v     = vinth2p(v_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
+z     = vinth2p(z_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
+omega = vinth2p(omega_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
+rdamp = vinth2p(rdamp_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
+ndamp = vinth2p(ndamp_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
+; vor   = vinth2p(vor_in, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True)
 copy_VarAtts(t_in,t)
 copy_VarAtts(u_in,u)
 copy_VarAtts(v_in,v)
@@ -84,7 +86,7 @@ rdamp@long_name = "dissipative heating from Rayleigh damping"
 ; copy_VarAtts(vor_in,vor)
 ; Get the pressure output
 p = t&lev_p * 100 ; back to Pa for derivatives
-calctime1 = toint(systemfunc("date +%s"))
+if (.not. notime) then calctime1 = toint(systemfunc("date +%s")) else calctime1 = 0 end if
 print("    - Time for NCL interpolation: " + tostring(calctime1-interptime) + "s.")
 print("  * Total time for NCL setup: " + tostring(calctime1-readtime) + "s.")
 print("Getting other parameters...")
@@ -113,7 +115,7 @@ copy_VarCoords(t,pt)
 ; dthdp@long_name = "vertical derivative of theta with pressure"
 ; dthdp@units     = s@units
 ; copy_VarCoords(t,dthdp)
-calctime2 = toint(systemfunc("date +%s"))
+if (.not. notime) then calctime2 = toint(systemfunc("date +%s")) else calctime2 = 0 end if
 print("    - Time for NCL static stability: " + tostring(calctime2-calctime1) + "s.")
 calctime4 = calctime2 ; cheap fix
 
@@ -163,7 +165,7 @@ calctime4 = calctime2 ; cheap fix
 ; copy_VarCoords(t,f0)
 ; f0@long_name = "Coriolis force"
 ; f0@units = "1/s"
-writetime = toint(systemfunc("date +%s"))
+if (.not. notime) then writetime = toint(systemfunc("date +%s")) else writetime = 0 end if
 print("    - Time for negating stuff in southern hemisphere: " + tostring(writetime-calctime4) + "s.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -187,7 +189,7 @@ o->s = s ; this one newly calculated
 ; o->pv = pv ; positive == poleward
 ; f->dthdp = dthdp ; actually don't need this probably; just do it after-the-fact
 delete(o)
-endtime = toint(systemfunc("date +%s"))
+if (.not. notime) then endtime = toint(systemfunc("date +%s")) else endtime = 0 end if
 print("  * Time for NCL writing: " + tostring(endtime-writetime) + "s.")
 print("TOTAL TIME ELAPSED: " + tostring(endtime-readtime) + "s.")
 exit
