@@ -80,6 +80,7 @@ if [ ! -x $postprocess ]; then
 fi
 # Base directory for experiment run
 basedir=$scratch/$EXPDIR # helper
+[ ! -z $NEWEXPER ] && $NEWEXPER && [ -d $basedir ] && echo "ERROR: Working directory already exists. Continuing..." && exit 1
 [ ! -d $basedir ] && mkdir $basedir # make directory
 
 ################################################################################
@@ -484,9 +485,9 @@ function Iterate() {
     fi
   fi
   # Echo timing information
-  if [ -r $pdir/log.process ]; then
+  if [ -r $pdir/log.01ocess ]; then
     tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
-    tprocess=$(tail -1 $pdir/log.process)
+    tprocess=$(tail -1 $pdir/log.process | sed 's/[^0-9]*//g' )
     echo "Model time: ${tmodel%.*}s, Process time: ${tprocess%.*}s."
     if [ "$tprocess" -eq "${tmodel%%.*}" ] 2>/dev/null; then
       echo "Model completion time MINUS processing time: $((${tmodel%%.*} - $tprocess))s."
@@ -527,9 +528,6 @@ if $CONTROL; then
   radiationoff=false # we still have radiation now
   surfaceoff=false
   frictionoff=false
-  [ ! -z $PDAY ] && pday=$(($TSTART - $DAYS)) && echo "Custom previous day was set for test."
-    # this way we can start an integration after spinup, say day 1000, and just
-    # integrate for say 1 day; useful for testing different output options
   cday=$TSTART
   nday=$(($TSTART + $DAYS))
   while [ $nday -le $TEND ]; do
@@ -539,6 +537,9 @@ if $CONTROL; then
     # RUN THE MODEL and COMBINE OUTPUT
     pdir=$basedir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
     cdir=$basedir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+    [ ! -z $PDIR ] && pdir=$basedir/$PDIR && echo "OVERRIDE: Using $pdir for restart files."
+    # this way we can start an integration after spinup, say day 1000, and just
+    # integrate for say 1 day; useful for testing different output options
     [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
     [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
     Setup $cdir $ncrecord # sets up working directory, cd into it

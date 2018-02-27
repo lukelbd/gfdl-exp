@@ -180,7 +180,9 @@ for ncfile in *.nc; do
   fi
 done
 # Finally, echo time of finish
-echo $(($(date +%s) - $t0)) # prints UNIX time difference
+# Can parse this to send message to the window that ran the runscript/batch runscript
+# echo $(($(date +%s) - $t0)) # prints UNIX time difference
+echo "TOTAL TIME ELAPSED: $(($(date +%s) - $t0))s."
 
 ################################################################################
 # Old stuff
