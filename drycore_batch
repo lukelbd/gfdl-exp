@@ -3,8 +3,9 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=true # run the model?
-POST=false # run post-processing on the model results?
+RUN=false # run the model?
+POST=true # run post-processing on the model results?
+TESTING=false # testing
 
 # Settings for tasks
 TESTING=false # do test model runs?
@@ -88,6 +89,7 @@ for LEV in ${LEVS[@]}; do
     for KT in ${KTS[@]}; do # stratosphere timescales
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
+          # Ensure are still in same directory
           cd $cwd
           # Experiment directory
           EXPREF="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" 40)f$(printf "%08.3f" 1)"

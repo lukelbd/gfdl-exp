@@ -38,9 +38,11 @@ if [ ! -d $scratch/$EXPREF ]; then
   return 1 # just go back to script that invoked .
 fi
 # Set up destination coordinates for comparison with ERA-Interim
-# and with other datasets
-cwd=$PWD # save location
-griddes=eraint_griddes.txt && hinterp="-remapycon,$cwd/${griddes}"
+# and with other datasets; note remap will output an array of NaNs if you try
+# to use remapycon or area weighted maps; with one-longitude, area weighted map
+# is the same as a 'distance weighted' map, so use that one
+cwd=$(pwd) # save location
+griddes=eraint_griddes.txt && hinterp="-remapdis,$cwd/${griddes}" || echo "WARNING: Could not find grid description file ${griddes}."
 vinterp="-intlevel,1,2,3,5,7,10,20,30,50,70,100,125,150,175,200,225,250,300,350,400,450,500,550,600,650,700,750,775,800,825,850,875,900,925,950,975,1000"
 [ ! -r $cwd/$griddes ] && echo "ERROR: Could not find grid description file $cwd/${griddes}." && exit 1
 
@@ -88,10 +90,11 @@ function Climate() {
   echo "Calculating ensemble mean."
   cdo $flags ensmean ${commands[@]} ens.nc
   echo "Interpolating result."
-  # cdo $flags $vinterp $hinterp ens.nc ${fclimate}.nc #2>>$log # the averages at each time
-  mv ens.nc ${fclimate}.nc #2>>$log # the averages at each time
-  # rm ens.nc # remove helper file
-  # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc # chain failed
+  cdo $flags $vinterp $hinterp ens.nc ${fclimate}.nc #2>>$log # the averages at each time
+  [ -e ens.nc ] && rm ens.nc # remove helper file
+  # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc # attempt to chain operations; failed
+  # cdo $flags -selgrid,2 ens.nc ${fclimate}.nc # bugfix attempt
+  # [ $? != 0 ] && echo "ERROR: Energy terms not present." && mv ens.nc ${fclimate}.nc # bugfix attempt
 }
 
 #------------------------------------------------------------------------------
@@ -361,5 +364,7 @@ fi
 
 #----------------------------------------------------------------------------
 # Go back to script directory
+# Might not reach this line so if this file is sourced, the original script should
+# be careful about accidentally changing directories
 cd $cwd
 

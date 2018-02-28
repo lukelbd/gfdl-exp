@@ -151,7 +151,8 @@ for ncfile in *.nc; do
   # Must merge energy terms first so singleton longitude latitude dimensions become x y
   t=$(date +%s)
   echo "Merging all the terms into one file..."
-  cdo -O -s merge energy?.nc basic?.nc $outfile
+  # cdo -O -s merge energy?.nc basic?.nc $outfile # vice versa
+  cdo -O -s merge basic?.nc energy?.nc $outfile # basic grid has preference
   echo "  * Time for merging all the terms into one file: $(($(date +%s) - $t))s."
   # Then remove the temporary files
   rm energy?.nc
