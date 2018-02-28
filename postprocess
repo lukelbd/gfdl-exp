@@ -25,17 +25,17 @@ else echo "ERROR: Unknown host ${hostname}." && exit 1
 fi
 # Ensure environment variables are set
 # Days variable is so we can iterate through all possible file combinations
-if [ -z $DAYS ] || [ -z $FILENAME ] || [ -z $EXPDIR ] || [ -z $EXPREF ] || [ -z $SPINDOWNOPT ]; then
+if [ -z $FILENAME ] || [ -z $EXPDIR ] || [ -z $EXPREF ] || [ -z $SPINDOWNOPT ]; then
   echo "ERROR: An environmental variable is unset."
   exit 1
 fi
 if [ ! -d $scratch/$EXPDIR ]; then
   echo "ERROR: The experiment directory $scratch/$EXPDIR does not exist."
-  exit 1
+  return 1 # just go back to script that invoked .
 fi
 if [ ! -d $scratch/$EXPREF ]; then
   echo "ERROR: The reference experiment directory $scratch/$EXPREF does not exist."
-  exit 1
+  return 1 # just go back to script that invoked .
 fi
 # Set up destination coordinates for comparison with ERA-Interim
 # and with other datasets; note remap will output an array of NaNs if you try

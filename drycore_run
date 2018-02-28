@@ -80,6 +80,7 @@ if [ ! -x $postprocess ]; then
 fi
 # Base directory for experiment run
 basedir=$scratch/$EXPDIR # helper
+[ ! -z $NEWEXPER ] && $NEWEXPER && [ -d $basedir ] && echo "ERROR: Working directory already exists. Continuing..." && exit 1
 [ ! -d $basedir ] && mkdir $basedir # make directory
 
 ################################################################################
@@ -103,8 +104,13 @@ function Setup() {
   fi
   # Set up working directory, and move there
   if [ -d $cdir ]; then
-    echo "Working directory ${cdir##*/} already exists. Deleting..."
-    rm -r $cdir
+    if [ ! -z $NEWDAYS ] && $NEWDAYS; then
+      echo "Working directory ${cdir##*/} already exists. Canceling integration..."
+      return 1
+    else
+      echo "Working directory ${cdir##*/} already exists. Deleting..."
+      rm -r $cdir
+    fi
   else echo "Setting up work directory ${cdir##*/}..."
   fi
   mkdir $cdir
@@ -405,6 +411,8 @@ EOF
 # "dynamics",    "ps",         "p",      "6xdaily_inst",  "all",  .false.,  "none",  2,
 # "hs_forcing",  "tdt_ndamp",       "tdt_newtonian",  "6xdaily_inst",  "all",  .false.,  "none",  2,
 # "hs_forcing",  "tdt_diss_rdamp",  "tdt_rayleigh",   "6xdaily_inst",  "all",  .false.,  "none",  2,
+  # Ensure zero return-code if we get here
+  return 0
 }
 
 ################################################################################
@@ -477,9 +485,9 @@ function Iterate() {
     fi
   fi
   # Echo timing information
-  if [ -r $pdir/log.process ]; then
+  if [ -r $pdir/log.01ocess ]; then
     tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
-    tprocess=$(tail -1 $pdir/log.process)
+    tprocess=$(tail -1 $pdir/log.process | sed 's/[^0-9]*//g' )
     echo "Model time: ${tmodel%.*}s, Process time: ${tprocess%.*}s."
     if [ "$tprocess" -eq "${tmodel%%.*}" ] 2>/dev/null; then
       echo "Model completion time MINUS processing time: $((${tmodel%%.*} - $tprocess))s."
@@ -520,9 +528,6 @@ if $CONTROL; then
   radiationoff=false # we still have radiation now
   surfaceoff=false
   frictionoff=false
-  [ ! -z $PDAY ] && pday=$(($TSTART - $DAYS)) && echo "Custom previous day was set for test."
-    # this way we can start an integration after spinup, say day 1000, and just
-    # integrate for say 1 day; useful for testing different output options
   cday=$TSTART
   nday=$(($TSTART + $DAYS))
   while [ $nday -le $TEND ]; do
@@ -532,12 +537,17 @@ if $CONTROL; then
     # RUN THE MODEL and COMBINE OUTPUT
     pdir=$basedir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
     cdir=$basedir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+    [ ! -z $PDIR ] && pdir=$basedir/$PDIR && echo "OVERRIDE: Using $pdir for restart files."
+    # this way we can start an integration after spinup, say day 1000, and just
+    # integrate for say 1 day; useful for testing different output options
     [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
     [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
     Setup $cdir $ncrecord # sets up working directory, cd into it
-    [ $cday -gt 0 ] && Restart $pdir # add restart files
-    $nckeep && echo "Keeping original longitude info."
-    Iterate $ncrecord $nckeep # run model
+    if [ $? == 0 ]; then
+      [ $cday -gt 0 ] && Restart $pdir # add restart files
+      $nckeep && echo "Keeping original longitude info."
+      Iterate $ncrecord $nckeep # run model
+    fi
     # STEP THINGS FORWARD, FOR NEXT ITERATION
     pday=$cday
     cday=$(($pday + $DAYS))
@@ -600,8 +610,10 @@ if $SPINDOWN; then
         }
       # RUN THE MODEL and COMBINE OUTPUT
       Setup $cdir $ncrecord # sets up working directory, cd into it
-      Restart $pdir # add restart files
-      Iterate $ncrecord $nckeep # run model
+      if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
+        Restart $pdir # add restart files
+        Iterate $ncrecord $nckeep # run model
+      fi
       # STEP THINGS FORWARD, FOR NEXT ITERATION
       pday=$cday # previous day
       cday=$(($pday + $DAYS))

@@ -6,14 +6,33 @@
 RUN=false # run the model?
 POST=true # run post-processing on the model results?
 TESTING=false # testing
+
+# Settings for tasks
+TESTING=false # do test model runs?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
+NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
-
-# Vars for post processing function
 CLIMOSTART=1000
 CLIMOEND=2000
+
+# # Directories
+# # * Note the directory confirmation in postprocess function should maybe be
+# #   eliminated; just supply it with these from the batch script... and on that
+# #   note should also eliminate those directory checks in the drycore_run function
+# # * Or just check for directory existence inside postprocess function
+# if [ "$hostname" == "gauss" ]; then
+#   scratch=/birner-scratch/ldavis # need to use special scratch directory
+#   storage=/home/ldavis
+# elif [ "$hostname" == "monde" ]; then
+#   scratch=/mdata1/ldavis
+#   storage=/home/ldavis
+# elif [ "$hostname" == "euclid" ]; then # everything is in same lib/bin
+#   scratch=/home/ldavis # not mounted, so plenty of space
+#   storage=/birner-home/ldavis
+# else echo "ERROR: Unknown host ${hostname}." && exit 1
+# fi
 
 # Variables without loops
 CORES=16 # core count
@@ -23,15 +42,13 @@ KSOPT=4 # near-surface timescale or the word 'scale'
 
 # Variables with loops
 # KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
-NTRUNCS=(42) # truncation numbers
-LEVS=(40) # vertical coordinate specifiers
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KFS=(0.25 0.5 1 2 4)
-KAS=(10 20 40 80 160)
-KFS=(2)
-KAS=(80)
+KFS=(1)
+KAS=(10 40 160)
+NTRUNCS=(42 63 85) # truncation numbers
+LEVS=(era) # vertical coordinate specifiers
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.
@@ -50,11 +67,12 @@ TSPINEND=600 # how long to run equilibrium?
 if $TESTING; then # overwrite some settings
   DAYS=1
   TSTART=0 TEND=1
+  TSTART=2000 TEND=2001 PDIR=t42lera # pday is override
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
   # TSTART=0 TEND=1
-  # TSTART=1000 TEND=1010 PDAY=900 # pday is override
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
-  TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
+  TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NEWDAYS=false
+  NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
 fi
 
 # The experiment names
@@ -66,8 +84,8 @@ EXPNAME=hs # can be "hs", "hs", or "pk"
 
 # Run multiple experiments consecutively
 cwd=$(pwd)
-for NTRUNC in ${NTRUNCS[@]}; do
-  for LEV in ${LEVS[@]}; do
+for LEV in ${LEVS[@]}; do
+  for NTRUNC in ${NTRUNCS[@]}; do
     for KT in ${KTS[@]}; do # stratosphere timescales
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
@@ -79,14 +97,16 @@ for NTRUNC in ${NTRUNCS[@]}; do
           $TESTING && EXPDIR="test" # override
           echo "Current experiment directory: ${EXPDIR}."
           # Call run script
-          if $RUN && ! { $NEWEXPER && -d /mdata1/ldavis/$EXPDIR; }; then
+          # if $RUN && ! { $NEWEXPER && -d /mdata1/ldavis/$EXPDIR; }; then
+          if $RUN; then
             [ $KSOPT == "scale" ] && KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") || KS=$KSOPT
             echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
             echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
             source drycore_run # can read variables declared here
           fi
           # Call post-process script
-          if $POST && [ -d /mdata1/ldavis/$EXPDIR ]; then
+          # if $POST && [ -d /home/ldavis/data/$EXPDIR ]; then
+          if $POST; then
             source postprocess
           fi
         done
