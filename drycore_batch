@@ -1,13 +1,13 @@
 #!/bin/bash
 # Use this to loop through spectral_run function
-set -e # exit if runscript triggered error
+# set -e # exit if runscript triggered error
 
 # Tasks to run
 RUN=false # run the model?
 POST=true # run post-processing on the model results?
+TESTING=false # testing
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
-TESTING=false # testing
 NEWEXPER=false # do not write to existing experiment directories?
 INIT=false # just show the initial state of model?
 
@@ -28,8 +28,10 @@ LEVS=(40) # vertical coordinate specifiers
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KFS=(0.5 1 2)
-KAS=(20 40 80)
+KFS=(0.25 0.5 1 2 4)
+KAS=(10 20 40 80 160)
+KFS=(2)
+KAS=(80)
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.
@@ -70,7 +72,6 @@ for NTRUNC in ${NTRUNCS[@]}; do
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
           # Ensure are still in same directory
-          [ $KA == 20 ] && [ $KF == 0.5 ] && continue
           cd $cwd
           # Experiment directory
           EXPREF="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" 40)f$(printf "%08.3f" 1)"
