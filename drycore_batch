@@ -11,7 +11,7 @@ TESTING=false # do test model runs?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
-NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
+NEWDAYS=false # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
 CLIMOSTART=1000
 CLIMOEND=2000
@@ -45,9 +45,9 @@ KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
 KFS=(1)
-KAS=(10 40 160)
-NTRUNCS=(42 63 85) # truncation numbers
-LEVS=(era) # vertical coordinate specifiers
+KAS=(40 10 160)
+NTRUNCS=(63 85) # truncation numbers
+LEVS=(40) # vertical coordinate specifiers
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.

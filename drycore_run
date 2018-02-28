@@ -354,7 +354,7 @@ EOF
     pk(61)=0.000000,      bk(61)=1.000000
 /
 EOF
-  fi 
+  fi
 
   # Diagnostic table, describes data saved to netCDF
   # First write the header to a file (required always) then add variables if we want data
@@ -485,7 +485,7 @@ function Iterate() {
     fi
   fi
   # Echo timing information
-  if [ -r $pdir/log.01ocess ]; then
+  if [ -r $pdir/log.process ]; then
     tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
     tprocess=$(tail -1 $pdir/log.process | sed 's/[^0-9]*//g' )
     echo "Model time: ${tmodel%.*}s, Process time: ${tprocess%.*}s."
