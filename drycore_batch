@@ -8,7 +8,6 @@ POST=true # run post-processing on the model results?
 TESTING=false # testing
 
 # Settings for tasks
-TESTING=false # do test model runs?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
