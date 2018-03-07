@@ -41,16 +41,16 @@ fi
 # and with other datasets; note remap will output an array of NaNs if you try
 # to use remapycon or area weighted maps; with one-longitude, area weighted map
 # is the same as a 'distance weighted' map, so use that one
+# griddes=eraint_griddes.txt
+# zaxisdes=eraint_zaxisdes.txt
+# [ ! -r $griddes ] && echo "ERROR: Could not find grid description file $cwd/$griddes." && exit 1
+# [ ! -r $zaxisdes ] && echo "ERROR: Could not find zaxis description file $cwd/$zaxisdes." && exit 1
+# hinterp="-remapnn,$cwd/$griddes" # or remapdis
+# levels=$(cat eraint_zaxisdes.txt | grep -A100 "levels" | grep -B100 "lbounds" | \
+#   sed '$d' | sed 's/[^0-9]*//' | xargs | tr ' ' ',') # the ERA-Interim level list
+# [ -z $levels ] && echo "ERROR: Could not parse interpolation levels from $cwd/$zaxisdes." && exit 1
+# vinterp="-setzaxis,$cwd/$zaxisdes -intlevel,$levels"
 cwd=$(pwd) # save location
-griddes=eraint_griddes.txt
-zaxisdes=eraint_zaxisdes.txt
-[ ! -r $griddes ] && echo "ERROR: Could not find grid description file $cwd/$griddes." && exit 1
-[ ! -r $zaxisdes ] && echo "ERROR: Could not find zaxis description file $cwd/$zaxisdes." && exit 1
-hinterp="-remapnn,$cwd/$griddes" # or remapdis
-levels=$(cat eraint_zaxisdes.txt | grep -A100 "levels" | grep -B100 "lbounds" | \
-  sed '$d' | sed 's/[^0-9]*//' | xargs | tr ' ' ',') # the ERA-Interim level list
-[ -z $levels ] && echo "ERROR: Could not parse interpolation levels from $cwd/$zaxisdes." && exit 1
-vinterp="-setzaxis,$cwd/$zaxisdes -intlevel,$levels"
 
 #------------------------------------------------------------------------------
 # Directories
@@ -98,22 +98,9 @@ function Climate() {
   [ $ntime -eq 1 ] && timmean="" || timmean="-timmean"
   [ -z "$timmean" ] && echo "Time-mean of control files already taken." \
     || echo "Control files need time-mean."
-  commands=("${files[@]/#/${timmean} }") # the hashtag-search prepends; a %-search would append
+  commands=("${files[@]/#/${timmean} -genlevelbounds,ztop=101325,zbot=0 }")
   echo "Calculating ensemble mean."
   cdo $flags -ensmean ${commands[@]} ${fclimate}.nc
-  # Idea to interpolate with python
-  # echo "Interpolating result."
-  # python << EOF
-  # import xarray as xr
-  # import scipy.interpolate as intp
-  # f = xr.open_dataset("${fclimate}.nc")
-  # o = f.copy()
-  # o.drop(o.variables.keys())
-  # out = [$(cat eraint_griddes.txt | grep -A100 "yvals" | sed 's/[^0-9]//' | xargs | tr -s ' ' ',')]
-  # for n in f:
-  #   o[n] = intp.interp1d(d['lat'].values, d.values.squeeze(), axis=1, kind='linear')(out)
-  # o.to_netcdf("${fclimate}.nc") # overwrites old one
-  # EOF
   # Weird artifacts from remap on 1D latitude slice
   # echo "Calculating ensemble mean."
   # cdo $flags -ensmean ${commands[@]} interp0.nc
@@ -122,9 +109,6 @@ function Climate() {
   # cdo $flags $vinterp -selgrid,2 interp0.nc interp2.nc
   # cdo $flags -merge interp1.nc interp2.nc ${fclimate}.nc
   # rm interp?.nc
-  # Failed attempts
-  # cdo $flags -merge $vinterp $hinterp -selgrid,1 interp0.nc $vinterp -selgrid,2 interp0.nc testing.nc # results in plev and plev_2 axes
-  # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc # attempt to chain operations; failed
 }
 
 #------------------------------------------------------------------------------
