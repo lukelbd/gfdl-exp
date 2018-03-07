@@ -42,9 +42,15 @@ fi
 # to use remapycon or area weighted maps; with one-longitude, area weighted map
 # is the same as a 'distance weighted' map, so use that one
 cwd=$(pwd) # save location
-griddes=eraint_griddes.txt && hinterp="-remapdis,$cwd/${griddes}" || echo "WARNING: Could not find grid description file ${griddes}."
-vinterp="-intlevel,1,2,3,5,7,10,20,30,50,70,100,125,150,175,200,225,250,300,350,400,450,500,550,600,650,700,750,775,800,825,850,875,900,925,950,975,1000"
-[ ! -r $cwd/$griddes ] && echo "ERROR: Could not find grid description file $cwd/${griddes}." && exit 1
+griddes=eraint_griddes.txt
+zaxisdes=eraint_zaxisdes.txt
+[ ! -r $griddes ] && echo "ERROR: Could not find grid description file $cwd/$griddes." && exit 1
+[ ! -r $zaxisdes ] && echo "ERROR: Could not find zaxis description file $cwd/$zaxisdes." && exit 1
+hinterp="-remapnn,$cwd/$griddes" # or remapdis
+levels=$(cat eraint_zaxisdes.txt | grep -A100 "levels" | grep -B100 "lbounds" | \
+  sed '$d' | sed 's/[^0-9]*//' | xargs | tr ' ' ',') # the ERA-Interim level list
+[ -z $levels ] && echo "ERROR: Could not parse interpolation levels from $cwd/$zaxisdes." && exit 1
+vinterp="-setzaxis,$cwd/$zaxisdes -intlevel,$levels"
 
 #------------------------------------------------------------------------------
 # Directories
@@ -70,6 +76,12 @@ log=log_
 
 #------------------------------------------------------------------------------
 # Control climate data, and reference to other control climates
+# Notes on interpolation:
+# * Cannot chain the merge command; must be highest level no matter what. So
+#   prepend timmean commands to files being merged.
+# * For some reason doing -merge on chained/interpolated data results in duplicate
+#   pressure level coordinates; interpolating them individually avoids this, and 
+#   explicitly re-declaring the z-axis description also avoids this.
 function Climate() {
   shopt -s nullglob # will return empty if no match
   [ -z $CLIMOSTART ] && CLIMOSTART=0 # start of climate days
@@ -82,19 +94,37 @@ function Climate() {
     [ $day1 -ge $CLIMOSTART ] && [ $day2 -le $CLIMOEND ] && files+=($file) && daystrings+=($daystring)
   done
   echo "Getting climate from file days ${daystrings[@]}..."
-  ntime=$(cdo -s ntime ${files[0]}) # test time
+  ntime=$(cdo -s -ntime ${files[0]}) # test time
   [ $ntime -eq 1 ] && timmean="" || timmean="-timmean"
   [ -z "$timmean" ] && echo "Time-mean of control files already taken." \
     || echo "Control files need time-mean."
   commands=("${files[@]/#/${timmean} }") # the hashtag-search prepends; a %-search would append
   echo "Calculating ensemble mean."
-  cdo $flags ensmean ${commands[@]} ens.nc
-  echo "Interpolating result."
-  cdo $flags $vinterp $hinterp ens.nc ${fclimate}.nc #2>>$log # the averages at each time
-  [ -e ens.nc ] && rm ens.nc # remove helper file
+  cdo $flags -ensmean ${commands[@]} ${fclimate}.nc
+  # Idea to interpolate with python
+  # echo "Interpolating result."
+  # python << EOF
+  # import xarray as xr
+  # import scipy.interpolate as intp
+  # f = xr.open_dataset("${fclimate}.nc")
+  # o = f.copy()
+  # o.drop(o.variables.keys())
+  # out = [$(cat eraint_griddes.txt | grep -A100 "yvals" | sed 's/[^0-9]//' | xargs | tr -s ' ' ',')]
+  # for n in f:
+  #   o[n] = intp.interp1d(d['lat'].values, d.values.squeeze(), axis=1, kind='linear')(out)
+  # o.to_netcdf("${fclimate}.nc") # overwrites old one
+  # EOF
+  # Weird artifacts from remap on 1D latitude slice
+  # echo "Calculating ensemble mean."
+  # cdo $flags -ensmean ${commands[@]} interp0.nc
+  # echo "Interpolating result."
+  # cdo $flags $vinterp $hinterp -selgrid,1 interp0.nc interp1.nc
+  # cdo $flags $vinterp -selgrid,2 interp0.nc interp2.nc
+  # cdo $flags -merge interp1.nc interp2.nc ${fclimate}.nc
+  # rm interp?.nc
+  # Failed attempts
+  # cdo $flags -merge $vinterp $hinterp -selgrid,1 interp0.nc $vinterp -selgrid,2 interp0.nc testing.nc # results in plev and plev_2 axes
   # cdo $flags $vinterp $hinterp -ensmean ${commands[@]} ${fclimate}.nc # attempt to chain operations; failed
-  # cdo $flags -selgrid,2 ens.nc ${fclimate}.nc # bugfix attempt
-  # [ $? != 0 ] && echo "ERROR: Energy terms not present." && mv ens.nc ${fclimate}.nc # bugfix attempt
 }
 
 #------------------------------------------------------------------------------
@@ -120,7 +150,7 @@ function EOF() {
   commands=(${files[@]/#/-selname,u -sellevidx,$levidx })
     # the hashtag-search prepends to each array element; a %-search would append
   echo "Getting time series at level $levidx from files ${files[@]##*/}."
-  cdo $flags mergetime ${commands[@]} $series
+  cdo $flags -mergetime ${commands[@]} $series
   # Iterate through regions
   export CDO_WEIGHT_MODE=on
   regions=(NH SH)
@@ -144,7 +174,7 @@ function EOF() {
     pcfile=pcs$region$levidx.nc # here, 
     # Get the EOFs themselves
     echo "Getting EOFs from the time series at level $levidx."
-    cdo $flags eof,$neof -setname,EOF -detrend $selection $series \
+    cdo $flags -eof,$neof -setname,EOF -detrend $selection $series \
       $eigfile $eoffile # save eigenvalues and eigenvectors
     # Next the PCs; must do it manually, but very simple calculation; eofcoeff not needed
     # Will area-weight the full time series, multiply it by each EOF, and standardize the
@@ -157,8 +187,8 @@ function EOF() {
       pcs[$i]+="-seltimestep,$ieof $eoffile" # and eigenvector
     done
     echo "Getting PCs from the time series at level $levidx."
-    cdo $flags merge ${pcs[@]} $pcfile # merge results of the multiplications
-    cdo $flags div -sub $pcfile -timmean $pcfile \
+    cdo $flags -merge ${pcs[@]} $pcfile # merge results of the multiplications
+    cdo $flags -div -sub $pcfile -timmean $pcfile \
       -timstd $pcfile ${pcfile%.*}_std.nc # sub mean, divide by std
     mv ${pcfile%.*}_std.nc $pcfile # overwrite original
     # Finally, get EOFs in physical units by multiplying the standardized
@@ -186,12 +216,12 @@ function Equilibrium() {
     echo "Number of files in $tspindown run: ${#files[@]}."
     [ ${#files[@]} -le 1 ] && continue
       # this is PATCH for old workflow where we only did 100-day spindowns
-    cdo $flags timmean ${files[-1]} $fequilibrium-$tspindown.nc #2>>$log # just want last one, alphabetically sorted; will vary length of run
+    cdo $flags -timmean ${files[-1]} $fequilibrium-$tspindown.nc #2>>$log # just want last one, alphabetically sorted; will vary length of run
     outfiles+=($fequilibrium-$tspindown.nc)
   done
   # ENSEMBLE-MEAN OF THE EQUILIBRIUM CLIMATES
   echo "Getting ensemble mean equilibrium climate from ${outfiles[@]}..."
-  cdo $flags ensmean ${outfiles[@]} $fequilibrium-ensemble.nc
+  cdo $flags -ensmean ${outfiles[@]} $fequilibrium-ensemble.nc
 }
 # Spindown data, or progress of given spindown with time-resolution preserved
 function Spindown() {
@@ -205,13 +235,13 @@ function Spindown() {
     echo "Number of files in $tspindown run: ${#files[@]}."
     [ ${#files[@]} -le 2 ] && continue
       # this is PATCH for old stupid workflow where we only saved first 100 days + last 100 days
-    cdo $flags mergetime ${files[@]} $fspindown-$tspindown.nc #2>>$log
+    cdo $flags -mergetime ${files[@]} $fspindown-$tspindown.nc #2>>$log
     outfiles+=($fspindown-$tspindown.nc)
   done
   if false; then
     # From results, get ENSEMBLE MEAN of full spindown process
     echo "Getting spindown ensemble from files ${outfiles[@]##*/}..."
-    cdo $flags ensmean ${outfiles[@]} $fspindown-ensemble.nc #2>>$log
+    cdo $flags -ensmean ${outfiles[@]} $fspindown-ensemble.nc #2>>$log
   fi
 }
 # Finally get ensemble-statistics for equilibrium climate files
@@ -241,7 +271,7 @@ function Diffs() {
   fi
   # Our selected difference
   echo "First the selected difference."
-  cdo $flags sub $file1 $file2 $fequilibrium-diff$region.nc
+  cdo $flags -sub $file1 $file2 $fequilibrium-diff$region.nc
   # Bootstrap the differences
   echo "Next bootstrap random differences, and get the standard deviation."
   length=${#files[@]}
@@ -251,7 +281,7 @@ function Diffs() {
     while [ $ch1 -eq $ch2 ]; do
       ch2=$(expr $RANDOM % $length) # repeat until two DIFFERENT choices
     done
-    cdo $flags sub ${files[$ch1]} ${files[$ch2]} boot$(printf "%04d" $i)$region.nc
+    cdo $flags -sub ${files[$ch1]} ${files[$ch2]} boot$(printf "%04d" $i)$region.nc
   done
   # Just get every single possible difference instead
   # echo "Next get the difference of every single possible pair, and percentiles."
@@ -264,15 +294,15 @@ function Diffs() {
   # done
   # Standard deviation and percentiles of differences
   files=(boot[0-9][0-9][0-9][0-9]$region.nc) # will delete these later
-  cdo $flags ensstd ${files[@]} $fequilibrium-diffstd$region.nc
+  cdo $flags -ensstd ${files[@]} $fequilibrium-diffstd$region.nc
   if [ -x /usr/bin/cdo ]; then # anaconda version still uses integer params
-    /usr/bin/cdo -s -O enspctl,2.5 ${files[@]} $fequilibrium-difflo$region.nc
-    /usr/bin/cdo -s -O enspctl,97.5 ${files[@]} $fequilibrium-diffhi$region.nc
-      # apparently if try to use -P flag, will NOT EXEUCTE IN PARALLEL
+    /usr/bin/cdo -s -O -enspctl,2.5 ${files[@]} $fequilibrium-difflo$region.nc
+    /usr/bin/cdo -s -O -enspctl,97.5 ${files[@]} $fequilibrium-diffhi$region.nc
+      # apparently if try to use -P flag, will NOT EXECUTE IN PARALLEL
   else echo "WARNING: Could not find CDO version with float-parameter percentile."
   fi
   rm ${files[@]} # remove the helper files
-  # cdo $flags ensstd1 ${files[@]} $fequilibrium-std.nc
+  # cdo $flags -ensstd1 ${files[@]} $fequilibrium-std.nc
 }
 
 #----------------------------------------------------------------------------
@@ -355,7 +385,7 @@ if $eofs; then
         echo "WARNING: Could not find any $prefix files for $region."
         continue
       fi
-      cdo $flags merge ${files[@]} ${FILENAME}.$prefix$region.nc &>${log}$prefix$region &
+      cdo $flags -merge ${files[@]} ${FILENAME}.$prefix$region.nc &>${log}$prefix$region &
     done
   done
   wait # finish parallel
