@@ -29,6 +29,10 @@ if [ -z "$nckeep" ]; then
   echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
   exit 999
 fi
+if [ -z "$testing" ]; then
+  echo "ERROR: Must pass bash true/false whether you want to use testing mode."
+  exit 999
+fi
 if ! hash ncl 2>/dev/null; then
   echo "ERROR: NCL is not in $PATH."
   exit 999
@@ -122,7 +126,7 @@ for ncfile in *.nc; do
   fi
   # Management of file created
   # Will overwrite original because haven't lost information yet
-  mv ncl.nc $ncfile # move old file on top of new file
+  $testing && ncfile=ncl.nc || mv ncl.nc $ncfile # move old file on top of new file
   ncrename -d lev_p,plev $ncfile &>/dev/null # dimensions
   ncrename -v lev_p,plev $ncfile &>/dev/null # variables of same name
   ncatted -a cartesian_axis,plev,c,c,"Z" $ncfile 2>/dev/null # fix p dimension

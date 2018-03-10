@@ -391,7 +391,6 @@ EOF
 # Variables to save (module name, fortran name, save name, file name, time-sampling freq 
 # for averages, whether we take average, other options, and save size [currently F32]; 
 # note cannot save time-average data in same file as non-time-average data, it seems)
-"dynamics",   "pres_full",      "p",     "$FILENAME", "all", .false., "none", 2,
 "dynamics",   "temp",           "t",     "$FILENAME", "all", .false., "none", 2,
 "dynamics",   "ucomp",          "u",     "$FILENAME", "all", .false., "none", 2,
 "dynamics",   "vcomp",          "v",     "$FILENAME", "all", .false., "none", 2,
@@ -406,6 +405,7 @@ EOF
   else echo "Recording no data."
   fi
 # Some options that were removed before:
+# "dynamics",   "pres_full",      "p",     "$FILENAME", "all", .false., "none", 2,
 # "hs_forcing",  "diss_heat_rdamp",  "D",      "$FILENAME",  "all",  .false.,  "none",  2,
 # "dynamics",    "vor",              "vor",    "$FILENAME",  "all",  .false.,  "none",  2
 # "dynamics",    "bk",               "bhalf",  "6xdaily_inst",  "all",  .false.,  "none",  2,
