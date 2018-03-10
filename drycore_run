@@ -6,6 +6,9 @@
 #  * 12 cores: 10-day Spindown run, T39 60lats was 111 seconds
 ulimit -s unlimited # set max open files
 
+# Check for testing; if true, then will keep all files in processing steps
+# This parameter is passed as argument to processing function
+[ -z $TESTING ] && testing=false || testing=$TESTING
 # Double check that everything was declared properly in the batch script
 # echo $DAYS $DT $LEV $NTRUNC $KF $KA $KS $KT $EXPNAME $EXPTYPE $FILENAME $SPINDOWN $CONTROL
 if [ -z $DAYS ] || [ -z $DT ] || [ -z $LEV ] || [ -z $NTRUNC ] \
@@ -104,9 +107,12 @@ function Setup() {
   fi
   # Set up working directory, and move there
   if [ -d $cdir ]; then
-    if [ ! -z $NEWDAYS ] && $NEWDAYS; then
+    if [ ! -z $NEWDAYS ] && $NEWDAYS && [ ! -z "$(\ls $cdir/RESTART)" ]; then
       echo "Working directory ${cdir##*/} already exists. Canceling integration..."
       return 1
+    elif [ ! -z $NEWDAYS ] && $NEWDAYS && [ -z "$(\ls $cdir/RESTART)" ]; then
+      echo "Working directory ${cdir##*/} contains unfinished integration. Deleting..."
+      rm -r $cdir
     else
       echo "Working directory ${cdir##*/} already exists. Deleting..."
       rm -r $cdir
@@ -505,7 +511,7 @@ function Iterate() {
   if $ncrecord; then
     # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
     # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
-    $process $nckeep &>log.process & # processing
+    $process $nckeep $testing &>log.process & # processing
     p2=$! # record PID
   fi
 }

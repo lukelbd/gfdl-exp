@@ -17,6 +17,7 @@
 # Global vars
 t0=$(date +%s)           # starting time
 nckeep=$1                # whether to keep longitudinal data
+testing=$2               # check if testing mode enabled; if true, keep all intermediate files
 basedir=${0%/*}          # same location as this file; trim filename from right
 hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
 mppnccombine=$basedir/${hostname}_mppnccombine # combine; needs to have been compiled here
@@ -87,8 +88,13 @@ echo "  * Time for combining files: $(($(date +%s) - $t))s."
 # * [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
 [ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
 for ncfile in *.nc; do
-  outfile="../netcdf/${ncfile%%.*}.${PWD##*/}.nc" # longitude-averaged data
-  origfile="../netcdf/${ncfile%%.*}ORIG.${PWD##*/}.nc" # original data
+  if $testing; then # special names, and keep in same folder
+    outfile="${ncfile%%.*}_summary.nc" # longitude-averaged data
+    origfile="${ncfile%%.*}_full.nc" # original data
+  else
+    outfile="../netcdf/${ncfile%%.*}_summary.${PWD##*/}.nc" # longitude-averaged data
+    origfile="../netcdf/${ncfile%%.*}_full.${PWD##*/}.nc" # original data
+  fi
   # origfile="../netcdf/${ncfile%%.*}_lons.${PWD##*/}.nc"
   ncrename -d pfull,mlev $ncfile &>/dev/null # dimensions
   ncrename -d phalf,ilev $ncfile &>/dev/null
@@ -155,8 +161,7 @@ for ncfile in *.nc; do
   cdo -O -s merge basic?.nc energy?.nc $outfile # basic grid has preference
   echo "  * Time for merging all the terms into one file: $(($(date +%s) - $t))s."
   # Then remove the temporary files
-  rm energy?.nc
-  rm basic?.nc
+  ! $testing && rm energy?.nc basic?.nc
   if $nckeep; then
     # Keep the old file
     # Also get divergence, vorticity, streamfunction, and velocity potential
@@ -168,16 +173,16 @@ for ncfile in *.nc; do
     echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
     if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
       echo "WARNING: Could not get the vorticity/divergence/streamfunction terms."
-      rm dv?.nc # remove any that may exist
+      ! $testing && rm dv?.nc # remove any that may exist
       mv $ncfile $origfile
     else
       cdo -O -s -merge $ncfile dv1.nc dv2.nc $origfile
-      rm dv?.nc $ncfile
+      ! $testing && rm dv?.nc $ncfile
     fi
   else
     # Delete the old file
     echo "Removing longitude-resolution file..."
-    rm $ncfile # simple
+    ! $testing && rm $ncfile # simple
   fi
 done
 # Finally, echo time of finish

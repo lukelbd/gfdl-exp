@@ -5,37 +5,20 @@
 # Tasks to run
 RUN=false # run the model?
 POST=true # run post-processing on the model results?
-TESTING=false # testing
 
 # Settings for tasks
+TESTING=true # do quick test control/spindown runs?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
-NEWDAYS=false # do not write to existing dXXXX-dYYYY directories?
+NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
-CLIMOSTART=1000
-CLIMOEND=2000
-
-# # Directories
-# # * Note the directory confirmation in postprocess function should maybe be
-# #   eliminated; just supply it with these from the batch script... and on that
-# #   note should also eliminate those directory checks in the drycore_run function
-# # * Or just check for directory existence inside postprocess function
-# if [ "$hostname" == "gauss" ]; then
-#   scratch=/birner-scratch/ldavis # need to use special scratch directory
-#   storage=/home/ldavis
-# elif [ "$hostname" == "monde" ]; then
-#   scratch=/mdata1/ldavis
-#   storage=/home/ldavis
-# elif [ "$hostname" == "euclid" ]; then # everything is in same lib/bin
-#   scratch=/home/ldavis # not mounted, so plenty of space
-#   storage=/birner-home/ldavis
-# else echo "ERROR: Unknown host ${hostname}." && exit 1
-# fi
+CLIMOSTART=600 # start climatology for post processing
+CLIMOEND=2000 # end climatology day for post processing
 
 # Variables without loops
-CORES=16 # core count
-DAYS=100 # time step for pausing model to output results
+CORES=8 # core count
+DAYS=50 # time step for pausing model to output results
 DT=600 # time step in seconds
 KSOPT=4 # near-surface timescale or the word 'scale'
 
@@ -44,10 +27,13 @@ KSOPT=4 # near-surface timescale or the word 'scale'
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KFS=(1)
-KAS=(40 10 160)
-NTRUNCS=(63 85) # truncation numbers
-LEVS=(40) # vertical coordinate specifiers
+# KAS=(10)
+# KFS=(1)
+NTRUNCS=(42)
+LEVS=(40)
+# KAS=(40 10 160)
+# NTRUNCS=(85 63) # truncation numbers
+# LEVS=(40 era) # vertical coordinate specifiers
 
 # Control experiment timing
 TSTART=0 # first day of integration; set to 0 for new run.
@@ -66,12 +52,14 @@ TSPINEND=600 # how long to run equilibrium?
 if $TESTING; then # overwrite some settings
   DAYS=1
   TSTART=0 TEND=1
-  TSTART=2000 TEND=2001 PDIR=t42lera # pday is override
+  TSTART=2000 TEND=2001 PDIR=t42l40 # pday is override
+  # TSTART=2000 TEND=2001 PDIR=t42lera # pday is override
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
   # TSTART=0 TEND=1
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
   TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NEWDAYS=false
-  NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
+  # NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
+  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
 fi
 
 # The experiment names
