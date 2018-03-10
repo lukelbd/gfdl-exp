@@ -22,7 +22,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Isobaric coordinate version
 ; First interpolate to pressure levels
-notime = True
+notime = False
 if (.not. notime) then readtime = toint(systemfunc("date +%s")) else readtime = 0 end if
 print("Reading initial file and interpolating...")
 if (.not. isvar("filename")) then 

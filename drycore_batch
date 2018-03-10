@@ -3,8 +3,8 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
+RUN=true # run the model?
+POST=false # run post-processing on the model results?
 
 # Settings for tasks
 TESTING=true # do quick test control/spindown runs?
@@ -52,7 +52,7 @@ TSPINEND=600 # how long to run equilibrium?
 if $TESTING; then # overwrite some settings
   DAYS=1
   TSTART=0 TEND=1
-  TSTART=2000 TEND=2001 PDIR=t42l40 # pday is override
+  TSTART=2000 TEND=2001 PDIR=t42l40_d2000 # pdir is override
   # TSTART=2000 TEND=2001 PDIR=t42lera # pday is override
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
   # TSTART=0 TEND=1
