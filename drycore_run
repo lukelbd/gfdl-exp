@@ -528,6 +528,7 @@ if $CONTROL; then
   radiationoff=false # we still have radiation now
   surfaceoff=false
   frictionoff=false
+  pday=$(($TSTART - $DAYS)) # only time when we do minus days
   cday=$TSTART
   nday=$(($TSTART + $DAYS))
   while [ $nday -le $TEND ]; do
@@ -566,7 +567,8 @@ fi
 ##############################################################################
 if $SPINDOWN; then
   # CHECK THAT TIMING VARIABLES ARE DECLARED
-  if [ -z $TCONTROL ] || [ -z $TSPINSTART ] || [ -z $TSPINEND ]; then
+  if [ -z $TCONTROL ] || [ -z $TSPINSTART ] || [ -z $TSPINEND ] || [ -z $TSPINRECORD ] || [ -z $TSPINKEEP ]; then
+    # echo TCONTROL $TCONTROL TSPINSTART $TSPINSTART TSPINEND $TSPINEND TSPINRECORD $TSPINRECORD TSPINKEEP $TSPINKEEP
     echo "ERROR: One or more of the timing variables was not set."
     exit 1
   fi
@@ -609,6 +611,8 @@ if $SPINDOWN; then
         pdir=$prefix-spindown$suffix-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
         }
       # RUN THE MODEL and COMBINE OUTPUT
+      [[ " ${TSPINRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
+      [[ " ${TSPINKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
       Setup $cdir $ncrecord # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         Restart $pdir # add restart files

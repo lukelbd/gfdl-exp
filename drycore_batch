@@ -3,13 +3,13 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
+RUN=true # run the model?
+POST=false # run post-processing on the model results?
 TESTING=false # testing
 
 # Settings for tasks
-SPINDOWN=false # do spindown runs?
-CONTROL=true  # do control run?
+SPINDOWN=true # do spindown runs?
+CONTROL=false  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
 NEWDAYS=false # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
@@ -45,20 +45,22 @@ KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
 KFS=(1)
-KAS=(40 10 160)
-NTRUNCS=(63 85) # truncation numbers
+KAS=(40)
+NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
 
 # Control experiment timing
-TSTART=0 # first day of integration; set to 0 for new run.
-TEND=2000 # last day of integration after spin-up
+TSTART=2000 # first day of integration; set to 0 for new run.
+TEND=6000 # last day of integration after spin-up
 TRECORD=({0000..9999}) # when to record anything at all?
 TKEEP=(1000) # when to retain longitude info?
 
 # Spindown experiment timing
-TCONTROL=(1000) # just one equilibrium run, for testing?
 TCONTROL=({17..59}00) # last time stopped at day 1500 run
-TSPINSTART=100 # start day for spindown (in days after tcontrol)
+TCONTROL=({10..59}00) # just one equilibrium run, for testing?
+TSPINRECORD=({0000..9999}) # when to record anything at all?
+TSPINKEEP=(-1) # when to keep spindown data?
+TSPINSTART=0 # start day for spindown (in days after tcontrol)
 TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
 
