@@ -112,6 +112,8 @@ function Setup() {
       return 1
     elif [ ! -z $NEWDAYS ] && $NEWDAYS && [ -z "$(\ls $cdir/RESTART)" ]; then
       echo "Working directory ${cdir##*/} contains unfinished integration. Deleting..."
+      NEWDAYS=false # may want to use this to resume stopped integration
+        # that was overwriting a bunch of other experiments; want to overwrite subsequent days
       rm -r $cdir
     else
       echo "Working directory ${cdir##*/} already exists. Deleting..."
@@ -400,11 +402,13 @@ EOF
 "dynamics",   "bk",             "hybi",  "$FILENAME", "all", .false., "none", 2,
 "dynamics",   "pk",             "hyai",  "$FILENAME", "all", .false., "none", 2,
 "hs_forcing", "tdt_ndamp",      "ndamp", "$FILENAME", "all", .false., "none", 2,
-"hs_forcing", "tdt_diss_rdamp", "rdamp", "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "udt_rdamp",      "udamp", "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "vdt_rdamp",      "vdamp", "$FILENAME", "all", .false., "none", 2,
 EOF
   else echo "Recording no data."
   fi
 # Some options that were removed before:
+# "hs_forcing", "tdt_diss_rdamp", "rdamp", "$FILENAME", "all", .false., "none", 2,
 # "dynamics",   "pres_full",      "p",     "$FILENAME", "all", .false., "none", 2,
 # "hs_forcing",  "diss_heat_rdamp",  "D",      "$FILENAME",  "all",  .false.,  "none",  2,
 # "dynamics",    "vor",              "vor",    "$FILENAME",  "all",  .false.,  "none",  2
@@ -467,24 +471,20 @@ function Iterate() {
   echo "Running model..."
   # Use MPIRUN to run model in parallel, and select other cores for running processing
   # step in parallel (choosing cores explicitly seemed to be faster)
-  # $mpirun -np $CORES ./fms.x 2>&1 | tee -a ../out # tee sends to stdout, and -a appends to file
-  $mpirun -np $CORES ./fms.x &>log.model & # need ./fms.x, not fms.x
-  # # # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
-  # # # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
-  p1=$! # current model step PID
-  wait $p1 # and wait for it to finish
+  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
+  # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
+  $mpirun -np $CORES ./fms.x &>log.model # need ./fms.x, not fms.x
   # Wait for previous processing step, if set
   # If unset, means we are just now starting the model runs
   if [ ! -z $p2 ]; then
-    wait $p2   # if bad exit code, return message
-    estatus=$? # last exit status
+    wait $p2; estatus=$? # wait command will always exit with exit status of supplied process ID
     if [ $estatus != 0 ]; then
       echo "ERROR: Exit status $estatus from previous model step..."
       case $estatus in
-        1) echo "Something failed in model integration. Check log.model" ;;
-        2) echo "Something failed in the NCL script. Check log.ncl" ;;
-        3) echo "Something failed in the basic CDO commands. Check log.basic" ;;
-        4) echo "Something failed in the Lorenz cycle CDO commands. Check log.energy" ;;
+        1) echo "Something failed during model integration. Check log.model." ;;
+        2) echo "Something failed during model interpolation. Check log.interp." ;;
+        3) echo "Something failed while getting basic terms. Check log.basic." ;;
+        4) echo "Something failed while getting Lorenz cycle terms. Check log.lorenz." ;;
         *) echo "Check log.process; other/miscellaneous failure." ;;
       esac
       exit 1
@@ -507,12 +507,12 @@ function Iterate() {
   rm fms.x # remove executable, because takes up space
   # Process new data, and remove old data
   # Record the PID when done
-  p2= # default empty
   if $ncrecord; then
     # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
     # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
     $process $nckeep $testing &>log.process & # processing
     p2=$! # record PID
+  else p2= # empty
   fi
 }
 
