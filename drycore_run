@@ -107,14 +107,19 @@ function Setup() {
   fi
   # Set up working directory, and move there
   if [ -d $cdir ]; then
-    if [ ! -z $NEWDAYS ] && $NEWDAYS && [ ! -z "$(\ls $cdir/RESTART)" ]; then
-      echo "Working directory ${cdir##*/} already exists. Canceling integration..."
-      return 1
+    if [ ! -z $NEWDAYS ] && $NEWDAYS && compgen -G "$cdir/*.nc" &>/dev/null; then
+      echo "Working directory ${cdir##*/} contains failed processing step. Deleting..."
+      NEWDAYS=false # may want to use this to resume stopped integration
+        # that was overwriting a bunch of other experiments; want to overwrite subsequent days
+      rm -r $cdir
     elif [ ! -z $NEWDAYS ] && $NEWDAYS && [ -z "$(\ls $cdir/RESTART)" ]; then
       echo "Working directory ${cdir##*/} contains unfinished integration. Deleting..."
       NEWDAYS=false # may want to use this to resume stopped integration
         # that was overwriting a bunch of other experiments; want to overwrite subsequent days
       rm -r $cdir
+    elif [ ! -z $NEWDAYS ] && $NEWDAYS && [ ! -z "$(\ls $cdir/RESTART)" ]; then
+      echo "Working directory ${cdir##*/} already exists. Canceling integration..."
+      return 1
     else
       echo "Working directory ${cdir##*/} already exists. Deleting..."
       rm -r $cdir
