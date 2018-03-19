@@ -15,17 +15,28 @@
 # directory to see list of files where diag_fields are registered.
 ################################################################################
 # Global vars
-t0=$(date +%s)           # starting time
-nckeep=$1                # whether to keep longitudinal data
-basedir=${0%/*}          # same location as this file; trim filename from right
-hostname=${HOSTNAME%%.*} # trim e.g. .atmos.colostate.edu
+t0=$(date +%s)      # starting time
+nckeep=$1           # whether to keep longitudinal data
+testing=$2          # check if testing mode enabled; if true, keep all intermediate files
+basedir=${0%/*}     # same location as this file; trim filename from right
+interpwithcdo=false # interpolate with CDO instead of NCL? much slower during testing (see notes)
+hostname=${HOSTNAME%%.*} # trim e.g. monde.atmos.colostate.edu --> monde
 mppnccombine=$basedir/${hostname}_mppnccombine # combine; needs to have been compiled here
-nclscript=$basedir/process_ncl.ncl # processing with NCL
-basicscript=$basedir/process_basic     # processing with CDO
-energyscript=$basedir/process_energy     # processing with CDO
+interpcdo=$basedir/process_interp     # interpolate with CDO
+interpncl=$basedir/process_interp.ncl # interpolate with NCL, automatic iteration
+# interpncl=$basedir/process_interpex.ncl # interpolate with NCL, explicitly interpolate select variables
+params=$basedir/process_params.ncl    # params with NCL
+basics=$basedir/process_basic     # zonal means and flux terms with CDO
+lorenz=$basedir/process_energy.ncl  # eddy and mean Lorenz energy cycle terms with NCL
+# lorenz=$basedir/process_lorenz    # Lorenz energy cycle terms with CDO
+# energy=$basedir/process_energy    # Lorenz energy cycle terms with CDO
 # Double check some stuff
 if [ -z "$nckeep" ]; then
   echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
+  exit 999
+fi
+if [ -z "$testing" ]; then
+  echo "ERROR: Must pass bash true/false whether you want to use testing mode."
   exit 999
 fi
 if ! hash ncl 2>/dev/null; then
@@ -44,16 +55,16 @@ if [ ! -x $mppnccombine ]; then
   echo "ERROR: The mpp combine executable $mppnccombine is missing."
   exit 999
 fi
-if [ ! -x $basicscript ]; then
-  echo "ERROR: The script $basicscript is missing."
+if [ ! -x $basics ]; then
+  echo "ERROR: The script $basics is missing."
   exit 999
 fi
-if [ ! -x $energyscript ]; then
-  echo "ERROR: The script $energyscript is missing."
+if [ ! -x $lorenz ]; then
+  echo "ERROR: The script $lorenz is missing."
   exit 999
 fi
-if [ ! -r $nclscript ]; then
-  echo "ERROR: The script $nclscript is missing."
+if [ ! -r $interpncl ]; then
+  echo "ERROR: The script $interpncl is missing."
   exit 999
 fi
 
@@ -87,76 +98,130 @@ echo "  * Time for combining files: $(($(date +%s) - $t))s."
 # * [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
 [ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
 for ncfile in *.nc; do
-  outfile="../netcdf/${ncfile%%.*}.${PWD##*/}.nc" # longitude-averaged data
-  origfile="../netcdf/${ncfile%%.*}ORIG.${PWD##*/}.nc" # original data
-  # origfile="../netcdf/${ncfile%%.*}_lons.${PWD##*/}.nc"
-  ncrename -d pfull,mlev $ncfile &>/dev/null # dimensions
-  ncrename -d phalf,ilev $ncfile &>/dev/null
-  ncrename -v pfull,mlev $ncfile &>/dev/null # variables of same name
+  # Determine file names
+  if $testing; then # special names, and keep in same folder
+    outfile="${ncfile%%.*}_summary.nc" # longitude-averaged data
+    origfile="${ncfile%%.*}_full.nc" # original data
+  else
+    outfile="../netcdf/${ncfile%%.*}_summary.${PWD##*/}.nc" # longitude-averaged data
+    origfile="../netcdf/${ncfile%%.*}_full.${PWD##*/}.nc" # original data
+  fi
+  # Apply some simple modifications to attributes
+  ncrename -d pfull,mlev $ncfile &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
+  ncrename -d phalf,ilev $ncfile &>/dev/null # ilev is the other ECHAM convention
+  ncrename -v pfull,mlev $ncfile &>/dev/null # -d renames dimensions, -v renames variables of same name
   ncrename -v phalf,ilev $ncfile &>/dev/null
+  ncatted -O -a bounds,mlev,o,c,"ilev" $ncfile
+  ncatted -O -a long_name,udamp,o,c,"Rayleigh damping of zonal wind" $ncfile
+  ncatted -O -a long_name,vdamp,o,c,"Rayleigh damping of meridional wind" $ncfile
   ############################################################################
-  # 1) Get quantities with NCL operations, and add them to the original file
-  # We're fixing what ain't broke; using NCL for interpolation because it was just
-  # so ugly to have to get NCL params, then set z-axis with CDO, then interpolate with
-  # NCL, then go back to CDO for the final processing; also the old workflow required
-  # re-creating huge files multiple times (in setzaxis, and in both NCL exits)
+  interpfile=${ncfile%%.*}_interp.nc
+  # 1) Interpolate the data to pressure levels
+  # a) Use CDO for interpolation
   t=$(date +%s)
-  echo "Interpolating with NCL and computing parameters..."
-  # Just call NCL with the input script; also pass a variable
-  ncl -n -Q "filename=\"$ncfile\"" $nclscript &>log.ncl #2> /dev/null
-    # -Q = no banner, -n = do not enumerate print statements
-  if [ ! -r ncl.nc ]; then 
-    echo "ERROR: Something failed in NCL script."
-    exit 2
+  if $interpwithcdo; then
+    echo "Interpolating with CDO..."
+    $interpcdo $ncfile $interpfile &>log.interp # that simple babe
+    [ $? != 0 ] && echo "ERROR: Something failed during CDO interpolation." && exit $?
+    ! $testing && rm interp?.nc
+    ncrename -d plev_bnds,plevb $interpfile &>/dev/null # dimensions
+    ncrename -v plev_bnds,plevb $interpfile &>/dev/null # variables of same name
+  # b) Use NCL vint2hp_ecmwf for interpolation
+  else
+    echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
+    ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$interpfile\"" $interpncl &>log.interp #2> /dev/null
+    if egrep -q "^warning:|^fatal:" log.interp &>/dev/null || [ ! -r $interpfile ]; then
+      echo "ERROR: Something failed during NCL interpolation." && exit 2
+    fi
+    ncrename -d lev_p,plev $interpfile &>/dev/null # dimensions
+    ncrename -v lev_p,plev $interpfile &>/dev/null # variables of same name
+    ncrename -d lev_p_bnds,plevb $interpfile &>/dev/null
+    ncrename -v lev_p_bnds,plevb $interpfile &>/dev/null
   fi
-  # Check for warnings in the NCL log
-  if egrep -q "^warning:|^fatal:" log.ncl || [ ! -r "ncl.nc" ]; then # if either string occurs on any line
-    echo "ERROR: Something failed in NCL script."
-    exit 2 # exit status of egrep will be 0 if got match (get to here), non-zero if no match
-  fi
-  # Management of file created
-  # Will overwrite original because haven't lost information yet
-  mv ncl.nc $ncfile # move old file on top of new file
-  ncrename -d lev_p,plev $ncfile &>/dev/null # dimensions
-  ncrename -v lev_p,plev $ncfile &>/dev/null # variables of same name
-  ncatted -a cartesian_axis,plev,c,c,"Z" $ncfile 2>/dev/null # fix p dimension
-  ncatted -a long_name,plev,c,c,"pressure level" $ncfile 2>/dev/null # fix p dimension
-  ncatted -a units,plev,c,c,"mb" $ncfile 2>/dev/null # fix p dimension
-  ncatted -a edges,lon,d,, $ncfile 2>/dev/null # fix p dimension
-  ncatted -a edges,lat,d,, $ncfile 2>/dev/null # fix p dimension
-  echo "  * Time for NCL processing: $(($(date +%s) - $t))s."
-  t=$(date +%s)
+  # Attribute standardization
+  ncatted -a cartesian_axis,plev,o,c,"Z" \
+    -a edges,plev,o,c,"plevb" -a edges,lon,o,c,"lonb" -a edges,lat,o,c,"latb" \
+    -a bounds,plev,o,c,"plevb" -a bounds,lon,o,c,"lonb" -a bounds,lat,o,c,"latb" \
+    -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" \
+    -a long_name,plevb,o,c,"pressure level bounds" -a units,plevb,o,c,"mb" $interpfile
+  # -a edges,lonb,d,, -a edges,latb,d,, -a edges,lon,o,c,"lonb" -a edges,lat,o,c,"latb" \
+  # -a long_name,lonb,o,c,"longitude bounds" -a long_name,latb,o,c,"latitude bounds" \
+    # old idea to format lonb/latb just like plev bounds are formatted; CDO has problem
+    # with this unfortunately, so just leave lonb/latb alone
+  $testing && ncfile=$interpfile || mv $interpfile $ncfile # move old file on top of new file
+  echo "  * Time for interpolation: $(($(date +%s) - $t))s."
+
+  # ##############################################################################
+  # # Add some parameters to the longitude-latitude file with NCL
+  # t=$(date +%s)
+  # echo "Getting extra parameters with NCL..." # -Q = no banner, -n = do not enumerate print statements
+  # ncl -n -Q "filename=\"$ncfile\"" $params &>log.params #2> /dev/null
+  # if egrep -q "^warning:|^fatal:" log.params &>/dev/null; then
+  #   echo "ERROR: Something failed getting extra parameters with NCL." && exit 3
+  # fi
+  # echo "  * Time for getting extra parameters with NCL: $(($(date +%s) - $t))s."
 
   ##############################################################################
-  # 3) Get extra stuff with CDO commands (either simple zonal mean, or add some stuff)
+  # 2) Get extra stuff with CDO commands (either simple zonal mean, or add some stuff)
   # Some of these require the extra variables output by NCL; also meridional flux
   # terms rely on NCL having set poleward==positive in each hemisphere
-  t=$(date +%s)
-  echo "Getting basic parameters..."
-  $basicscript $ncfile &>log.basic
-  echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
-
+  # t=$(date +%s)
+  echo "Getting basic terms..."
+  $basics $ncfile &>log.basic &
+  pbasics=$!
+  # [ $? != 0 ] && echo "ERROR: Something failed while getting basic terms." && exit 3
+  # echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
   ##############################################################################
-  # 4) Get energy terms in another file
+  # 3) Get energy terms in another file
   # Some of these require the extra variables output by NCL; also meridional flux
   # terms rely on NCL having set poleward==positive in each hemisphere
-  t=$(date +%s)
+  # t=$(date +%s)
   echo "Getting Lorenz energy cycle terms..."
-  $energyscript $ncfile &>log.energy
-  echo "  * Time for getting energy terms with CDO: $(($(date +%s) - $t))s."
+  ncl -n -Q "filename=\"$ncfile\"" $lorenz &>log.lorenz &
+  plorenz=$!
+  # if egrep -q "^warning:|^fatal:" log.lorenz &>/dev/null; then
+  #   echo "ERROR: Something failed getting extra parameters with NCL." && exit 4
+  # fi
+  # echo "  * Time for getting Lorenz energy terms with NCL: $(($(date +%s) - $t))s."
+  ##############################################################################
+  # Manage background processes
+  # First the basic term
+  wait $pbasics # wait for basic terms
+  [ $? != 0 ] && echo "ERROR: Something failed while getting basic terms." && exit 3
+  twait=$(tail -1 log.basic | sed 's/[^0-9]*//g')
+  echo "  * Time for getting basic terms with CDO: ${twait}s."
+  # Next the Lorenz terms
+  wait $plorenz # wait for Lorenz terms
+  if egrep -q "^warning:|^fatal:" log.lorenz &>/dev/null; then
+    echo "ERROR: Something failed getting extra parameters with NCL." && exit 4
+  fi
+  twait=$(tail -1 log.lorenz | sed 's/[^0-9]*//g')
+  echo "  * Time for getting Lorenz energy terms with NCL: ${twait}s."
 
   ##############################################################################
-  # 5) Tidy up
-  # First combine files we are keeping
-  # Must merge energy terms first so singleton longitude latitude dimensions become x y
+  # 4) Tidy up
+  # First combine files we are keeping, and remove singleton dimensions
   t=$(date +%s)
   echo "Merging all the terms into one file..."
-  # cdo -O -s merge energy?.nc basic?.nc $outfile # vice versa
-  cdo -O -s merge basic?.nc energy?.nc $outfile # basic grid has preference
+  # cdo -O -s merge basic?.nc lorenz?.nc $outfile # give basic grid preference; weird stuff can happen otherwise
+  cdo -O -s merge basic?.nc energy??.nc $outfile # give basic grid preference; weird stuff can happen otherwise
+    # will raise errors because edges were deleted, but still referenced by attributes
+  ncwa -O -a lon -d lon,0,0 $outfile $outfile # delete singleton dimension on any variables with lon; note
+  ncks -O -x -v lon $outfile $outfile # delete remaining dimensionless variable
+  ncks -A -v latb,plevb $ncfile $outfile # append bounds
+  ncks $outfile $outfile # clever hack; just *alphabetizes* the variables in file, and very fast
+    # that the 0,0 notation averages over indices, but a 0.,0. notation would average over coordinate values
+    # because the decimal point is distinction; see http://nco.sourceforge.net/nco.html#Hyperslabs
   echo "  * Time for merging all the terms into one file: $(($(date +%s) - $t))s."
+  # Next get some integrals and weighted averages using ncwa
+  # This is experimental/to learn more about NCO mainly
+  # ncap2 -O -s "*pi=3.1415926535; latwgt=cos(lat*pi/180)" $outfile $outfile # get the latitude weight
+  # ncwa -O -a lat,lon -w latwgt $outfile $outfile # global means
+  # ncks -O -x -v lat,lon $outfile $outfile # remove the lat/lon variables, which now have no dimension
+  # ncap2 -O -s "dp=plevb(1::1)-plevb(:-1)" $outfile $outfile # for some reason the ::1 is necessary; 1: just gives the first element
+  # ncwa -y sum -a plev -w dp $outfile integrals.nc
   # Then remove the temporary files
-  rm energy?.nc
-  rm basic?.nc
+  ! $testing && rm basic?.nc energy??.nc
   if $nckeep; then
     # Keep the old file
     # Also get divergence, vorticity, streamfunction, and velocity potential
@@ -168,16 +233,16 @@ for ncfile in *.nc; do
     echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
     if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
       echo "WARNING: Could not get the vorticity/divergence/streamfunction terms."
-      rm dv?.nc # remove any that may exist
+      ! $testing && rm dv?.nc # remove any that may exist
       mv $ncfile $origfile
     else
       cdo -O -s -merge $ncfile dv1.nc dv2.nc $origfile
-      rm dv?.nc $ncfile
+      ! $testing && rm dv?.nc $ncfile
     fi
   else
     # Delete the old file
     echo "Removing longitude-resolution file..."
-    rm $ncfile # simple
+    ! $testing && rm $ncfile # simple
   fi
 done
 # Finally, echo time of finish
