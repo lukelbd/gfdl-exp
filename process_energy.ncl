@@ -315,9 +315,10 @@ delete(f)
 message("  * Time for NCL APE generation terms")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Generation terms
+; Dissipation terms
+; Note the wind tendency is always negative; we want energy going away to be positive here
 f = addfile("energy13.nc","c")
-DKE = dim_avg_n(ustar*udstar + vstar*vdstar,dimlon)/g
+DKE = -1.*dim_avg_n(ustar*udstar + vstar*vdstar,dimlon)/g
 copy_VarCoords(avevar,DKE) ; copy coordinates
 DKE@long_name = "dissipation of eddy KE"
 DKE@units = "W/m2 Pa"
@@ -325,7 +326,7 @@ f->plev_bnds = plev_bnds
 f->DKE = DKE
 delete(f)
 f = addfile("energy14.nc","c")
-DKM = (ubar(:,:,:,0)*udbar(:,:,:,0) + vbar(:,:,:,0)*vdbar(:,:,:,0))/g
+DKM = -1.*(ubar(:,:,:,0)*udbar(:,:,:,0) + vbar(:,:,:,0)*vdbar(:,:,:,0))/g
 ; DKM = (ubar(time|:,plev|:,lat|:,lon|0)*udbar(time|:,plev|:,lat|:,lon|0) \
 ;       + vbar(time|:,plev|:,lat|:,lon|0)*vdbar(time|:,plev|:,lat|:,lon|0))/g
 copy_VarCoords(avevar,DKM) ; copy coordinates
