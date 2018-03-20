@@ -42,9 +42,6 @@ p0   = 101325. ; reference pressure
 p0mb = 1013.25 ; in mb for function input
 pouti = (hyai + hybi*p0) / 100. ; back to mb
 poutm = (pouti(1:nedges-1) + pouti(0:nedges-2)) / 2.
-; Prepare level bounds
-pouti!0 = "lev_p_bnds"
-pouti&lev_p_bnds = pouti
 ; Parameters needed for interpolation
 slp = f->slp ; sea level pressure in mb
 ; Parameters needed for extrapolation
@@ -58,15 +55,14 @@ zbot(:,:) = 0 ; zero surface geopotential
 ; end if
 ; Print message
 message("  * Time for NCL reading and setup")
-; Old idea to add 'bounds' variables to file
-; This replicated behavior of genlevelbounds in CDO, then tried to make lon/lat
-; mimick the style of Nx2 bounds variables
-; ; First the pressure
-; pouti_edges = (/pouti(0:nedges-2), pouti(1:nedges-1)/)
-; pouti_edges!0 = "bnds"
-; pouti_edges!1 = "lev_p"
-; pouti_edges&lev_p = poutm ; the central levels
-; pouti_edges := pouti_edges(lev_p|:,bnds|:)
+; Add bounds to file
+; This replicates behavior of genlevelbounds in CDO
+pouti_edges = (/pouti(0:nedges-2), pouti(1:nedges-1)/)
+pouti_edges!0 = "bnds"
+pouti_edges!1 = "plev"
+pouti_edges&plev = poutm ; the central levels
+pouti_edges := pouti_edges(plev|:,bnds|:)
+; ; This screws up CDO interpretation of grid, so don't bother
 ; ; Next the longitude
 ; lonb = f->lonb
 ; nlonb = dimsizes(lonb)
@@ -98,9 +94,7 @@ setfileoption("nc","Format","LargeFile")
   ; see: http://www.ncl.ucar.edu/FAQ/#file_io_004
   ; recommended for files >2GB, and my output file may be that big
 o = addfile(outfile,"c")
-o->lonb = f->lonb ; keep longitude edges
-o->latb = f->latb ; keep latitude edges
-o->lev_p_bnds = pouti ; will rename later and add atributes
+o->plev_bnds = pouti_edges ; will rename later and add atributes
 do i=0,dimsizes(varnames)-1
   varname := varnames(i) ; wrap in array to strip attributes
   if .not. any(varname .eq. dimnames) then
@@ -123,6 +117,7 @@ do i=0,dimsizes(varnames)-1
     end if end if
     ; Interpolate the variable and save it
     var_out = vinth2p_ecmwf(var, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True, varflag, tbot, zbot)
+    var_out!1 = "plev" ; rename dimension; simple as that
     copy_VarAtts(var,var_out)
     o->$varname$ = var_out ; write to new file
     message(" * Time for NCL interpolation of "+q+varname+q)

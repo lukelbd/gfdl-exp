@@ -124,8 +124,6 @@ for ncfile in *.nc; do
     $interpcdo $ncfile $interpfile &>log.interp # that simple babe
     [ $? != 0 ] && echo "ERROR: Something failed during CDO interpolation." && exit $?
     ! $testing && rm interp?.nc
-    ncrename -d plev_bnds,plevb $interpfile &>/dev/null # dimensions
-    ncrename -v plev_bnds,plevb $interpfile &>/dev/null # variables of same name
   # b) Use NCL vint2hp_ecmwf for interpolation
   else
     echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
@@ -133,21 +131,13 @@ for ncfile in *.nc; do
     if egrep -q "^warning:|^fatal:" log.interp &>/dev/null || [ ! -r $interpfile ]; then
       echo "ERROR: Something failed during NCL interpolation." && exit 2
     fi
-    ncrename -d lev_p,plev $interpfile &>/dev/null # dimensions
-    ncrename -v lev_p,plev $interpfile &>/dev/null # variables of same name
-    ncrename -d lev_p_bnds,plevb $interpfile &>/dev/null
-    ncrename -v lev_p_bnds,plevb $interpfile &>/dev/null
   fi
-  # Attribute standardization
-  ncatted -a cartesian_axis,plev,o,c,"Z" \
-    -a edges,plev,o,c,"plevb" -a edges,lon,o,c,"lonb" -a edges,lat,o,c,"latb" \
-    -a bounds,plev,o,c,"plevb" -a bounds,lon,o,c,"lonb" -a bounds,lat,o,c,"latb" \
-    -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" \
-    -a long_name,plevb,o,c,"pressure level bounds" -a units,plevb,o,c,"mb" $interpfile
-  # -a edges,lonb,d,, -a edges,latb,d,, -a edges,lon,o,c,"lonb" -a edges,lat,o,c,"latb" \
-  # -a long_name,lonb,o,c,"longitude bounds" -a long_name,latb,o,c,"latitude bounds" \
-    # old idea to format lonb/latb just like plev bounds are formatted; CDO has problem
-    # with this unfortunately, so just leave lonb/latb alone
+  # Standardize attributes
+  ncatted -a edges,lon,d,, -a edges,lat,d,, \
+    -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" \
+    -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
+    -a long_name,lat,o,c,"latitude" -a units,lat,o,c,"degrees_north" \
+    -a long_name,lon,o,c,"longitude" -a units,lon,o,c,"degrees_east" $interpfile
   $testing && ncfile=$interpfile || mv $interpfile $ncfile # move old file on top of new file
   echo "  * Time for interpolation: $(($(date +%s) - $t))s."
 
@@ -200,26 +190,17 @@ for ncfile in *.nc; do
 
   ##############################################################################
   # 4) Tidy up
-  # First combine files we are keeping, and remove singleton dimensions
   t=$(date +%s)
   echo "Merging all the terms into one file..."
-  # cdo -O -s merge basic?.nc lorenz?.nc $outfile # give basic grid preference; weird stuff can happen otherwise
-  cdo -O -s merge basic?.nc energy??.nc $outfile # give basic grid preference; weird stuff can happen otherwise
-    # will raise errors because edges were deleted, but still referenced by attributes
-  ncwa -O -a lon -d lon,0,0 $outfile $outfile # delete singleton dimension on any variables with lon; note
-  ncks -O -x -v lon $outfile $outfile # delete remaining dimensionless variable
-  ncks -A -v latb,plevb $ncfile $outfile # append bounds
-  ncks $outfile $outfile # clever hack; just *alphabetizes* the variables in file, and very fast
-    # that the 0,0 notation averages over indices, but a 0.,0. notation would average over coordinate values
-    # because the decimal point is distinction; see http://nco.sourceforge.net/nco.html#Hyperslabs
+  # First add back longitudes to NCL calculated terms
+  # Hard/annoying/verbose to fix this in NCL so do it here
+  for f in energy??.nc; do # absolutely necessary for CDO to detect plev as vertical axis, and need singleton longitude
+    cdo -s -setgrid,basic1.nc $f tmp.nc; mv tmp.nc $f # so ugly... kill me...
+  done
+  # Next apply merge
+  cdo -O -s -merge basic?.nc energy??.nc $outfile # will raise errors because edges were deleted, but still referenced by attributes
+  ncks -O $outfile $outfile # clever hack; just *alphabetizes* the variables in file, and very fast
   echo "  * Time for merging all the terms into one file: $(($(date +%s) - $t))s."
-  # Next get some integrals and weighted averages using ncwa
-  # This is experimental/to learn more about NCO mainly
-  # ncap2 -O -s "*pi=3.1415926535; latwgt=cos(lat*pi/180)" $outfile $outfile # get the latitude weight
-  # ncwa -O -a lat,lon -w latwgt $outfile $outfile # global means
-  # ncks -O -x -v lat,lon $outfile $outfile # remove the lat/lon variables, which now have no dimension
-  # ncap2 -O -s "dp=plevb(1::1)-plevb(:-1)" $outfile $outfile # for some reason the ::1 is necessary; 1: just gives the first element
-  # ncwa -y sum -a plev -w dp $outfile integrals.nc
   # Then remove the temporary files
   ! $testing && rm basic?.nc energy??.nc
   if $nckeep; then
@@ -227,18 +208,19 @@ for ncfile in *.nc; do
     # Also get divergence, vorticity, streamfunction, and velocity potential
     t=$(date +%s)
     echo "Keeping longitude-resolution file and calculating extra terms..."
-    cdo -O -s -uv2dv -selname,u,v $ncfile dv0.nc 1>/dev/null
+    cdo -O -s -uv2dv -selname,u,v $ncfile dv0.nc 1>/dev/null # gets spectral coefs for vor and div
     cdo -O -s -invertlat -sp2gp -dv2ps dv0.nc dv1.nc 1>/dev/null # default names are fine
     cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc # better names
-    echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
     if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
       echo "WARNING: Could not get the vorticity/divergence/streamfunction terms."
       ! $testing && rm dv?.nc # remove any that may exist
       mv $ncfile $origfile
     else
       cdo -O -s -merge $ncfile dv1.nc dv2.nc $origfile
-      ! $testing && rm dv?.nc $ncfile
+      ! $testing && rm dv?.nc
+      ! $testing && rm $ncfile
     fi
+    echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
   else
     # Delete the old file
     echo "Removing longitude-resolution file..."
