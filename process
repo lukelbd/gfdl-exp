@@ -14,6 +14,13 @@
 # Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
 # directory to see list of files where diag_fields are registered.
 ################################################################################
+# Function for checking NCL scripts success
+# Script sometimes fails to spawn child process for displaying time information; ignore these errors
+# Also Execute.c is always shown as error alongside specific function error, so ignore that one
+function nclcheck() { # input log file as argument
+  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^warning:|^fatal:" &>/dev/null
+  return $? # return exit code; good status means we found error, bad status means we found nothing
+}
 # Global vars
 t0=$(date +%s)      # starting time
 nckeep=$1           # whether to keep longitudinal data
@@ -128,7 +135,7 @@ for ncfile in *.nc; do
   else
     echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
     ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$interpfile\"" $interpncl &>log.interp #2> /dev/null
-    if egrep -q "^warning:|^fatal:" log.interp &>/dev/null || [ ! -r $interpfile ]; then
+    if nclcheck log.interp || [ ! -r $interpfile ]; then
       echo "ERROR: Something failed during NCL interpolation." && exit 2
     fi
   fi
@@ -146,7 +153,7 @@ for ncfile in *.nc; do
   # t=$(date +%s)
   # echo "Getting extra parameters with NCL..." # -Q = no banner, -n = do not enumerate print statements
   # ncl -n -Q "filename=\"$ncfile\"" $params &>log.params #2> /dev/null
-  # if egrep -q "^warning:|^fatal:" log.params &>/dev/null; then
+  # if nclcheck log.params; then
   #   echo "ERROR: Something failed getting extra parameters with NCL." && exit 3
   # fi
   # echo "  * Time for getting extra parameters with NCL: $(($(date +%s) - $t))s."
@@ -169,7 +176,7 @@ for ncfile in *.nc; do
   echo "Getting Lorenz energy cycle terms..."
   ncl -n -Q "filename=\"$ncfile\"" $lorenz &>log.lorenz &
   plorenz=$!
-  # if egrep -q "^warning:|^fatal:" log.lorenz &>/dev/null; then
+  # if nclcheck log.lorenz; then
   #   echo "ERROR: Something failed getting extra parameters with NCL." && exit 4
   # fi
   # echo "  * Time for getting Lorenz energy terms with NCL: $(($(date +%s) - $t))s."
@@ -182,7 +189,7 @@ for ncfile in *.nc; do
   echo "  * Time for getting basic terms with CDO: ${twait}s."
   # Next the Lorenz terms
   wait $plorenz # wait for Lorenz terms
-  if egrep -q "^warning:|^fatal:" log.lorenz &>/dev/null; then
+  if nclcheck log.lorenz; then
     echo "ERROR: Something failed getting extra parameters with NCL." && exit 4
   fi
   twait=$(tail -1 log.lorenz | sed 's/[^0-9]*//g')

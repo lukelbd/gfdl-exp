@@ -7,18 +7,18 @@ RUN=true # run the model?
 POST=false # run post-processing on the model results?
 
 # Settings for tasks
-TESTING=true # do quick test control/spindown runs?
+TESTING=false # do quick test control/spindown runs?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
-NEWDAYS=false # do not write to existing dXXXX-dYYYY directories?
+NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
 CLIMOSTART=600 # start climatology for post processing
 CLIMOEND=2000 # end climatology day for post processing
 
 # Variables without loops
 KSOPT=4 # near-surface timescale or the word 'scale'
-CORES=16 # core count
+CORES=8 # core count
 DAYS=100 # time step for pausing model to output results
 DT=600 # time step in seconds
 
@@ -27,14 +27,14 @@ DT=600 # time step in seconds
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KFS=(1)
-KAS=(40)
+KAS=(0.1 0.25 0.5 1 2.5 5 320 640 1024) # already did 10, 20, 40, 80, 160
+KFS=(1) # default values
 NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
 
 # Control experiment timing
-TSTART=2000 # first day of integration; set to 0 for new run.
-TEND=6000 # last day of integration after spin-up
+TSTART=0 # first day of integration; set to 0 for new run.
+TEND=2000 # last day of integration after spin-up
 TRECORD=({0000..9999}) # when to record anything at all?
 TKEEP=(1000) # when to retain longitude info?
 
@@ -50,7 +50,7 @@ TSPINEND=600 # how long to run equilibrium?
 # Override for test experiments
 if $TESTING; then # overwrite some settings
   # DAYS=1 TSTART=0 TEND=1
-  DAYS=1 TSTART=2000 TEND=2001 PDIR=t42l40_d2000 # pdir is override
+  DAYS=1 TSTART=2000 TEND=2003 PDIR=t42l40_d2000 # pdir is override
   # DAYS=10 TSTART=2000 TEND=2010 PDIR=t42l40_d2000 # pdir is override
   # DAYS=100 TSTART=2000 TEND=2100 PDIR=t42l40_d2000 # pdir is override
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
