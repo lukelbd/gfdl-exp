@@ -3,8 +3,8 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=true # run the model?
-POST=false # run post-processing on the model results?
+RUN=false # run the model?
+POST=true # run post-processing on the model results?
 
 # Settings for tasks
 TESTING=false # do quick test control/spindown runs?
@@ -15,6 +15,8 @@ NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
 CLIMOSTART=600 # start climatology for post processing
 CLIMOEND=2000 # end climatology day for post processing
+SPINDOWNSTART=0 # start day for spindown file
+SPINDOWNEND=600 # end day for spindown file
 
 # Variables without loops
 KSOPT=4 # near-surface timescale or the word 'scale'
@@ -47,6 +49,23 @@ TSPINSTART=0 # start day for spindown (in days after tcontrol)
 TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
 
+# Post-processing options
+PARALLEL=false # run post-processing stuff in parallel?
+ENERGY=false # get energy?
+CLIMATE=false # get the climate stuff?
+EOFS=true # get EOFs?
+TAU=false # get timescale estimate?
+SPINDOWN=false # get spindown ensemble?
+EQUILIBRIUM=false # get supposed "equilibrium" climate?
+# DIFFS=false # get the ensemble analysis of equilibrium stuff?
+
+# The experiment names
+TOPOFILE= # path to file e.g. $PWD/topo.nc
+SPINDOWNOPT=1 # the spindown option; 1 for radiation off,
+FILENAME=4xdaily_inst # name for output files
+EXPTYPE=spectral # change this for different file
+EXPNAME=hs # can be "hs", "hs", or "pk"
+
 # Override for test experiments
 if $TESTING; then # overwrite some settings
   # DAYS=1 TSTART=0 TEND=1
@@ -58,15 +77,8 @@ if $TESTING; then # overwrite some settings
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
   TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NEWDAYS=false
   # NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
-  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
+  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(80) KFS=(1)
 fi
-
-# The experiment names
-TOPOFILE= # path to file e.g. $PWD/topo.nc
-SPINDOWNOPT=1 # the spindown option; 1 for radiation off,
-FILENAME=4xdaily_inst # name for output files
-EXPTYPE=spectral # change this for different file
-EXPNAME=hs # can be "hs", "hs", or "pk"
 
 # Run multiple experiments consecutively
 cwd=$(pwd)
@@ -78,21 +90,19 @@ for LEV in ${LEVS[@]}; do
           # Ensure are still in same directory
           cd $cwd
           # Experiment directory
-          EXPREF="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" 40)f$(printf "%08.3f" 1)"
-          EXPDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
-          $TESTING && EXPDIR="test" # override
-          echo "Current experiment directory: ${EXPDIR}."
-          # Call run script
-          # if $RUN && ! { $NEWEXPER && -d /mdata1/ldavis/$EXPDIR; }; then
+          DEFDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
           if $RUN; then
+            $TESTING && EXPDIR="test" || EXPDIR="$DEFDIR" # keep test model runs in special directory
+            echo "Current experiment directory: ${EXPDIR}."
             [ $KSOPT == "scale" ] && KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") || KS=$KSOPT
             echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
             echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
             source drycore_run # can read variables declared here
           fi
           # Call post-process script
-          # if $POST && [ -d /home/ldavis/data/$EXPDIR ]; then
           if $POST; then
+            EXPDIR="$DEFDIR" # loop have been redefined so do this once for results from one experiment
+            echo "Current experiment directory: ${EXPDIR}."
             source postprocess
           fi
         done
