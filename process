@@ -18,8 +18,9 @@
 # Script sometimes fails to spawn child process for displaying time information; ignore these errors
 # Also Execute.c is always shown as error alongside specific function error, so ignore that one
 function nclcheck() { # input log file as argument
-  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^warning:|^fatal:" &>/dev/null
+  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
   return $? # return exit code; good status means we found error, bad status means we found nothing
+    # ignore ^warning: because these will also happen if we have a systemfunc error possibly
 }
 # Global vars
 t0=$(date +%s)      # starting time

@@ -617,9 +617,9 @@ if $SPINDOWN; then
         continue
       fi
       # GET DIRECTORIES
-      cdir=$prefix-spindown$suffix-d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+      cdir=$prefix-spindown$SPINDOWNOPT-d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
       [ $cday -eq 0 ] && pdir=$fstart || { # new line for visibility
-        pdir=$prefix-spindown$suffix-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
+        pdir=$prefix-spindown$SPINDOWNOPT-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
         }
       # RUN THE MODEL and COMBINE OUTPUT
       [[ " ${TSPINRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false

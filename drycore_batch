@@ -3,8 +3,8 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
+RUN=true # run the model?
+POST=false # run post-processing on the model results?
 
 # Settings for tasks
 TESTING=false # do quick test control/spindown runs?
@@ -29,7 +29,8 @@ DT=600 # time step in seconds
 KTS=(20) # one KT for now
 KFS=(0.25 0.5 1 2 4)
 KAS=(10 20 40 80 160)
-KAS=(0.1 0.25 0.5 1 2.5 5 320 640 1024) # already did 10, 20, 40, 80, 160
+# KAS=(0.1 0.25 0.5 1 2.5 5 320 640 1024) # already did 10, 20, 40, 80, 160
+KAS=(320 640)
 KFS=(1) # default values
 NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
@@ -53,15 +54,18 @@ TSPINEND=600 # how long to run equilibrium?
 PARALLEL=false # run post-processing stuff in parallel?
 ENERGY=false # get energy?
 CLIMATE=false # get the climate stuff?
-EOFS=true # get EOFs?
+EOFS=false # get EOFs?
 TAU=false # get timescale estimate?
-SPINDOWN=false # get spindown ensemble?
+SPINDOWNAVE=true # get every record of area-averaged spindown processes?
+SPINDOWNXS=false # get ensemble-mean cross-section of spindown process?
 EQUILIBRIUM=false # get supposed "equilibrium" climate?
 # DIFFS=false # get the ensemble analysis of equilibrium stuff?
 
 # The experiment names
 TOPOFILE= # path to file e.g. $PWD/topo.nc
-SPINDOWNOPT=1 # the spindown option; 1 for radiation off,
+SPINDOWNOPT=1 # the spindown option
+  # 1 for radiation off, 2 for radiation off but surface on, 
+  # 3 for everything off (radiation, surface, and friction), 4 for friction off
 FILENAME=4xdaily_inst # name for output files
 EXPTYPE=spectral # change this for different file
 EXPNAME=hs # can be "hs", "hs", or "pk"
@@ -77,7 +81,7 @@ if $TESTING; then # overwrite some settings
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
   TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NEWDAYS=false
   # NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
-  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(80) KFS=(1)
+  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
 fi
 
 # Run multiple experiments consecutively

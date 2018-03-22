@@ -40,20 +40,13 @@ output=$outputbase/$EXPDIR # directory for this experiment
 [ ! -d $output ] && mkdir $output
 input=$scratch/$EXPDIR/netcdf # location of data
 
-# File management/names
-log=log_ # log prefix
-fprefix=${FILENAME}_summary # original prefix file names
-fclimate=${FILENAME}_climate.nc
-fenergy=${FILENAME}_energy.nc
-fspindown=${FILENAME}_spindown${SPINDOWNOPT}.nc
-fequilibrium=${FILENAME}_equilibrium${SPINDOWNOPT}.nc
-
 # Source file containing functions
 [ ! -r postprocess_funcs ] && echo "ERROR: Could not find files containing post processing functions." && exit 1
 source postprocess_funcs
 
 # Move to output directory
 cd $output # move here
+# echo OUTPUT DIRECTORY: $(pwd)
 
 ################################################################################
 # Climate means
@@ -90,12 +83,22 @@ fi
 
 ################################################################################
 # Spindown processing
-if [ ! -z $SPINDOWN ] && $SPINDOWN; then
+# Get the full cross-section
+if [ ! -z $SPINDOWNXS ] && $SPINDOWNXS; then
   echo "Processing the spindown$SPINDOWNOPT data."
   if ! $PARALLEL; then
-    Spindown 2>&1 | tee ${log}spindown$SPINDOWNOPT
+    SpindownXS 2>&1 | tee ${log}spindown$SPINDOWNOPT
   else
-    Spindown &>${log}spindown$SPINDOWNOPT &
+    SpindownXS &>${log}spindown$SPINDOWNOPT &
+  fi
+fi
+# Preserve each record but take area averages
+if [ ! -z $SPINDOWNAVE ] && $SPINDOWNAVE; then
+  echo "Processing the spindown$SPINDOWNOPT data."
+  if ! $PARALLEL; then
+    SpindownAVE 2>&1 | tee ${log}spindown$SPINDOWNOPT
+  else
+    SpindownAVE &>${log}spindown$SPINDOWNOPT &
   fi
 fi
 
