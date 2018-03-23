@@ -40,20 +40,14 @@ output=$outputbase/$EXPDIR # directory for this experiment
 [ ! -d $output ] && mkdir $output
 input=$scratch/$EXPDIR/netcdf # location of data
 
-# File management/names
-log=log_ # log prefix
-fprefix=${FILENAME}_summary # original prefix file names
-fclimate=${FILENAME}_climate.nc
-fenergy=${FILENAME}_energy.nc
-fspindown=${FILENAME}_spindown${SPINDOWNOPT}.nc
-fequilibrium=${FILENAME}_equilibrium${SPINDOWNOPT}.nc
-
 # Source file containing functions
 [ ! -r postprocess_funcs ] && echo "ERROR: Could not find files containing post processing functions." && exit 1
 source postprocess_funcs
 
 # Move to output directory
+cwd=$(pwd)
 cd $output # move here
+# echo OUTPUT DIRECTORY: $(pwd)
 
 ################################################################################
 # Climate means
@@ -80,7 +74,7 @@ fi
 ################################################################################
 # Climate variability
 if [ ! -z $EOFS ] && $EOFS; then
-  echo "Energy time series."
+  echo "EOFs of zonal wind."
   if ! $PARALLEL; then
     EOFs 2>&1 | tee ${log}eofs
   else
@@ -90,15 +84,38 @@ fi
 
 ################################################################################
 # Spindown processing
-if [ ! -z $SPINDOWN ] && $SPINDOWN; then
+# Get the full cross-section
+if [ ! -z $SPINDOWNXS ] && $SPINDOWNXS; then
   echo "Processing the spindown$SPINDOWNOPT data."
   if ! $PARALLEL; then
-    Spindown 2>&1 | tee ${log}spindown$SPINDOWNOPT
+    SpindownXS 2>&1 | tee ${log}spindown$SPINDOWNOPT
   else
-    Spindown &>${log}spindown$SPINDOWNOPT &
+    SpindownXS &>${log}spindown$SPINDOWNOPT &
+  fi
+fi
+# Preserve each record but take area averages
+if [ ! -z $SPINDOWNAVE ] && $SPINDOWNAVE; then
+  echo "Processing the spindown$SPINDOWNOPT data."
+  if ! $PARALLEL; then
+    SpindownAVE 2>&1 | tee ${log}spindown$SPINDOWNOPT
+  else
+    SpindownAVE &>${log}spindown$SPINDOWNOPT &
   fi
 fi
 
+################################################################################
+# Timescale
+if [ ! -z $TIMESCALE ] && $TIMESCALE; then
+  echo "Processing the spindown$SPINDOWNOPT data."
+  if ! $PARALLEL; then
+    Timescale 2>&1 | tee ${log}spindown$SPINDOWNOPT
+  else
+    Timescale &>${log}spindown$SPINDOWNOPT &
+  fi
+fi
+
+################################################################################
+################################################################################
 ################################################################################
 # Statistics on multiple spindown results
 # Old and needs work
@@ -119,18 +136,18 @@ fi
 #     Diffs $region $tspindown1 $tspindown2 &>${log}diffs$region &
 #   done
 # fi
-
 ################################################################################
 # Compute spindown rate
-file2=${fclimate}AVE.nc
-file1=${fspindown}-ensembleAVE.nc
-file3=${fequilibrium}-ensembleAVE.nc
-if [ ! -z $TAU ] && $TAU && [ -r $file1 ] && [ -r $file2 ] && [ -r $file3 ]; then
-  echo "Esimating tau/timescales."
-  python3 &>${log}tau << EOF
-from postprocess_timescales import tau # file with all python utilities
-tau("$file1", climate="$file2", equilibrium="$file3", output="$output", ka=$ka, ks=4)
-EOF
-elif [ ! -z $TAU ] && $TAU; then
-  echo "WARNING: One of the files needed for spindown fitting is not available."
-fi
+# file2=${fclimate}AVE.nc
+# file1=${fspindown}-ensembleAVE.nc
+# file3=${fequilibrium}-ensembleAVE.nc
+# if [ ! -z $TAU ] && $TAU && [ -r $file1 ] && [ -r $file2 ] && [ -r $file3 ]; then
+#   echo "Esimating tau/timescales."
+#   python3 &>${log}tau << EOF
+# from postprocess_timescales import tau # file with all python utilities
+# tau("$file1", climate="$file2", equilibrium="$file3", output="$output", ka=$ka, ks=4)
+# EOF
+# elif [ ! -z $TAU ] && $TAU; then
+#   echo "WARNING: One of the files needed for spindown fitting is not available."
+# fi
+

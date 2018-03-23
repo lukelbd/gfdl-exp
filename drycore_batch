@@ -20,7 +20,7 @@ SPINDOWNEND=600 # end day for spindown file
 
 # Variables without loops
 KSOPT=4 # near-surface timescale or the word 'scale'
-CORES=16 # core count
+CORES=8 # core count
 DAYS=100 # time step for pausing model to output results
 DT=600 # time step in seconds
 
@@ -48,18 +48,22 @@ TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
 
 # Post-processing options
-PARALLEL=false # run post-processing stuff in parallel?
-ENERGY=false # get energy?
-CLIMATE=false # get the climate stuff?
+PARALLEL=true # run post-processing stuff in parallel?
+ENERGY=true # get energy?
+CLIMATE=true # get the climate stuff?
 EOFS=true # get EOFs?
 TAU=false # get timescale estimate?
-SPINDOWN=false # get spindown ensemble?
-EQUILIBRIUM=false # get supposed "equilibrium" climate?
+SPINDOWNAVE=false # get every record of area-averaged spindown processes?
+SPINDOWNXS=false # get ensemble-mean cross-section of spindown process?
+TIMESCALE=true # get the timescale?
+# EQUILIBRIUM=false # get supposed "equilibrium" climate?
 # DIFFS=false # get the ensemble analysis of equilibrium stuff?
 
 # The experiment names
 TOPOFILE= # path to file e.g. $PWD/topo.nc
-SPINDOWNOPT=1 # the spindown option; 1 for radiation off,
+SPINDOWNOPT=1 # the spindown option
+  # 1 for radiation off, 2 for radiation off but surface on, 
+  # 3 for everything off (radiation, surface, and friction), 4 for friction off
 FILENAME=4xdaily_inst # name for output files
 EXPTYPE=spectral # change this for different file
 EXPNAME=hs # can be "hs", "hs", or "pk"
@@ -67,7 +71,7 @@ EXPNAME=hs # can be "hs", "hs", or "pk"
 # Override for test experiments
 if $TESTING; then # overwrite some settings
   # DAYS=1 TSTART=0 TEND=1
-  DAYS=1 TSTART=2000 TEND=2001 PDIR=t42l40_d2000 # pdir is override
+  DAYS=1 TSTART=2000 TEND=2003 PDIR=t42l40_d2000 # pdir is override
   # DAYS=10 TSTART=2000 TEND=2010 PDIR=t42l40_d2000 # pdir is override
   # DAYS=100 TSTART=2000 TEND=2100 PDIR=t42l40_d2000 # pdir is override
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
@@ -75,7 +79,7 @@ if $TESTING; then # overwrite some settings
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
   TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NEWDAYS=false
   # NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
-  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(80) KFS=(1)
+  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
 fi
 
 # Run multiple experiments consecutively
