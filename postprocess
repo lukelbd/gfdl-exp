@@ -45,6 +45,7 @@ input=$scratch/$EXPDIR/netcdf # location of data
 source postprocess_funcs
 
 # Move to output directory
+cwd=$(pwd)
 cd $output # move here
 # echo OUTPUT DIRECTORY: $(pwd)
 
@@ -73,7 +74,7 @@ fi
 ################################################################################
 # Climate variability
 if [ ! -z $EOFS ] && $EOFS; then
-  echo "Energy time series."
+  echo "EOFs of zonal wind."
   if ! $PARALLEL; then
     EOFs 2>&1 | tee ${log}eofs
   else
@@ -103,6 +104,19 @@ if [ ! -z $SPINDOWNAVE ] && $SPINDOWNAVE; then
 fi
 
 ################################################################################
+# Timescale
+if [ ! -z $TIMESCALE ] && $TIMESCALE; then
+  echo "Processing the spindown$SPINDOWNOPT data."
+  if ! $PARALLEL; then
+    Timescale 2>&1 | tee ${log}spindown$SPINDOWNOPT
+  else
+    Timescale &>${log}spindown$SPINDOWNOPT &
+  fi
+fi
+
+################################################################################
+################################################################################
+################################################################################
 # Statistics on multiple spindown results
 # Old and needs work
 # if [ ! -z $DIFFS ] && $DIFFS; then
@@ -122,18 +136,18 @@ fi
 #     Diffs $region $tspindown1 $tspindown2 &>${log}diffs$region &
 #   done
 # fi
-
 ################################################################################
 # Compute spindown rate
-file2=${fclimate}AVE.nc
-file1=${fspindown}-ensembleAVE.nc
-file3=${fequilibrium}-ensembleAVE.nc
-if [ ! -z $TAU ] && $TAU && [ -r $file1 ] && [ -r $file2 ] && [ -r $file3 ]; then
-  echo "Esimating tau/timescales."
-  python3 &>${log}tau << EOF
-from postprocess_timescales import tau # file with all python utilities
-tau("$file1", climate="$file2", equilibrium="$file3", output="$output", ka=$ka, ks=4)
-EOF
-elif [ ! -z $TAU ] && $TAU; then
-  echo "WARNING: One of the files needed for spindown fitting is not available."
-fi
+# file2=${fclimate}AVE.nc
+# file1=${fspindown}-ensembleAVE.nc
+# file3=${fequilibrium}-ensembleAVE.nc
+# if [ ! -z $TAU ] && $TAU && [ -r $file1 ] && [ -r $file2 ] && [ -r $file3 ]; then
+#   echo "Esimating tau/timescales."
+#   python3 &>${log}tau << EOF
+# from postprocess_timescales import tau # file with all python utilities
+# tau("$file1", climate="$file2", equilibrium="$file3", output="$output", ka=$ka, ks=4)
+# EOF
+# elif [ ! -z $TAU ] && $TAU; then
+#   echo "WARNING: One of the files needed for spindown fitting is not available."
+# fi
+

@@ -11,7 +11,9 @@ log=log_ # log prefix
 fprefix=${FILENAME}_summary # original prefix file names
 fclimate=${FILENAME}_climate.nc
 fenergy=${FILENAME}_energy.nc
-fspindownxs=${FILENAME}_spindown${SPINDOWNOPT}xs.nc
+fspindownxs=${FILENAME}_spindown${SPINDOWNOPT}xs.nc # cross-section
+fspindownpoles=${FILENAME}_spindown${SPINDOWNOPT}poles.nc # spindown rate at the poles
+ftimescale=${FILENAME}_timescale${SPINDOWNOPT}.nc # the timescale stuff
 ################################################################################
 # Climate files
 # Used for climate means and climate variability stuff
@@ -87,6 +89,7 @@ eralevels=$(cat eraint_zaxisdes.txt | grep -A100 "levels" | grep -B100 "lbounds"
 [ -z $eralevels ] && echo "ERROR: Could not parse interpolation levels from $cwd/$zaxisdes." && exit 1
 # export CDO_GRIDSEARCH_RADIUS=5 # search radius; consider changing this
 # vinterp="-genlevelbounds,ztop=1013.25,zbot=0 -setzaxis,$cwd/$zaxisdes -intlevel,$eralevels" # don't need genlevelbounds because setzaxis adds bounds
+export REMAP_EXTRAPOLATE="on" # turn extrapolation on
 hinterp="-remapdis,$cwd/$griddes,2"
 vinterp="-setzaxis,$cwd/$zaxisdes -intlevel,$eralevels"
 interp="$vinterp $hinterp"
@@ -311,7 +314,7 @@ function SpindownAVE() {
   counter=0 # counter for waiting
   echo "Creating records of individual spindown runs."
   # for region in globe polenh polesh; do
-  for region in polenh; do
+  for region in polenh polesh; do
     outfiles=()
     spindowndays="" # empty string
     echo "Average over ${region}."
@@ -385,9 +388,39 @@ function SpindownAVE() {
   # from each hemisphere; modify this maybe
   file1=(${FILENAME}_*polenh.nc) file2=(${FILENAME}_*polesh.nc)
   [[ ${#file1[@]} != 1 || ${#file2[@]} != 1 ]] && echo "ERROR: Had issues averaging poles together." && exit 1
-  ncea $file1 $file2 ${FILENAME}_spindown${SPINDOWNOPT}poles.nc
-  rm $file1 $file2
+  ncea $file1 $file2 $fspindownpoles
+  # rm $file1 $file2 # actually keep these separate files?
 }
+
+################################################################################
+# Timescale stuff
+function Timescale() {
+  echo "Esimating dynamical timescale."
+  [ ! -r $fspindownpoles ] && echo "ERROR: Spindown file over poles $fspindownpoles is not available."
+  [ ! -r $fclimate ] && echo "ERROR: The climate file $fclimate is not available."
+  # Python approach due to illegible ensemble data
+  # python3 -c | tee ${log}timescale << EOF
+  # echo $(realpath $0)
+  python3 << EOF
+$(cat $cwd/postprocess_timescales.py)
+tau(spindown="$fspindownpoles", climate="$fclimate", output="$ftimescale")
+EOF
+  ncks -O -x -v lon,lat,time $ftimescale $ftimescale # drop vars and alphabetize
+  # Simple CDO approach for the dynamical timescale
+  # cp $fclimate tmp.nc
+  # ncwa -O -a lon tmp.nc tmp.nc
+  # cdo -ensmean -fldmean -sellonlatbox,-180,180,-90,-60 -selname,ndamp $fclimate \
+  #              -fldmean -sellonlatbox,-180,180,60,90 -selname,ndamp $fclimate \
+  #     reference.nc
+  # cdo -setname,timescale -mulc,3600 -mulc,24
+  # ncatted -O -a units,timescale,o,c,"days" \
+  #            -a long_name,timescale,o,c,"dynamical timescale"
+}
+
+
+################################################################################
+################################################################################
+################################################################################
 # # Merge the dime dimensions before taking ensemble mean
 # function Spindown{
 #   # Verify files present
