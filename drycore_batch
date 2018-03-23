@@ -84,6 +84,8 @@ if $TESTING; then # overwrite some settings
 fi
 
 # Run multiple experiments consecutively
+counter=0 # counter
+parallelmax=8 # maximum parallel post-processing events
 cwd=$(pwd)
 for LEV in ${LEVS[@]}; do
   for NTRUNC in ${NTRUNCS[@]}; do
@@ -91,6 +93,7 @@ for LEV in ${LEVS[@]}; do
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
           # Ensure are still in same directory
+          counter=$(($counter + 1))
           cd $cwd
           # Experiment directory
           DEFDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
@@ -104,6 +107,8 @@ for LEV in ${LEVS[@]}; do
           fi
           # Call post-process script
           if $POST; then
+            $PARALLEL && [ $(($counter % $parallelmax)) == 0 ] \
+              && echo "Waiting for spawned process." && wait
             EXPDIR="$DEFDIR" # loop have been redefined so do this once for results from one experiment
             echo "Current experiment directory: ${EXPDIR}."
             source postprocess
