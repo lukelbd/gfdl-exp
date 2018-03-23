@@ -7,7 +7,7 @@ RUN=false # run the model?
 POST=true # run post-processing on the model results?
 
 # Settings for tasks
-TESTING=true # do quick test control/spindown runs?
+TESTING=false # do quick test control/spindown runs?
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
@@ -27,9 +27,8 @@ DT=600 # time step in seconds
 # Variables with loops
 # KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
 KTS=(20) # one KT for now
-KFS=(0.25 0.5 1 2 4)
-KAS=(80 160 10 20 40)
-KAS=(160 40 20 10) # tried parallel runs but didn't work
+KFS=(0.25 0.5 1 2 4) # generate climate
+KAS=(20 40 80 160) # tried parallel runs but didn't work
 NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
 
@@ -80,6 +79,8 @@ if $TESTING; then # overwrite some settings
 fi
 
 # Run multiple experiments consecutively
+counter=0 # counter
+parallelmax=8 # maximum parallel post-processing events
 cwd=$(pwd)
 for LEV in ${LEVS[@]}; do
   for NTRUNC in ${NTRUNCS[@]}; do
@@ -87,6 +88,7 @@ for LEV in ${LEVS[@]}; do
       for KA in ${KAS[@]}; do # troposphere timescales
         for KF in ${KFS[@]}; do # friction timescales
           # Ensure are still in same directory
+          counter=$(($counter + 1))
           cd $cwd
           # Experiment directory
           DEFDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
@@ -100,6 +102,8 @@ for LEV in ${LEVS[@]}; do
           fi
           # Call post-process script
           if $POST; then
+            $PARALLEL && [ $(($counter % $parallelmax)) == 0 ] \
+              && echo "Waiting for spawned process." && wait
             EXPDIR="$DEFDIR" # loop have been redefined so do this once for results from one experiment
             echo "Current experiment directory: ${EXPDIR}."
             source postprocess
