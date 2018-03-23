@@ -27,8 +27,7 @@ DT=600 # time step in seconds
 # Variables with loops
 # KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
 KTS=(20) # one KT for now
-KFS=(0.25 0.5 1 2 4)
-KAS=(10 20 40 80 160)
+# KAS=(10 20 40 80 160) KFS=(0.25 0.5 1 2 4) # from monde
 # KAS=(40) KFS=(0.05 0.1 8 16) # new friction experiments
 KAS=(320 640) KFS=(1) # new basic experiments
 NTRUNCS=(42) # truncation numbers
