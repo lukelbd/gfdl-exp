@@ -45,6 +45,28 @@ def tau(spindown=None, climate=None, output=None, timestep=None):
     # Save
     timescale.to_netcdf(output) # save output file
     return timescale
+                    # Get function with reference climate/spindown experiment input
+                    p0 = [10.] # initial guess for tau
+                    func = lambda t,tau: (itclimo-iteq)*np.exp(-t/tau) + iteq # easier to multiply
+                    # Curve-fit the time series
+                    # n = np.where(x>=1)[0][0] # full day of obs; use these to guess A1 and A2
+                    # guess = (ts[:n].mean()-ts[-n:].mean(), -0.1, ts[-n:].mean()) # tau=10 days
+                    x = tspindown['time'].values # x coordinates
+                    y = tspindown.values[:,ipfull,ilat] # don't use .isel; this is faster
+                    with np.errstate(all='raise'): # raise warnings as FloatingPointError
+                        try: # Get tau
+                            itau, isigma = opt.curve_fit(func, x, y, p0=p0) # curve fit props
+                            isigma = np.sqrt(np.diag(isigma)) # the standard error
+                        except (RuntimeError,FloatingPointError):
+                            # Curve fitting failed
+                            # Sometimes get /0 warnings or otherwise, usually means
+                            # result 'converged' but is super wonky
+                            itau, isigma = [np.nan], [np.nan]
+                    # Save results
+                    taudyn['tclimo'].values[ipfull,ilat] = itclimo
+                    taudyn['tdyneq'].values[ipfull,ilat] = iteq
+                    taudyn['sigma'].values[ipfull,ilat] = isigma[0]
+                    taudyn['tau'].values[ipfull,ilat] = itau[0]
 
 ################################################################################
 ################################################################################

@@ -3,12 +3,12 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
+RUN=true # run the model?
+POST=false # run post-processing on the model results?
 
 # Settings for tasks
 TESTING=false # do quick test control/spindown runs?
-SPINDOWN=false # do spindown runs?
+SPINDOWN=true # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
 NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
@@ -29,13 +29,15 @@ DT=600 # time step in seconds
 KTS=(20) # one KT for now
 # KAS=(10 20 40 80 160) KFS=(0.25 0.5 1 2 4) # from monde
 # KAS=(40) KFS=(0.05 0.1 8 16) # new friction experiments
-KAS=(320 640) KFS=(1) # new basic experiments
+# KAS=(0.1 0.25 0.5 1 2.5 5 320 640) KFS=(1) # new rad experiments
+# KAS=(320 640) KFS=(1)
+KAS=(10 160) # more spindown experiments
 NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
 
 # Control experiment timing
-TSTART=0 # first day of integration; set to 0 for new run.
-TEND=2000 # last day of integration after spin-up
+TSTART=2000 # first day of integration; set to 0 for new run.
+TEND=5000 # last day of integration after spin-up
 TRECORD=({0000..9999}) # when to record anything at all?
 TKEEP=(1000) # when to retain longitude info?
 
@@ -49,9 +51,9 @@ TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
 
 # Post-processing options
-PARALLEL=true # run post-processing stuff in parallel?
-ENERGY=true # get energy?
-CLIMATE=true # get the climate stuff?
+PARALLEL=false # run post-processing stuff in parallel?
+ENERGY=false # get energy?
+CLIMATE=false # get the climate stuff?
 EOFS=true # get EOFs?
 TAU=false # get timescale estimate?
 SPINDOWNAVE=false # get every record of area-averaged spindown processes?
