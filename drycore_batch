@@ -3,8 +3,8 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
+RUN=true # run the model?
+POST=false # run post-processing on the model results?
 
 # Settings for tasks
 TESTING=false # do quick test control/spindown runs?
@@ -19,16 +19,19 @@ SPINDOWNSTART=0 # start day for spindown file
 SPINDOWNEND=600 # end day for spindown file
 
 # Variables without loops
-KSOPT=4 # near-surface timescale or the word 'scale'
-CORES=8 # core count
+CORES=16 # core count
 DAYS=100 # time step for pausing model to output results
 DT=600 # time step in seconds
+EXPOPT=2 # the control option; 1 for no boundary-layer timescale scaling
+SPINDOWNOPT=1 # the spindown option; see run code for details
 
 # Variables with loops
-# KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 160 320) # some different
 KTS=(20) # one KT for now
-KFS=(0.25 0.5 1 2 4) # generate climate
-KAS=(20 40 80 160) # tried parallel runs but didn't work
+# KFS=(0.25 0.5 1 2 4) KAS=(10 20 40 80 160)
+# KFS=(0.25 0.5 1 2 4) KAS=(10)
+KFS=(1) KAS=(0.1 0.25 0.5 1 2.5 5 10 20 160 640) # some different
+  # repeat KA experiments with changing boundary layer tau; weird stuff
+  # starts to happen at fast timescales
 NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
 
@@ -51,22 +54,21 @@ TSPINEND=600 # how long to run equilibrium?
 PARALLEL=true # run post-processing stuff in parallel?
 ENERGY=true # get energy?
 CLIMATE=true # get the climate stuff?
-EOFS=true # get EOFs?
+EOFS=false # get EOFs?
 TAU=false # get timescale estimate?
 SPINDOWNAVE=false # get every record of area-averaged spindown processes?
 SPINDOWNXS=false # get ensemble-mean cross-section of spindown process?
-TIMESCALE=true # get the timescale?
+TIMESCALE=false # get the timescale?
 # EQUILIBRIUM=false # get supposed "equilibrium" climate?
 # DIFFS=false # get the ensemble analysis of equilibrium stuff?
 
-# The experiment names
+# The experiment specifications
+EXPNAME=hs # can be "hs", "hs", or "pk"
+EXPTYPE=spectral # change this for different file
+FILENAME=4xdaily_inst # name for output files
 TOPOFILE= # path to file e.g. $PWD/topo.nc
-SPINDOWNOPT=1 # the spindown option
   # 1 for radiation off, 2 for radiation off but surface on, 
   # 3 for everything off (radiation, surface, and friction), 4 for friction off
-FILENAME=4xdaily_inst # name for output files
-EXPTYPE=spectral # change this for different file
-EXPNAME=hs # can be "hs", "hs", or "pk"
 
 # Override for test experiments
 if $TESTING; then # overwrite some settings
@@ -99,7 +101,13 @@ for LEV in ${LEVS[@]}; do
           if $RUN; then
             $TESTING && EXPDIR="test" || EXPDIR="$DEFDIR" # keep test model runs in special directory
             echo "Current experiment directory: ${EXPDIR}."
-            [ $KSOPT == "scale" ] && KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") || KS=$KSOPT
+            case $EXPOPT in
+              1) KS=4 ;; # hold boundary layer value constant
+              2) KS=$(bc -l <<< "$KA/10") ;; # hold ratio constant
+              3) KS=$KA ;; # constant everywhere
+              4) KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") ;; # preserve 'boundary layer' component
+              *) echo "ERROR: Unknown experiment option ${EXPOPT}." && exit 1 ;;
+            esac
             echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
             echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
             source drycore_run # can read variables declared here
