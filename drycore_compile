@@ -91,7 +91,7 @@ $pgi/pgcc -O -o ${hostname}_mppnccombine $flags_include $mppnsource $flags_links
   # ...the mpllibs in MPICH seem to only have .so instead of .a ... not sure what that means
   # ...also it seems there is no libm.a or libz.a
 # Build makefile template (assumes pgi bin is on $PATH)
-cd $execdir # move to source
+cd $execdir # move to source directory
 cat > mkmf.template << DELIM
 CC = $pgi/pgcc
 FC = $pgi/pgf90

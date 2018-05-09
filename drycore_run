@@ -82,6 +82,7 @@ if [ ! -x $postprocess ]; then
   exit 1
 fi
 # Base directory for experiment run
+# Optionally exit from script if directory already exists
 basedir=$scratch/$EXPDIR # helper
 [ ! -z $NEWEXPER ] && $NEWEXPER && [ -d $basedir ] && echo "ERROR: Working directory already exists. Continuing..." && exit 1
 [ ! -d $basedir ] && mkdir $basedir # make directory
@@ -398,17 +399,17 @@ EOF
 # Variables to save (module name, fortran name, save name, file name, time-sampling freq 
 # for averages, whether we take average, other options, and save size [currently F32]; 
 # note cannot save time-average data in same file as non-time-average data, it seems)
-"dynamics",   "temp",           "t",     "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "ucomp",          "u",     "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "vcomp",          "v",     "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "height",         "z",     "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "slp",            "slp",   "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "omega",          "omega", "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "bk",             "hybi",  "$FILENAME", "all", .false., "none", 2,
-"dynamics",   "pk",             "hyai",  "$FILENAME", "all", .false., "none", 2,
-"hs_forcing", "tdt_ndamp",      "ndamp", "$FILENAME", "all", .false., "none", 2,
-"hs_forcing", "udt_rdamp",      "udamp", "$FILENAME", "all", .false., "none", 2,
-"hs_forcing", "vdt_rdamp",      "vdamp", "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "temp",      "t",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "ucomp",     "u",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "vcomp",     "v",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "height",    "z",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "slp",       "slp",   "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "omega",     "omega", "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "bk",        "hybi",  "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "pk",        "hyai",  "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "tdt_ndamp", "ndamp", "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "udt_rdamp", "udamp", "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "vdt_rdamp", "vdamp", "$FILENAME", "all", .false., "none", 2,
 EOF
   else echo "Recording no data."
   fi
@@ -437,6 +438,7 @@ EOF
 # Take one argument: directory where restart files exist
 function Restart() {
   rdir=$1 # the restart direcotry
+  [ ! -d $rdir ] && echo "ERROR: Restart directory $rdir does not exist." && exit 1
   # Copy over relevant restart files for exp type; if missing, raise error
   if [ -z $1 ]; then
     echo "ERROR: Not enough arguments provided to Restart() function."
@@ -452,7 +454,7 @@ function Restart() {
   echo "Moving restart files from ${rdir##*/}/RESTART to ${PWD##*/}/INPUT..."
   for file in ${resfiles[@]}; do
     if [ ! -r $rdir/RESTART/$file ]; then
-      echo "ERROR: Missing restart file ${rdir##*/}/RESTART/$file"
+      echo "ERROR: Missing restart file ${rdir##*/}/RESTART/${file}."
       exit 1
     else
       cp $rdir/RESTART/$file INPUT/$file
@@ -547,16 +549,20 @@ if $CONTROL; then
     echo "Running from day $cday to day $nday."
     time=$(date +%s)
     # RUN THE MODEL and COMBINE OUTPUT
+    # OPTIONALLY USE THE END OF OTHER CONTROL RUNS TO REDUCE SPINUP TIME
     pdir=$basedir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
     cdir=$basedir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
-    [ ! -z $PDIR ] && pdir=$basedir/$PDIR && echo "OVERRIDE: Using $pdir for restart files."
-    # this way we can start an integration after spinup, say day 1000, and just
-    # integrate for say 1 day; useful for testing different output options
+    if [ ! -z "$PDIR" ]; then
+      pdir=($scratch/$PDIR/d*-d*) # list of possible days
+      pdir="${pdir[-1]}" # pick last one; should be sorted
+      echo "OVERRIDE: Using $pdir for restart files."
+      PDIR= # unset pdir; only ever use this feature on first 'day' of a new experiment
+    fi
     [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
     [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
     Setup $cdir $ncrecord # sets up working directory, cd into it
-    if [ $? == 0 ]; then
-      [ $cday -gt 0 ] && Restart $pdir # add restart files
+    if [ $? == 0 ]; then # setup fails if user doesn't want to overwrite old experiments; see NEWDAYS option
+      [[ $cday -gt 0 || ! -z $PDIR ]] && Restart $pdir # add restart files
       $nckeep && echo "Keeping original longitude info."
       Iterate $ncrecord $nckeep # run model
     fi

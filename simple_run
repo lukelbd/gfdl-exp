@@ -1,0 +1,662 @@
+#!/bin/bash
+# README.md FILE HAS INSTRUCTIONS ON NAMELIST/DIAGNOSTIC TABLE
+#  * 8 cores: 100-day Control run, T42 64lats was 1181 seconds
+#  * 12 cores: 100-day Spindown run, T39 60lats was 1022 seconds
+#  * 8 cores: 10-day Control run, T42 64lats was 140 seconds
+#  * 12 cores: 10-day Spindown run, T39 60lats was 111 seconds
+ulimit -s unlimited # set max open files
+
+# Check for testing; if true, then will keep all files in processing steps
+# This parameter is passed as argument to processing function
+[ -z $TESTING ] && testing=false || testing=$TESTING
+# Double check that everything was declared properly in the batch script
+# echo $DAYS $DT $LEV $NTRUNC $KF $KA $KS $KT $EXPNAME $EXPTYPE $FILENAME $SPINDOWN $CONTROL
+if [ -z $DAYS ] || [ -z $DT ] || [ -z $LEV ] || [ -z $NTRUNC ] \
+  || [ -z $KF ] || [ -z $KA ] || [ -z $KS ] || [ -z $KT ] \
+  || [ -z $EXPNAME ] || [ -z $EXPTYPE ] || [ -z $FILENAME ] || [ -z $EXPDIR ] \
+  || [ -z $SPINDOWN ] || [ -z $CONTROL ]; then
+  echo "ERROR: Required variable was not set in batch script."
+  exit 1
+fi
+# Experiment naming for storage
+if [ "$EXPNAME" != "hs" ] && [ "$EXPNAME" != "pk" ]; then
+  echo "ERROR: Unknown experiment type ${EXPNAME}."
+  exit 1
+fi
+# Vertical resolution options
+if [ "$LEV" == "jer" ] || [ "$LEV" == "era" ]; then # Jeremiah's input coordinates
+  COORD=input # add a group to input.nml
+  [ "$LEV" == "jer" ] && NLEVS=40 || NLEVS=60 # number of levels
+elif [[ "$LEV" =~ ^[0-9]+$ ]]; then
+  COORD=even_sigma # even pressure spacing
+  NLEVS="$LEV" # levels variable should just encode number desired
+else
+  echo "ERROR: Unknown vertical coordinate identifier ${LEV}."
+  exit 1
+fi
+# Horizontal coordinates
+case $NTRUNC in
+  42) NLATS=64 ;;
+  63) NLATS=96 ;;
+  85) NLATS=128 ;;
+  *) echo "ERROR: Invalid number of cores."; exit 1 ;;
+esac
+# Optional topography file (if exists will get copied into INPUT folders)
+[[ -r $TOPOFILE ]] && TOPO=input || TOPO=flat # if name empty then [] will yield true
+# Storage information
+hostname=${HOSTNAME%%.*} # monde is monde.atmos.colostate.edu
+if [ "$hostname" == "olbers" ]; then
+  mpirun=/usr/local/mpich3/bin/mpirun
+  scratch=/home/ldavis # no good place on this server
+  storage=/home/ldavis
+elif [ "$hostname" == "gauss" ]; then
+  mpirun=/usr/local/mpich3-pgi/bin/mpirun
+  scratch=/birner-scratch/ldavis # need to use special scratch directory
+  storage=/home/ldavis
+elif [ "$hostname" == "euclid" ]; then # everything is in same lib/bin
+  mpirun=/usr/local/bin/mpirun
+  scratch=/home/ldavis # not mounted, so plenty of space
+  storage=/birner-home/ldavis
+elif [ "$hostname" == "monde" ]; then
+  mpirun=/usr/lib64/mpich/bin/mpirun
+  scratch=/mdata1/ldavis
+  storage=/home/ldavis
+else
+  echo "ERROR: Unknown host, must configure library and binary locations before running."
+  exit 1
+fi
+# Executable check
+fms=$PWD/${hostname}_${EXPNAME}/fms.x # location of executables
+process=$PWD/process # the script for on-the-fly processing
+postprocess=$PWD/postprocess # the script for post-processing
+if [ ! -x $fms ]; then # x for 'executable'
+  echo "ERROR: The executable $fms is missing."
+  exit 1
+fi
+if [ ! -x $process ]; then
+  echo "ERROR: The bash script for processing data is missing."
+  exit 1
+fi
+if [ ! -x $postprocess ]; then
+  echo "ERROR: The bash script for post-processing data is missing."
+  exit 1
+fi
+# Base directory for experiment run
+# Optionally exit from script if directory already exists
+basedir=$scratch/$EXPDIR # helper
+[ ! -z $NEWEXPER ] && $NEWEXPER && [ -d $basedir ] && echo "ERROR: Working directory already exists. Continuing..." && exit 1
+[ ! -d $basedir ] && mkdir $basedir # make directory
+
+################################################################################
+# Helper functions for model runs
+################################################################################
+# Set up input files for model executable to read; tried to make the function readable
+# by matching indentation, which can be done with <<-DELIM; literal tab chars ignored
+# https://unix.stackexchange.com/questions/76481/cant-indent-heredoc-to-match-nestings-indent
+################################################################################
+# Takes two arguments: 1) the working directory, and 2) the iteration mode
+function Setup() {
+  cdir=$1
+  ncrecord=$2
+  if [ -z $1 ] || [ -z $2 ]; then
+    echo "ERROR: Not enough arguments provided to Setup() function."
+    exit 1
+  fi
+  if [ -z $radiationoff ] || [ -z $frictionoff ] || [ -z $surfaceoff ]; then
+    echo "ERROR: Required environmental variable not set."
+    exit 1
+  fi
+  # Set up working directory, and move there
+  if [ -d $cdir ]; then
+    if [ ! -z $NEWDAYS ] && $NEWDAYS && compgen -G "$cdir/*.nc" &>/dev/null; then
+      echo "Working directory ${cdir##*/} contains failed processing step. Deleting..."
+      NEWDAYS=false # may want to use this to resume stopped integration
+        # that was overwriting a bunch of other experiments; want to overwrite subsequent days
+      rm -r $cdir
+    elif [ ! -z $NEWDAYS ] && $NEWDAYS && [ -z "$(\ls $cdir/RESTART)" ]; then
+      echo "Working directory ${cdir##*/} contains unfinished integration. Deleting..."
+      NEWDAYS=false # may want to use this to resume stopped integration
+        # that was overwriting a bunch of other experiments; want to overwrite subsequent days
+      rm -r $cdir
+    elif [ ! -z $NEWDAYS ] && $NEWDAYS && [ ! -z "$(\ls $cdir/RESTART)" ]; then
+      echo "Working directory ${cdir##*/} already exists. Canceling integration..."
+      return 1
+    else
+      echo "Working directory ${cdir##*/} already exists. Deleting..."
+      rm -r $cdir
+    fi
+  else echo "Setting up work directory ${cdir##*/}..."
+  fi
+  mkdir $cdir
+  cd $cdir
+  cp $fms ./fms.x # move executable inside (declared at top of file)
+  mkdir RESTART # model spits out stuff here, can be accepted as input to new iteration
+  mkdir INPUT   # model reads from this
+  touch field_table # just put empty file, if want no tracers
+  # cp $scripts/*.ncl . # copy over NCL scripts
+  [[ -r $TOPOFILE ]] && cp $TOPOFILE INPUT/topography.data.nc # copy topography data, if exists
+
+  # Create namelist with most important properties; I-suffix means we input these strings
+  # These can be offshoot experiments from a control experiment with non-infinity timescales
+  # in which case we want them in the same experiment directory as the control; just change params here
+  # Atmospheric timescale
+  if $radiationoff; then
+    KAI="0." # turn off radiation heating?
+  else
+    [[ "$KA" =~ "." ]] && KAI="-$KA" || KAI="-${KA}." # negative num = units days
+  fi
+  [[ "$KT" =~ "." ]] && KTI="-$KT" || KTI="-${KT}." # negative num = units days
+  # Boundary layer timescale
+  if $surfaceoff && $radiationoff; then
+    KSI="0." # turn off surface fluxes whenever radiation turned off?
+  else
+    [[ "$KS" =~ "." ]] && KSI="-$KS" || KSI="-${KS}." # negative num = units days
+  fi
+  # Friction
+  if $frictionoff && $radiationoff; then
+    KFI="0." # turn off surface fluxes whenever radiation turned off?
+  else
+    [[ "$KF" =~ "." ]] && KFI="-$KF" || KFI="-${KF}." # negative num = units days
+  fi
+  # The initial namelist, basic stuff
+  # The dt_atmos is actual timestep and settings 'days' 'hours' etc. dnote how long to run it
+  IDT=$DT IDAYS=$DAYS ISECONDS=0 # default number of seconds
+  [ ! -z $INIT ] && $INIT && IDT=$DT ISECONDS=$(($DT * 10)) IDAYS=0 # initialization condition
+  cat > input.nml << EOF
+&main_nml
+dt_atmos = $IDT,
+days     = $IDAYS,
+seconds  = $ISECONDS
+/
+&fms_nml
+domains_stack_size = 800000,
+/
+&fms_io_nml
+threading_write = 'single',
+fileset_write = 'single',
+/
+&spectral_dynamics_nml
+damping_option            = 'resolution_dependent',
+damping_order             = 4,
+damping_coeff             = 1.15741e-4,
+do_mass_correction        = .true.,
+do_energy_correction      = .true.,
+do_water_correction       = .false.,
+use_virtual_temperature   = .false.,
+vert_advect_uv            = 'second_centered',
+vert_advect_t             = 'second_centered',
+longitude_origin          = 0.,
+robert_coeff              = .04,
+alpha_implicit            = .5,
+reference_sea_level_press = 101325.,
+lon_max                   = $(($NLATS * 2)),
+lat_max                   = $NLATS,
+num_levels                = $NLEVS,
+num_fourier               = $NTRUNC,
+num_spherical             = $(($NTRUNC + 1)),
+fourier_inc               = 1,
+triang_trunc              = .true.,
+topography_option         = '$TOPO',
+vert_coord_option         = '$COORD',
+valid_range_t             = 100., 500.,
+/
+EOF
+  # Forcing stuff
+  if [ $EXPNAME == "hs" ]; then # pk options are superset of hs; maybe don't use
+    cat >> input.nml << EOF
+&hs_forcing_nml
+no_forcing         = .false.,
+t_zero             = 315.,
+t_strat            = 200.,
+delh               = 60.,
+delv               = 10.,
+eps                = 0.,
+sigma_b            = 0.7,
+do_conserve_energy = .true.,
+trflux             = 1.e-5,
+trsink             = -4.,
+kf                 = $KFI,
+ka                 = $KAI,
+ks                 = $KSI,
+/
+EOF
+  elif [ $EXPNAME == "pk" ]; then
+    cat >> input.nml << EOF
+&hs_forcing_nml
+no_forcing         = .false., 
+pk_strat           = .true., 
+strat_sponge       = .true.,
+t_zero             = 315.,
+t_strat            = 200.,
+delh               = 60.,
+delv               = 10.,
+eps                = 10.,
+sigma_b            = 0.7,
+vtx_edge           = 50.,
+vtx_wid            = 10.,
+vtx_gam            = 2.e-3,
+p_sponge           = 5.e-1,
+P00                = 1.e5, 
+p_tropopause       = 100.,
+kf                 = $KFI,
+ka                 = $KAI,
+ks                 = $KSI,
+k_sponge           = -0.5,
+k_strat            = $KTI,
+do_conserve_energy = .true.,
+trflux             = 1.e-5,
+trsink             = -4.,
+/
+EOF
+  fi
+  # Vertical coordinates
+  if [ "$LEV" == "jer" ]; then
+    cat >> input.nml << EOF
+&vert_coordinate_nml
+    pk(1)=0.000e+00,   bk(1)=0.000e+00,
+    pk(2)=0.000e+00,   bk(2)=1.895e-05,
+    pk(3)=0.000e+00,   bk(3)=4.715e-05,
+    pk(4)=0.000e+00,   bk(4)=1.019e-04,
+    pk(5)=0.000e+00,   bk(5)=1.987e-04,
+    pk(6)=0.000e+00,   bk(6)=3.581e-04,
+    pk(7)=0.000e+00,   bk(7)=6.064e-04,
+    pk(8)=0.000e+00,   bk(8)=9.766e-04,
+    pk(9)=0.000e+00,   bk(9)=1.509e-03,
+    pk(10)=0.000e+00,  bk(10)=2.251e-03,
+    pk(11)=0.000e+00,  bk(11)=3.261e-03,
+    pk(12)=0.000e+00,  bk(12)=4.605e-03,
+    pk(13)=0.000e+00,  bk(13)=6.358e-03,
+    pk(14)=0.000e+00,  bk(14)=8.610e-03,
+    pk(15)=0.000e+00,  bk(15)=1.146e-02,
+    pk(16)=0.000e+00,  bk(16)=1.501e-02,
+    pk(17)=0.000e+00,  bk(17)=1.940e-02,
+    pk(18)=0.000e+00,  bk(18)=2.476e-02,
+    pk(19)=0.000e+00,  bk(19)=3.125e-02,
+    pk(20)=0.000e+00,  bk(20)=3.903e-02,
+    pk(21)=0.000e+00,  bk(21)=4.828e-02,
+    pk(22)=0.000e+00,  bk(22)=5.922e-02,
+    pk(23)=0.000e+00,  bk(23)=7.204e-02,
+    pk(24)=0.000e+00,  bk(24)=8.701e-02,
+    pk(25)=0.000e+00,  bk(25)=1.044e-01,
+    pk(26)=0.000e+00,  bk(26)=1.244e-01,
+    pk(27)=0.000e+00,  bk(27)=1.473e-01,
+    pk(28)=0.000e+00,  bk(28)=1.736e-01,
+    pk(29)=0.000e+00,  bk(29)=2.035e-01,
+    pk(30)=0.000e+00,  bk(30)=2.373e-01,
+    pk(31)=0.000e+00,  bk(31)=2.755e-01,
+    pk(32)=0.000e+00,  bk(32)=3.185e-01,
+    pk(33)=0.000e+00,  bk(33)=3.666e-01,
+    pk(34)=0.000e+00,  bk(34)=4.205e-01,
+    pk(35)=0.000e+00,  bk(35)=4.805e-01,
+    pk(36)=0.000e+00,  bk(36)=5.471e-01,
+    pk(37)=0.000e+00,  bk(37)=6.209e-01,
+    pk(38)=0.000e+00,  bk(38)=7.025e-01,
+    pk(39)=0.000e+00,  bk(39)=7.925e-01,
+    pk(40)=0.000e+00,  bk(40)=8.914e-01,
+    pk(41)=0.000e+00,  bk(41)=1.000e+00
+/
+EOF
+  elif [ "$LEV" == "era" ]; then
+    # These are the ERA-Interim and ERA40 levels from file "ecmwf-L60.txt" in Gauss home
+    # Maybe better way to do this; parse the file automatically instead of in VIM manually
+    #  * See http://vim.wikia.com/wiki/Generating_a_column_of_increasing_numbers (command not available)
+    #    and http://vim.wikia.com/wiki/Making_a_list_of_numbers (this one worked on this older version)
+    #  * Even though file says pk() should be w.r.t. a reference pressure P00, model still runs
+    #    normally inputting the pressure in Pa; so this is correct, don't worry
+    cat >> input.nml << EOF
+&vert_coordinate_nml
+    pk(1)=0.000000,       bk(1)=0.000000,
+    pk(2)=20.000000,      bk(2)=0.000000,
+    pk(3)=38.425343,      bk(3)=0.000000,
+    pk(4)=63.647804,      bk(4)=0.000000,
+    pk(5)=95.636963,      bk(5)=0.000000,
+    pk(6)=134.483307,     bk(6)=0.000000,
+    pk(7)=180.584351,     bk(7)=0.000000,
+    pk(8)=234.779053,     bk(8)=0.000000,
+    pk(9)=298.495789,     bk(9)=0.000000,
+    pk(10)=373.971924,    bk(10)=0.000000,
+    pk(11)=464.618134,    bk(11)=0.000000,
+    pk(12)=575.651001,    bk(12)=0.000000,
+    pk(13)=713.218079,    bk(13)=0.000000,
+    pk(14)=883.660522,    bk(14)=0.000000,
+    pk(15)=1094.834717,   bk(15)=0.000000,
+    pk(16)=1356.474609,   bk(16)=0.000000,
+    pk(17)=1680.640259,   bk(17)=0.000000,
+    pk(18)=2082.273926,   bk(18)=0.000000,
+    pk(19)=2579.888672,   bk(19)=0.000000,
+    pk(20)=3196.421631,   bk(20)=0.000000,
+    pk(21)=3960.291504,   bk(21)=0.000000,
+    pk(22)=4906.708496,   bk(22)=0.000000,
+    pk(23)=6018.019531,   bk(23)=0.000000,
+    pk(24)=7306.631348,   bk(24)=0.000000,
+    pk(25)=8765.053711,   bk(25)=0.000076,
+    pk(26)=10376.126953,  bk(26)=0.000461,
+    pk(27)=12077.446289,  bk(27)=0.001815,
+    pk(28)=13775.325195,  bk(28)=0.005081,
+    pk(29)=15379.805664,  bk(29)=0.011143,
+    pk(30)=16819.474609,  bk(30)=0.020678,
+    pk(31)=18045.183594,  bk(31)=0.034121,
+    pk(32)=19027.695313,  bk(32)=0.051690,
+    pk(33)=19755.109375,  bk(33)=0.073534,
+    pk(34)=20222.205078,  bk(34)=0.099675,
+    pk(35)=20429.863281,  bk(35)=0.130023,
+    pk(36)=20384.480469,  bk(36)=0.164384,
+    pk(37)=20097.402344,  bk(37)=0.202476,
+    pk(38)=19584.330078,  bk(38)=0.243933,
+    pk(39)=18864.750000,  bk(39)=0.288323,
+    pk(40)=17961.357422,  bk(40)=0.335155,
+    pk(41)=16899.468750,  bk(41)=0.383892,
+    pk(42)=15706.447266,  bk(42)=0.433963,
+    pk(43)=14411.124023,  bk(43)=0.484772,
+    pk(44)=13043.218750,  bk(44)=0.535710,
+    pk(45)=11632.758789,  bk(45)=0.586168,
+    pk(46)=10209.500977,  bk(46)=0.635547,
+    pk(47)=8802.356445,   bk(47)=0.683269,
+    pk(48)=7438.803223,   bk(48)=0.728786,
+    pk(49)=6144.314941,   bk(49)=0.771597,
+    pk(50)=4941.778320,   bk(50)=0.811253,
+    pk(51)=3850.913330,   bk(51)=0.847375,
+    pk(52)=2887.696533,   bk(52)=0.879657,
+    pk(53)=2063.779785,   bk(53)=0.907884,
+    pk(54)=1385.912598,   bk(54)=0.931940,
+    pk(55)=855.361755,    bk(55)=0.951822,
+    pk(56)=467.333588,    bk(56)=0.967645,
+    pk(57)=210.393890,    bk(57)=0.979663,
+    pk(58)=65.889244,     bk(58)=0.988270,
+    pk(59)=7.367743,      bk(59)=0.994019,
+    pk(60)=0.000000,      bk(60)=0.997630,
+    pk(61)=0.000000,      bk(61)=1.000000
+/
+EOF
+  fi
+
+  # Diagnostic table, describes data saved to netCDF
+  # First write the header to a file (required always) then add variables if we want data
+  # WARNING: If you accidentally try to output two vars w/ same name, get silent failure
+  # NOTE: heat dissipation "D" is capitzlied because it belongs with the other
+  # capitalized energy-terms we add in post-processing
+  # OTHER DECISIONS:
+  #   * Store A and B hybrid coefficients as hyai and hybi to match the ECHAM conventions;
+  #     they MUST BE STORED THIS WAY for CDO interpolation procedure to read them.
+  #   * Keep SLP as a generally useful diagnostic; zonal means are interesting too
+  #   * Don't store zonal-mean div, because really would only need it in analysis of overturning
+  #     circulation, and for that can use zonal-mean omega, u, v.
+  #   * Keep vort for PV calculation, but discard right after; will just calculate
+  #     on the fly using CDO spectral-coordinate algorithm, if necessary.
+  #   * Don't bother with tau and Teq; can calculate them from model parameters,
+  #     and although tau is function of model level can approximate from p data
+  cat > diag_table << EOF
+"Model results from the Held-Suarez benchmark"
+0 0 0 0 0 0
+EOF
+  if $ncrecord; then echo "Recording data."
+  FREQUENCY=6 UNITS=hours 
+  [ ! -z $INIT ] && $INIT && FREQUENCY=0 UNITS=seconds
+  cat >> diag_table << EOF
+# Filenames (name, save-frequency [-1==at end, 0==all, >0==units], save-frequency units, 
+# format [1 = netCDF, only supported format], time dimension units, time dimension names)
+"$FILENAME",  $FREQUENCY,   "$UNITS",  1,  "days",  "time",
+# Variables to save (module name, fortran name, save name, file name, time-sampling freq 
+# for averages, whether we take average, other options, and save size [currently F32]; 
+# note cannot save time-average data in same file as non-time-average data, it seems)
+"dynamics",   "temp",      "t",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "ucomp",     "u",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "vcomp",     "v",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "height",    "z",     "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "slp",       "slp",   "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "omega",     "omega", "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "bk",        "hybi",  "$FILENAME", "all", .false., "none", 2,
+"dynamics",   "pk",        "hyai",  "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "tdt_ndamp", "ndamp", "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "udt_rdamp", "udamp", "$FILENAME", "all", .false., "none", 2,
+"hs_forcing", "vdt_rdamp", "vdamp", "$FILENAME", "all", .false., "none", 2,
+EOF
+  else echo "Recording no data."
+  fi
+# Some options that were removed before:
+# "hs_forcing", "tdt_diss_rdamp", "rdamp", "$FILENAME", "all", .false., "none", 2,
+# "dynamics",   "pres_full",      "p",     "$FILENAME", "all", .false., "none", 2,
+# "hs_forcing",  "diss_heat_rdamp",  "D",      "$FILENAME",  "all",  .false.,  "none",  2,
+# "dynamics",    "vor",              "vor",    "$FILENAME",  "all",  .false.,  "none",  2
+# "dynamics",    "bk",               "bhalf",  "6xdaily_inst",  "all",  .false.,  "none",  2,
+# "ave",           -1,  "hours",  1,  "days",  "time",
+# "8xdaily_ave",   3,   "hours",  1,  "days",  "time",
+# "dynamics",    "temp",   "t",    "8xdaily_ave",   "all",  .true.,   "none",  2,
+# "hs_forcing",  "teq",    "teq",  "ave",           "all",  .true.,   "none",  2,
+# "hs_forcing",  "temp",   "t",    "ave",           "all",  .true.,   "none",  2,
+# "dynamics",    "ps",         "p",      "6xdaily_inst",  "all",  .false.,  "none",  2,
+# "hs_forcing",  "tdt_ndamp",       "tdt_newtonian",  "6xdaily_inst",  "all",  .false.,  "none",  2,
+# "hs_forcing",  "tdt_diss_rdamp",  "tdt_rayleigh",   "6xdaily_inst",  "all",  .false.,  "none",  2,
+  # Ensure zero return-code if we get here
+  return 0
+}
+
+################################################################################
+# Function for restarting model; put correct files in correct place so 
+# fms.x can read them and continue iteration from a previous state.
+################################################################################
+# Take one argument: directory where restart files exist
+function Restart() {
+  rdir=$1 # the restart direcotry
+  [ ! -d $rdir ] && echo "ERROR: Restart directory $rdir does not exist." && exit 1
+  # Copy over relevant restart files for exp type; if missing, raise error
+  if [ -z $1 ]; then
+    echo "ERROR: Not enough arguments provided to Restart() function."
+    exit 1
+  fi
+  if [ "$EXPTYPE" == "spectral" ]; then
+    resfiles=("atmos_model.res" "atmosphere.res.nc" "spectral_dynamics.res.nc")
+  elif [ "$EXPTYPE" == "fv" ]; then
+    resfiles=("atmos_model.res" "atmos_tracers.res.nc" "fv_rst.res.nc" "fv_srf_wnd.res.nc")
+  elif [ "$EXPTYPE" == "bgrid" ]; then
+    resfiles=("atmos_model.res" "atmos_tracers.res.nc" "bgrid_prog_var.res.nc")
+  fi
+  echo "Moving restart files from ${rdir##*/}/RESTART to ${PWD##*/}/INPUT..."
+  for file in ${resfiles[@]}; do
+    if [ ! -r $rdir/RESTART/$file ]; then
+      echo "ERROR: Missing restart file ${rdir##*/}/RESTART/${file}."
+      exit 1
+    else
+      cp $rdir/RESTART/$file INPUT/$file
+    fi
+  done
+}
+
+################################################################################
+# Function for running the next model step from a previous step,
+# applying post-processing to a previous model step in the background, and organizing
+# all the NetCDF files
+################################################################################
+function Iterate() {
+  ncrecord=$1
+  nckeep=$2
+  if [ -z $1 ] || [ -z $2 ]; then
+    echo "ERROR: Not enough arguments provided to Iterate() function."
+    exit 1
+  fi
+  start=$(date +%s)
+  echo "Running model..."
+  # Use MPIRUN to run model in parallel, and select other cores for running processing
+  # step in parallel (choosing cores explicitly seemed to be faster)
+  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
+  # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
+  $mpirun -np $CORES ./fms.x &>log.model # need ./fms.x, not fms.x
+  # Wait for previous processing step, if set
+  # If unset, means we are just now starting the model runs
+  if [ ! -z $p2 ]; then
+    wait $p2; estatus=$? # wait command will always exit with exit status of supplied process ID
+    if [ $estatus != 0 ]; then
+      echo "ERROR: Exit status $estatus from previous model step..."
+      case $estatus in
+        1) echo "Something failed during model integration. Check log.model." ;;
+        2) echo "Something failed during model interpolation. Check log.interp." ;;
+        3) echo "Something failed while getting basic terms. Check log.basic." ;;
+        4) echo "Something failed while getting Lorenz cycle terms. Check log.lorenz." ;;
+        *) echo "Check log.process; other/miscellaneous failure." ;;
+      esac
+      exit 1
+    fi
+  fi
+  # Echo timing information
+  if [ -r $pdir/log.process ]; then
+    tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
+    tprocess=$(tail -1 $pdir/log.process | sed 's/[^0-9]*//g' )
+    echo "Model time: ${tmodel%.*}s, Process time: ${tprocess%.*}s."
+    if [ "$tprocess" -eq "${tmodel%%.*}" ] 2>/dev/null; then
+      echo "Model completion time MINUS processing time: $((${tmodel%%.*} - $tprocess))s."
+    fi
+  fi
+  echo "Time for integration: $(($(date +%s) - $start))s."
+  # Remove some files
+  # [ -r INPUT/topography.data.nc ] && rm INPUT/topography.data.nc # remove topography
+  [ -d INPUT ] && rm -r INPUT # remove everything
+  [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
+  rm fms.x # remove executable, because takes up space
+  # Process new data, and remove old data
+  # Record the PID when done
+  if $ncrecord; then
+    # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
+    # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
+    $process $nckeep $testing &>log.process & # processing
+    p2=$! # record PID
+  else p2= # empty
+  fi
+}
+
+##############################################################################
+# CONTROL RUN
+# Run the model in blocks of $DAYS days for control, then optionally choose
+# starting points from control for spin-down ensemble experiments
+##############################################################################
+estatus=0 # initialize exit status
+if $CONTROL; then
+  # CHECK THAT TIMING VARIABLES ARE DECLARED
+  if [ -z $TSTART ] || [ -z $TEND ] || [ -z $TKEEP ] || [ -z $TRECORD ]; then
+    echo "ERROR: One or more of the timing variables was not set."
+    exit 1
+  fi
+  # PREPARE FOR THE LOOP
+  echo "Running control experiment from day $TSTART to day $TEND."
+  origin=$(date +%s) # start time
+  radiationoff=false # we still have radiation now
+  surfaceoff=false
+  frictionoff=false
+  pday=$(($TSTART - $DAYS)) # only time when we do minus days
+  cday=$TSTART
+  nday=$(($TSTART + $DAYS))
+  while [ $nday -le $TEND ]; do
+    # MESSAGE AND RESET TIMER
+    echo "Running from day $cday to day $nday."
+    time=$(date +%s)
+    # RUN THE MODEL and COMBINE OUTPUT
+    # OPTIONALLY USE THE END OF OTHER CONTROL RUNS TO REDUCE SPINUP TIME
+    pdir=$basedir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
+    cdir=$basedir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+    if [ ! -z "$PDIR" ]; then
+      pdir=($scratch/$PDIR/d*-d*) # list of possible days
+      pdir="${pdir[-1]}" # pick last one; should be sorted
+      echo "OVERRIDE: Using $pdir for restart files."
+      PDIR= # unset pdir; only ever use this feature on first 'day' of a new experiment
+    fi
+    [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
+    [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
+    Setup $cdir $ncrecord # sets up working directory, cd into it
+    if [ $? == 0 ]; then # setup fails if user doesn't want to overwrite old experiments; see NEWDAYS option
+      [[ $cday -gt 0 || ! -z $PDIR ]] && Restart $pdir # add restart files
+      $nckeep && echo "Keeping original longitude info."
+      Iterate $ncrecord $nckeep # run model
+    fi
+    # STEP THINGS FORWARD, FOR NEXT ITERATION
+    pday=$cday
+    cday=$(($pday + $DAYS))
+    nday=$(($cday + $DAYS))
+  done
+  echo "Processing last file..."
+  wait $p2
+  p2=
+  echo "The control run completed successfully in $(($(date +%s) - $origin)) seconds!"
+  echo "Timestamp: $(date)."
+fi
+
+##############################################################################
+# SPINDOWN RUNS
+# User must specify which namelist params are getting abruptly changed.
+##############################################################################
+if $SPINDOWN; then
+  # CHECK THAT TIMING VARIABLES ARE DECLARED
+  if [ -z $TCONTROL ] || [ -z $TSPINSTART ] || [ -z $TSPINEND ] || [ -z $TSPINRECORD ] || [ -z $TSPINKEEP ]; then
+    # echo TCONTROL $TCONTROL TSPINSTART $TSPINSTART TSPINEND $TSPINEND TSPINRECORD $TSPINRECORD TSPINKEEP $TSPINKEEP
+    echo "ERROR: One or more of the timing variables was not set."
+    exit 1
+  fi
+  # PREPARE FOR THE LOOP
+  case $SPINDOWNOPT in # determine experiment type
+    1) radiationoff=true surfaceoff=true frictionoff=false ;;
+    2) radiationoff=true surfaceoff=false frictionoff=false ;;
+    3) radiationoff=true surfaceoff=true frictionoff=true ;;
+    4) radiationoff=false surfaceoff=false frictionoff=true ;;
+    *) echo "ERROR: Unknown spindown identifier \"$SPINDOWNOPT\"."; exit 1 ;;
+  esac
+  $radiationoff && radiation=off || radiation=on
+  $surfaceoff && surface=off || surface=on
+  $frictionoff && friction=off || friction=on
+  echo "Running spindown experiment $SPINDOWNOPT from days ${TCONTROL[@]} for $TSPINEND days."\
+       "Radiation $radiation, surface radiation $surface, friction $friction."
+  origin=$(date +%s)
+  nckeep=false
+  ncrecord=false
+  # ITERATE THROUGH STARTING DAYS
+  for eday in "${TCONTROL[@]}"; do
+    cday=0 # current day relative to start of equilibrium
+    nday=$(($cday + $DAYS)) # next day, relative to start
+    prefix=$basedir/d$(printf "%04d" $eday) # for successive spindown runs
+    fstart=$basedir/d$(printf "%04d" $(($eday - $DAYS)))-d$(printf "%04d" $eday) # for restart files from control
+    origin=$(date +%s) # record time
+    echo "Starting radiation-off spindown run from day $eday for $TSPINEND days."
+    while [ $nday -le $TSPINEND ]; do
+      # SKIP THIS TIME (OPTIONALLY)
+      if [ $cday -lt $TSPINSTART ]; then
+        echo "Skipping $cday."
+        pday=$cday # previous day
+        cday=$(($pday + $DAYS))
+        nday=$(($cday + $DAYS))
+        continue
+      fi
+      # GET DIRECTORIES
+      cdir=$prefix-spindown$SPINDOWNOPT-d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+      [ $cday -eq 0 ] && pdir=$fstart || { # new line for visibility
+        pdir=$prefix-spindown$SPINDOWNOPT-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
+        }
+      # RUN THE MODEL and COMBINE OUTPUT
+      [[ " ${TSPINRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
+      [[ " ${TSPINKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
+      Setup $cdir $ncrecord # sets up working directory, cd into it
+      if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
+        Restart $pdir # add restart files
+        Iterate $ncrecord $nckeep # run model
+      fi
+      # STEP THINGS FORWARD, FOR NEXT ITERATION
+      pday=$cday # previous day
+      cday=$(($pday + $DAYS))
+      nday=$(($cday + $DAYS))
+    done
+    echo "Spindown from $eday completed successfully in $(($(date +%s) - $origin)) seconds!"
+    echo "Timestamp: $(date)."
+  done
+  echo "Processing last file..."
+  wait $p2
+  p2=
+  echo "The spindown runs completed successfuly in $(($(date +%s) - $origin)) seconds!"
+  echo "Timestamp: $(date)."
+fi
+################################################################################
+# Finally, apply post-processing to the output data
+################################################################################
+# if $postprocess; then
+#   echo "Running post-processing steps..."
+#   tpost=$(date +%s)
+#   if $testing; then flags="-t"; else flags=""; fi
+#   $postprocess $flags $FILENAME $scratch $storage ${KAS[@]}
+#   echo "Post-processing finished in $(($(date +%s) - $tpost))s!"
+#   # . deactivate ncl_stable # de-activate the NCL environment
+# fi

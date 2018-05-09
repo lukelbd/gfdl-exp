@@ -1,6 +1,9 @@
 # Special for this directory #
 ##############################
 .nfs*
+  # ignore those .nfs files generated in /birner-home/ldavis when syncing stuff
+exe*
+  # ignore compiled source
 
 # Deliberately ignored #
 ########################

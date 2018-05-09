@@ -7,6 +7,7 @@ shopt -s nullglob # will return empty if no match
 [ -z $SPINDOWNSTART ] && SPINDOWNSTART=9999
 [ -z $SPINDOWNEND ] && SPINDOWNEND=0
 # File management/names
+cwd=$(pwd) # current directory
 log=log_ # log prefix
 fprefix=${FILENAME}_summary # original prefix file names
 fclimate=${FILENAME}_climate.nc
@@ -80,18 +81,23 @@ done
 # and with other datasets; note remap will output an array of NaNs if you try
 # to use remapycon or area weighted maps; with one-longitude, area weighted map
 # is the same as a 'distance weighted' map, so use that one
+interpncl=$cwd/postprocess_interp.ncl # interpolation script
 griddes=eraint_griddes.txt
 zaxisdes=eraint_zaxisdes.txt
 [ ! -r $griddes ] && echo "ERROR: Could not find grid description file $cwd/$griddes." && exit 1
+lat_out=$(cat $griddes | grep -A100 "yvals" | sed 's/[^0-9. -]//g' | xargs | tr ' ' ',')
 [ ! -r $zaxisdes ] && echo "ERROR: Could not find zaxis description file $cwd/$zaxisdes." && exit 1
-eralevels=$(cat eraint_zaxisdes.txt | grep -A100 "levels" | grep -B100 "lbounds" | \
+plev_out=$(cat eraint_zaxisdes.txt | grep -A100 "levels" | grep -B100 "lbounds" | \
   sed '$d' | sed 's/[^0-9]*//' | xargs | tr ' ' ',') # the ERA-Interim level list
-[ -z $eralevels ] && echo "ERROR: Could not parse interpolation levels from $cwd/$zaxisdes." && exit 1
+[ -z $lat_out ] && echo "ERROR: Could not parse interpolation latitudes from $cwd/$griddes." && exit 1
+[ -z $plev_out ] && echo "ERROR: Could not parse interpolation levels from $cwd/$zaxisdes." && exit 1
+# vinterp="-genlevelbounds,ztop=1013.25,zbot=0 -setzaxis,$cwd/$zaxisdes -intlevel,$plev_out" # don't need genlevelbounds because setzaxis adds bounds
 # export CDO_GRIDSEARCH_RADIUS=5 # search radius; consider changing this
-# vinterp="-genlevelbounds,ztop=1013.25,zbot=0 -setzaxis,$cwd/$zaxisdes -intlevel,$eralevels" # don't need genlevelbounds because setzaxis adds bounds
 export REMAP_EXTRAPOLATE="on" # turn extrapolation on
-hinterp="-remapdis,$cwd/$griddes,2"
-vinterp="-setzaxis,$cwd/$zaxisdes -intlevel,$eralevels"
+# Attempts to interpolate with CDO that failed
+# hinterp="-remapdis,$cwd/$griddes,2" # fails for some reason
+hinterp="-remapbic,$cwd/$griddes" # try remapbil
+vinterp="-setzaxis,$cwd/$zaxisdes -intlevel,$plev_out"
 interp="$vinterp $hinterp"
  # 2 says to consider only 2 nearest neighbors; otherwise get artifacts because default
  # behavior is probably 4-8 cells; algorithm doesn't know we have a 2D 'slice'
@@ -110,13 +116,30 @@ function Climate() {
     echo "ERROR: No climate files available between days ${CLIMOSTART} and ${CLIMOEND}."
     exit 1
   fi
-  # Very simple function
+  # Combine time-means of individual files saved during control run
+  rm tmp?.nc &>/dev/null # remove existing tmp files
   echo "Getting temporal mean from days ${climofiles[@]##*/${fprefix}.}."
-  commands=("${climofiles[@]/#/ -timmean }")
-  cdo $flags -ensmean ${commands[@]} tmp.nc
-  echo "Interpolating result."
-  cdo $flags $interp tmp.nc $fclimate; rm tmp.nc
-  [ ! -e $fclimate ] && echo "ERROR: $fclimate not produced." && exit 1
+  commands=("${climofiles[@]/#/ -timmean -delname,s,pt }") # delete static
+    # stability metric and potential temperature if they are present; if not,
+    # this function will just raise a warning
+  cdo $flags -ensmean ${commands[@]} tmp1.nc
+  # CDO interpolation
+  # echo "Interpolating with CDO."
+  # cdo $flags $interp tmp1.nc $fclimate; rm tmp?.nc
+  # [ ! -e $fclimate ] && echo "ERROR: $fclimate not produced." && exit 1
+  # NCL interpolation
+  echo "Interpolating with NCL."
+  ncl -n -Q "filename=\"tmp1.nc\"" "outfile=\"tmp2.nc\"" "lat_out=(/$lat_out/)" "plev_out=(/$plev_out/)" \
+    $interpncl; cdo setzaxis,$cwd/$zaxisdes tmp2.nc $fclimate; rm tmp?.nc
+  # NCAP interpolation; must loop over other dimensions manually
+  # echo "Interpolating horizontally with ncap2 GSL function."
+  # cat > interp.nco << EOF
+  # defdim("eralat",$numeralat); // declare new dimension
+  # eralat[\$eralat]={$eralat}; // destination latitude
+  # gsl_interp_linear(&func, lat, t);
+  # t_dest=gsl_spline_eval(func, eralat); // interpolate to new data
+  # EOF
+  # ncap2 -S interp.nco $fclimate tmp.nc # holds interpolated data
 }
 
 #########################################i#######################################
@@ -154,7 +177,7 @@ function EOFs() {
     region=$1 # the region
     level=$2 # the level
     [[ -z $region || -z $level ]] && echo "ERROR: EOF function needs two arguments." && return 1
-    [[ ! ",$eralevels," =~ ",$level," ]] && echo "ERROR: Level is not an ERA-Interim level. Please choose from ${levels}." && return 1
+    [[ ! ",$plev_out," =~ ",$level," ]] && echo "ERROR: Level is not an ERA-Interim level. Please choose from ${levels}." && return 1
     case $region in
       NH) selregion="-sellonlatbox,-180,180,0,90" ;; # north-hemisphere selection
       SH) selregion="-sellonlatbox,-180,180,-90,0" ;; # south-hemisphere selection

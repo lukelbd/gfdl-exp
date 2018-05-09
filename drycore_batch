@@ -7,41 +7,49 @@ RUN=true # run the model?
 POST=false # run post-processing on the model results?
 
 # Settings for tasks
-TESTING=false # do quick test control/spindown runs?
+TESTING=false # do quick test control/spindown runs? note that
+# in post-processing mode this will process the default Held-Suarez results
 SPINDOWN=false # do spindown runs?
 CONTROL=true  # do control run?
 NEWEXPER=false # do not write to existing experiment directories?
-NEWDAYS=true # do not write to existing dXXXX-dYYYY directories?
+NEWDAYS=false # do not overwrite existing dXXXX-dYYYY directories?
 INIT=false # just show the initial state of model?
-CLIMOSTART=600 # start climatology for post processing
-CLIMOEND=2000 # end climatology day for post processing
-SPINDOWNSTART=0 # start day for spindown file
-SPINDOWNEND=600 # end day for spindown file
 
-# Variables without loops
+# General model-run variables
 CORES=16 # core count
-DAYS=100 # time step for pausing model to output results
-DT=600 # time step in seconds
-EXPOPT=2 # the control option; 1 for no boundary-layer timescale scaling
-SPINDOWNOPT=1 # the spindown option; see run code for details
-
-# Variables with loops
+EXPOPTS=(2 3) # the control option; 1 for no boundary-layer timescale scaling
+EXPOPTS=(2) # preserve boundary-layer timescale; 2 just scales it
 KTS=(20) # one KT for now
-# KFS=(0.25 0.5 1 2 4) KAS=(10 20 40 80 160)
-# KFS=(0.25 0.5 1 2 4) KAS=(10)
-KFS=(1) KAS=(0.1 0.25 0.5 1 2.5 5 10 20 160 640) # some different
-  # repeat KA experiments with changing boundary layer tau; weird stuff
-  # starts to happen at fast timescales
+KFS=(0.025 0.05 0.1 0.25 0.5 1 2 4 8 16 32 64) KAS=(40)
+KFS=(1) KAS=(0.05) # really small timescale
+# KFS=(1) KAS=(80 160 320 640 20 10 5 2.5 1 0.5 0.25 0.1)
+KFS=(1) KAS=("80 40" "160 80" "320 160" "640 320") # with reference experiments
+KFS=(1) KAS=("1024 640" "2048 1024") # why the fuck not?
+# KFS=(1) KAS=("20 40" "10 20" "5 10" "2.5 5" "1 2.5" "0.5 1" "0.25 0.5" "0.1 0.25") # not necessary; spinup fast!
+KFS=(1) KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 "80 40" "160 80" "320 160" "640 320") # continuation for the later ones
+KFS=(1) KAS=("80 40" "160 80" "320 160" "640 320") # new continuation expriments
 NTRUNCS=(42) # truncation numbers
+NTRUNCS=(85)
 LEVS=(40) # vertical coordinate specifiers
+LEVS=(era) # the ERA-Interim conventions
 
 # Control experiment timing
+PDAYS=d1100-d1200 # where to restart from previous experiments
+DAYS=100 # for T42 and 40 equally-spaced levels
+DAYS=20 # for T85 and 60 ERA-Interim levels; expands z by 1.5 and lat/lon by 2/2
+  # equals 6 times file size so try to reduce number of days by about 6 times
+# DT=300 # for 0.05 radiation experiment
+DT=600 # for other experiments
 TSTART=0 # first day of integration; set to 0 for new run.
-TEND=2000 # last day of integration after spin-up
+# TEND=2000 # last day of integration after spin-up
+TEND=1200 # for new experiments just do 1200 day integrations; dump the first 200
 TRECORD=({0000..9999}) # when to record anything at all?
 TKEEP=(1000) # when to retain longitude info?
 
 # Spindown experiment timing
+SPINDOWNOPT=1 # the spindown option; see run code for details
+SPINDOWNSTART=0 # start day for spindown file
+SPINDOWNEND=600 # end day for spindown file
 TCONTROL=({17..59}00) # last time stopped at day 1500 run
 TCONTROL=({10..59}00) # just one equilibrium run, for testing?
 TSPINRECORD=({0000..9999}) # when to record anything at all?
@@ -50,9 +58,13 @@ TSPINSTART=0 # start day for spindown (in days after tcontrol)
 TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
 
-# Post-processing options
+# Post-processing variables
 PARALLEL=true # run post-processing stuff in parallel?
-ENERGY=true # get energy?
+CLIMOSTART=1000 # start climatology for post processing
+CLIMOEND=2000 # end climatology day for post processing
+CLIMOSTART=200 # new, just do 200 day spinup
+CLIMOEND=1200
+ENERGY=false # get energy?
 CLIMATE=true # get the climate stuff?
 EOFS=false # get EOFs?
 TAU=false # get timescale estimate?
@@ -73,53 +85,67 @@ TOPOFILE= # path to file e.g. $PWD/topo.nc
 # Override for test experiments
 if $TESTING; then # overwrite some settings
   # DAYS=1 TSTART=0 TEND=1
-  DAYS=1 TSTART=2000 TEND=2003 PDIR=t42l40_d2000 # pdir is override
-  # DAYS=10 TSTART=2000 TEND=2010 PDIR=t42l40_d2000 # pdir is override
-  # DAYS=100 TSTART=2000 TEND=2100 PDIR=t42l40_d2000 # pdir is override
+  PDIR="../t42l40_hs1r0040.000f0001.000/$PDAYS" # override previous directory
+  DAYS=1 TSTART=2000 TEND=2003
+  # DAYS=10 TSTART=2000 TEND=2010 PDIR=t42l40_d2000
+  # DAYS=100 TSTART=2000 TEND=2100 PDIR=t42l40_d2000
   TCONTROL=(10) TSPINSTART=0 TSPINEND=10
   # TSTART=0 TEND=1
   # TCONTROL=(10) TSPINSTART=0 TSPINEND=1
   TRECORD=({0000..9999}) TKEEP=({0000..9999}) NEWEXPER=false NEWDAYS=false
   # NTRUNCS=(42) LEVS=(era) KTS=(20) KAS=(40) KFS=(1)
-  NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
+  EXPOPTS=(1) NTRUNCS=(42) LEVS=(40) KTS=(20) KAS=(40) KFS=(1)
+  CLIMOSTART=1000 CLIMOEND=1100
 fi
 
 # Run multiple experiments consecutively
 counter=0 # counter
 parallelmax=8 # maximum parallel post-processing events
 cwd=$(pwd)
-for LEV in ${LEVS[@]}; do
-  for NTRUNC in ${NTRUNCS[@]}; do
-    for KT in ${KTS[@]}; do # stratosphere timescales
-      for KA in ${KAS[@]}; do # troposphere timescales
-        for KF in ${KFS[@]}; do # friction timescales
-          # Ensure are still in same directory
-          counter=$(($counter + 1))
-          cd $cwd
-          # Experiment directory
-          DEFDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
-          if $RUN; then
-            $TESTING && EXPDIR="test" || EXPDIR="$DEFDIR" # keep test model runs in special directory
-            echo "Current experiment directory: ${EXPDIR}."
+for EXPOPT in "${EXPOPTS[@]}"; do # describes scaling of surface damping rate
+  for LEV in "${LEVS[@]}"; do
+    for NTRUNC in "${NTRUNCS[@]}"; do
+      for KT in "${KTS[@]}"; do # stratosphere timescales
+        for KA in "${KAS[@]}"; do # troposphere timescales
+          for KF in "${KFS[@]}"; do # friction timescales
+            # Ensure are still in same directory
+            cd $cwd
+            # Experiment directory setup
+            KARESTART= # reset this variable
+            [[ "$KA" =~ " " ]] && KARESTART=${KA##* } KA=${KA%% *} # syntax is ka="<restart_ka> <new_ka>"
+            [[ "$KA" == 40 ]] && EXPOPT=1 # experiment option only applies to different KAs from default
+            EXPDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
+            if [ ! -z $KARESTART ]; then
+              [[ "$KARESTART" == 40 ]] && EXPOPTRESTART=1 || EXPOPTRESTART=$EXPOPT # same but for the restart file
+              PDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPTRESTART}r$(printf "%08.3f" $KARESTART)f$(printf "%08.3f" $KF)"
+              EXPDIR="${EXPDIR}continued" # special name for experiment restarted this way
+              [ $KARESTART != 40 ] && PDIR="${PDIR}continued" # only continue from other 'continuation' experiments, unless starting from default
+            fi
+            # Boundary layer timescale setup
             case $EXPOPT in
               1) KS=4 ;; # hold boundary layer value constant
               2) KS=$(bc -l <<< "$KA/10") ;; # hold ratio constant
-              3) KS=$KA ;; # constant everywhere
-              4) KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") ;; # preserve 'boundary layer' component
+              3) KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") ;; # preserve 'boundary layer' component
               *) echo "ERROR: Unknown experiment option ${EXPOPT}." && exit 1 ;;
             esac
-            echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
-            echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
-            source drycore_run # can read variables declared here
-          fi
-          # Call post-process script
-          if $POST; then
-            $PARALLEL && [ $(($counter % $parallelmax)) == 0 ] \
-              && echo "Waiting for spawned process." && wait
-            EXPDIR="$DEFDIR" # loop have been redefined so do this once for results from one experiment
-            echo "Current experiment directory: ${EXPDIR}."
-            source postprocess
-          fi
+            # Run model
+            if $RUN; then
+              # Print information and source the runscript
+              $TESTING && EXPDIR="test" # override to this dummy directory
+              echo "Current experiment directory: ${EXPDIR}."
+              echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
+              echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
+              source drycore_run # can read variables declared here
+            fi
+            # Call post-process script
+            if $POST; then
+              $PARALLEL && [ $(($counter % $parallelmax)) == 0 ] \
+                && echo "Waiting for spawned processes." && wait
+              echo "Current experiment directory: ${EXPDIR}."
+              source postprocess
+              counter=$(($counter + 1))
+            fi
+          done
         done
       done
     done

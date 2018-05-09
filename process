@@ -219,6 +219,8 @@ for ncfile in *.nc; do
     cdo -O -s -uv2dv -selname,u,v $ncfile dv0.nc 1>/dev/null # gets spectral coefs for vor and div
     cdo -O -s -invertlat -sp2gp -dv2ps dv0.nc dv1.nc 1>/dev/null # default names are fine
     cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc # better names
+    ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc
+      # get absolute vorticity; asterisk means this is a "RAM" variable, not saved in final output
     if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
       echo "WARNING: Could not get the vorticity/divergence/streamfunction terms."
       ! $testing && rm dv?.nc # remove any that may exist

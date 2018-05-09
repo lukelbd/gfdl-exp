@@ -130,41 +130,45 @@ message("  * Time for getting NCL preliminary parameters")
 ; message("  * Time for getting flux term")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Static stability
-; -T*d[log(theta)]/dp = -(T/theta)*d[theta]/dp
-; Recognize that T/theta == (p/p0)^kappa since theta==(p0/p)^kappa
-; ; s = -(t/pt)*center_finite_diff_n(pt,p,False,0,dimlev) ; static stability
-; pt = tbar*(p0/conform(t,p,dimlev))^kappa ; pot_temp procedure does this
-; s = -1.*center_finite_diff_n(pt,p,False,0,dimlev)*conform(pt,p/p0,dimlev)^kappa ; static stability
-; New version recognizing that d(ave(theta))/dp === ave(dtheta/dp); this can be
-; seen by noting ave(dtheta/dp) === ave((theta2-theta0)/2dp) === (ave(theta2)-ave(theta0))/2dp
-pt = tbar(:,:,:,0)*conform_dims(avedims,p0/p,dimlev)^kappa
-s = -1.*center_finite_diff_n(pt,p,False,0,dimlev)*conform_dims(avedims,p/p0,dimlev)^kappa
-  ; * arg3 allows treating dimension as cyclic
-  ; * arg4 is "not currently implemented"; ignore
-  ; * arg5 is the derivative dimension
-; Write static stability to file
-f = addfile("energy01.nc","c")
-copy_VarCoords(avevar,s)
-s@long_name = "static stability"
-s@units     = "K/Pa"       ; or "K-m-s2/kg"
-f->plev_bnds = plev_bnds
-f->s = s
-delete(f)
-; Write potential temperature to file
-f = addfile("energy02.nc","c")
-copy_VarCoords(avevar,pt)
-pt@long_name = "potential temperature"
-pt@units     = "K"       ; or "K-m-s2/kg"
-f->plev_bnds = plev_bnds
-f->pt = pt
-delete(f)
-message("  * Time for NCL static stability")
+; ; Static stability
+; ; Actually don't save this stuff, no point; this static stability equals
+; ; the finite difference (p/p0)^kappa*((theta_2-theta_0)/dp), which is *linear*
+; ; in temporal/zonal averages; so the mean of s will be s of the mean
+; ; -T*d[log(theta)]/dp = -(T/theta)*d[theta]/dp
+; ; Recognize that T/theta == (p/p0)^kappa since theta==(p0/p)^kappa
+; ; ; s = -(t/pt)*center_finite_diff_n(pt,p,False,0,dimlev) ; static stability
+; ; pt = tbar*(p0/conform(t,p,dimlev))^kappa ; pot_temp procedure does this
+; ; s = -1.*center_finite_diff_n(pt,p,False,0,dimlev)*conform(pt,p/p0,dimlev)^kappa ; static stability
+; ; New version recognizing that d(ave(theta))/dp === ave(dtheta/dp); this can be
+; ; seen by noting ave(dtheta/dp) === ave((theta2-theta0)/2dp) === (ave(theta2)-ave(theta0))/2dp
+; pt = tbar(:,:,:,0)*conform_dims(avedims,p0/p,dimlev)^kappa
+; s = -1.*center_finite_diff_n(pt,p,False,0,dimlev)*conform_dims(avedims,p/p0,dimlev)^kappa
+;   ; * arg3 allows treating dimension as cyclic
+;   ; * arg4 is "not currently implemented"; ignore
+;   ; * arg5 is the derivative dimension
+; ; Write static stability to file
+; f = addfile("energy01.nc","c")
+; copy_VarCoords(avevar,s)
+; s@long_name = "static stability"
+; s@units     = "K/Pa"       ; or "K-m-s2/kg"
+; f->plev_bnds = plev_bnds
+; f->s = s
+; delete(f)
+; ; Write potential temperature to file
+; f = addfile("energy02.nc","c")
+; copy_VarCoords(avevar,pt)
+; pt@long_name = "potential temperature"
+; pt@units     = "K"       ; or "K-m-s2/kg"
+; f->plev_bnds = plev_bnds
+; f->pt = pt
+; delete(f)
+; message("  * Time for NCL static stability")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Stability factor -(theta/T)*(R/cp)*(dthetabar/dp)^=1 where R/cp==kappa
 ; New way recognizing that t/theta == (p/p0)^kappa since theta==t*(p0/p)^kappa
 ; which means gamma == -R/(cp*p*(dtheta/dp)*(t/theta)) = -kappa/((dtheta/dp)*p*(p/p0)^kappa)
+pt = tbar(:,:,:,0)*conform_dims(avedims,p0/p,dimlev)^kappa
 ptBar = dim_avg_wgt_n(pt,clat,0,dimlat)
 gam = -kappa/(center_finite_diff_n(ptBar,p,False,0,dimlev)*conform(ptBar,p*(p/p0)^kappa,dimlev))
 gam := conform_dims(avedims,gam,(/0,1/))
