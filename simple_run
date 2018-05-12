@@ -8,21 +8,18 @@ ulimit -s unlimited # set max open files
 
 # Check for testing; if true, then will keep all files in processing steps
 # This parameter is passed as argument to processing function
-[ -z $TESTING ] && testing=false || testing=$TESTING
-# Double check that everything was declared properly in the batch script
-# echo $DAYS $DT $LEV $NTRUNC $KF $KA $KS $KT $EXPNAME $EXPTYPE $FILENAME $SPINDOWN $CONTROL
-if [ -z $DAYS ] || [ -z $DT ] || [ -z $LEV ] || [ -z $NTRUNC ] \
-  || [ -z $KF ] || [ -z $KA ] || [ -z $KS ] || [ -z $KT ] \
-  || [ -z $EXPNAME ] || [ -z $EXPTYPE ] || [ -z $FILENAME ] || [ -z $EXPDIR ] \
-  || [ -z $SPINDOWN ] || [ -z $CONTROL ]; then
-  echo "ERROR: Required variable was not set in batch script."
-  exit 1
-fi
-# Experiment naming for storage
-if [ "$EXPNAME" != "hs" ] && [ "$EXPNAME" != "pk" ]; then
-  echo "ERROR: Unknown experiment type ${EXPNAME}."
-  exit 1
-fi
+DT=600 # time step in seconds
+DAYS=100 # days
+NTRUNC=42 # turncation number
+LEV=40
+EXPNAME=hs # input file and diag table will be in format input_$EXPNAME.nml
+TESTING=false
+EXPTYPE=spectral # one of "spectral", "fv", or "bgrid"
+TOPOFILE=
+
+# Optional topography file (if exists will get copied into INPUT folders)
+[[ -r $TOPOFILE ]] && TOPO=input || TOPO=flat # if name empty then [] will yield true
+
 # Vertical resolution options
 if [ "$LEV" == "jer" ] || [ "$LEV" == "era" ]; then # Jeremiah's input coordinates
   COORD=input # add a group to input.nml
@@ -31,79 +28,61 @@ elif [[ "$LEV" =~ ^[0-9]+$ ]]; then
   COORD=even_sigma # even pressure spacing
   NLEVS="$LEV" # levels variable should just encode number desired
 else
-  echo "ERROR: Unknown vertical coordinate identifier ${LEV}."
+  echo "Error: Unknown vertical coordinate identifier ${LEV}."
   exit 1
 fi
-# Horizontal coordinates
+
+# Horizontal resolution options
 case $NTRUNC in
   42) NLATS=64 ;;
   63) NLATS=96 ;;
   85) NLATS=128 ;;
-  *) echo "ERROR: Invalid number of cores."; exit 1 ;;
+  *) echo "Error: Invalid number of cores."; exit 1 ;;
 esac
-# Optional topography file (if exists will get copied into INPUT folders)
-[[ -r $TOPOFILE ]] && TOPO=input || TOPO=flat # if name empty then [] will yield true
+
 # Storage information
 hostname=${HOSTNAME%%.*} # monde is monde.atmos.colostate.edu
-if [ "$hostname" == "olbers" ]; then
-  mpirun=/usr/local/mpich3/bin/mpirun
-  scratch=/home/ldavis # no good place on this server
-  storage=/home/ldavis
-elif [ "$hostname" == "gauss" ]; then
-  mpirun=/usr/local/mpich3-pgi/bin/mpirun
-  scratch=/birner-scratch/ldavis # need to use special scratch directory
-  storage=/home/ldavis
-elif [ "$hostname" == "euclid" ]; then # everything is in same lib/bin
-  mpirun=/usr/local/bin/mpirun
-  scratch=/home/ldavis # not mounted, so plenty of space
-  storage=/birner-home/ldavis
-elif [ "$hostname" == "monde" ]; then
+if [ "$hostname" == "monde" ]; then
   mpirun=/usr/lib64/mpich/bin/mpirun
   scratch=/mdata1/ldavis
   storage=/home/ldavis
 else
-  echo "ERROR: Unknown host, must configure library and binary locations before running."
+  echo "Error: Unknown host, must configure library and binary locations before running."
   exit 1
 fi
+
 # Executable check
-fms=$PWD/${hostname}_${EXPNAME}/fms.x # location of executables
+fms=$PWD/exe_${EXPNAME}_${hostname}/fms.x # location of executables
 process=$PWD/process # the script for on-the-fly processing
 postprocess=$PWD/postprocess # the script for post-processing
 if [ ! -x $fms ]; then # x for 'executable'
-  echo "ERROR: The executable $fms is missing."
+  echo "Error: The executable $fms is missing."
   exit 1
 fi
 if [ ! -x $process ]; then
-  echo "ERROR: The bash script for processing data is missing."
+  echo "Error: The bash script for processing data is missing."
   exit 1
 fi
 if [ ! -x $postprocess ]; then
-  echo "ERROR: The bash script for post-processing data is missing."
+  echo "Error: The bash script for post-processing data is missing."
   exit 1
 fi
+
 # Base directory for experiment run
 # Optionally exit from script if directory already exists
 basedir=$scratch/$EXPDIR # helper
-[ ! -z $NEWEXPER ] && $NEWEXPER && [ -d $basedir ] && echo "ERROR: Working directory already exists. Continuing..." && exit 1
+[ ! -z $NEWEXPER ] && $NEWEXPER && [ -d $basedir ] && echo "Error: Working directory already exists. Continuing..." && exit 1
 [ ! -d $basedir ] && mkdir $basedir # make directory
 
-################################################################################
-# Helper functions for model runs
-################################################################################
-# Set up input files for model executable to read; tried to make the function readable
-# by matching indentation, which can be done with <<-DELIM; literal tab chars ignored
-# https://unix.stackexchange.com/questions/76481/cant-indent-heredoc-to-match-nestings-indent
-################################################################################
-# Takes two arguments: 1) the working directory, and 2) the iteration mode
 function Setup() {
   cdir=$1
   ncrecord=$2
   if [ -z $1 ] || [ -z $2 ]; then
-    echo "ERROR: Not enough arguments provided to Setup() function."
+    echo "Error: Not enough arguments provided to Setup() function."
     exit 1
   fi
   if [ -z $radiationoff ] || [ -z $frictionoff ] || [ -z $surfaceoff ]; then
-    echo "ERROR: Required environmental variable not set."
+    echo "Error: Required environmental variable not set."
     exit 1
   fi
   # Set up working directory, and move there
@@ -438,10 +417,10 @@ EOF
 # Take one argument: directory where restart files exist
 function Restart() {
   rdir=$1 # the restart direcotry
-  [ ! -d $rdir ] && echo "ERROR: Restart directory $rdir does not exist." && exit 1
+  [ ! -d $rdir ] && echo "Error: Restart directory $rdir does not exist." && exit 1
   # Copy over relevant restart files for exp type; if missing, raise error
   if [ -z $1 ]; then
-    echo "ERROR: Not enough arguments provided to Restart() function."
+    echo "Error: Not enough arguments provided to Restart() function."
     exit 1
   fi
   if [ "$EXPTYPE" == "spectral" ]; then
@@ -454,7 +433,7 @@ function Restart() {
   echo "Moving restart files from ${rdir##*/}/RESTART to ${PWD##*/}/INPUT..."
   for file in ${resfiles[@]}; do
     if [ ! -r $rdir/RESTART/$file ]; then
-      echo "ERROR: Missing restart file ${rdir##*/}/RESTART/${file}."
+      echo "Error: Missing restart file ${rdir##*/}/RESTART/${file}."
       exit 1
     else
       cp $rdir/RESTART/$file INPUT/$file
@@ -471,7 +450,7 @@ function Iterate() {
   ncrecord=$1
   nckeep=$2
   if [ -z $1 ] || [ -z $2 ]; then
-    echo "ERROR: Not enough arguments provided to Iterate() function."
+    echo "Error: Not enough arguments provided to Iterate() function."
     exit 1
   fi
   start=$(date +%s)
@@ -486,7 +465,7 @@ function Iterate() {
   if [ ! -z $p2 ]; then
     wait $p2; estatus=$? # wait command will always exit with exit status of supplied process ID
     if [ $estatus != 0 ]; then
-      echo "ERROR: Exit status $estatus from previous model step..."
+      echo "Error: Exit status $estatus from previous model step..."
       case $estatus in
         1) echo "Something failed during model integration. Check log.model." ;;
         2) echo "Something failed during model interpolation. Check log.interp." ;;
@@ -529,134 +508,49 @@ function Iterate() {
 # starting points from control for spin-down ensemble experiments
 ##############################################################################
 estatus=0 # initialize exit status
-if $CONTROL; then
-  # CHECK THAT TIMING VARIABLES ARE DECLARED
-  if [ -z $TSTART ] || [ -z $TEND ] || [ -z $TKEEP ] || [ -z $TRECORD ]; then
-    echo "ERROR: One or more of the timing variables was not set."
-    exit 1
-  fi
-  # PREPARE FOR THE LOOP
-  echo "Running control experiment from day $TSTART to day $TEND."
-  origin=$(date +%s) # start time
-  radiationoff=false # we still have radiation now
-  surfaceoff=false
-  frictionoff=false
-  pday=$(($TSTART - $DAYS)) # only time when we do minus days
-  cday=$TSTART
-  nday=$(($TSTART + $DAYS))
-  while [ $nday -le $TEND ]; do
-    # MESSAGE AND RESET TIMER
-    echo "Running from day $cday to day $nday."
-    time=$(date +%s)
-    # RUN THE MODEL and COMBINE OUTPUT
-    # OPTIONALLY USE THE END OF OTHER CONTROL RUNS TO REDUCE SPINUP TIME
-    pdir=$basedir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
-    cdir=$basedir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
-    if [ ! -z "$PDIR" ]; then
-      pdir=($scratch/$PDIR/d*-d*) # list of possible days
-      pdir="${pdir[-1]}" # pick last one; should be sorted
-      echo "OVERRIDE: Using $pdir for restart files."
-      PDIR= # unset pdir; only ever use this feature on first 'day' of a new experiment
-    fi
-    [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
-    [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
-    Setup $cdir $ncrecord # sets up working directory, cd into it
-    if [ $? == 0 ]; then # setup fails if user doesn't want to overwrite old experiments; see NEWDAYS option
-      [[ $cday -gt 0 || ! -z $PDIR ]] && Restart $pdir # add restart files
-      $nckeep && echo "Keeping original longitude info."
-      Iterate $ncrecord $nckeep # run model
-    fi
-    # STEP THINGS FORWARD, FOR NEXT ITERATION
-    pday=$cday
-    cday=$(($pday + $DAYS))
-    nday=$(($cday + $DAYS))
-  done
-  echo "Processing last file..."
-  wait $p2
-  p2=
-  echo "The control run completed successfully in $(($(date +%s) - $origin)) seconds!"
-  echo "Timestamp: $(date)."
+# CHECK THAT TIMING VARIABLES ARE DECLARED
+if [ -z $TSTART ] || [ -z $TEND ] || [ -z $TKEEP ] || [ -z $TRECORD ]; then
+  echo "Error: One or more of the timing variables was not set."
+  exit 1
 fi
-
-##############################################################################
-# SPINDOWN RUNS
-# User must specify which namelist params are getting abruptly changed.
-##############################################################################
-if $SPINDOWN; then
-  # CHECK THAT TIMING VARIABLES ARE DECLARED
-  if [ -z $TCONTROL ] || [ -z $TSPINSTART ] || [ -z $TSPINEND ] || [ -z $TSPINRECORD ] || [ -z $TSPINKEEP ]; then
-    # echo TCONTROL $TCONTROL TSPINSTART $TSPINSTART TSPINEND $TSPINEND TSPINRECORD $TSPINRECORD TSPINKEEP $TSPINKEEP
-    echo "ERROR: One or more of the timing variables was not set."
-    exit 1
+# PREPARE FOR THE LOOP
+echo "Running control experiment from day $TSTART to day $TEND."
+origin=$(date +%s) # start time
+radiationoff=false # we still have radiation now
+surfaceoff=false
+frictionoff=false
+pday=$(($TSTART - $DAYS)) # only time when we do minus days
+cday=$TSTART
+nday=$(($TSTART + $DAYS))
+while [ $nday -le $TEND ]; do
+  # MESSAGE AND RESET TIMER
+  echo "Running from day $cday to day $nday."
+  time=$(date +%s)
+  # RUN THE MODEL and COMBINE OUTPUT
+  # OPTIONALLY USE THE END OF OTHER CONTROL RUNS TO REDUCE SPINUP TIME
+  pdir=$basedir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
+  cdir=$basedir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
+  if [ ! -z "$PDIR" ]; then
+    pdir=($scratch/$PDIR/d*-d*) # list of possible days
+    pdir="${pdir[-1]}" # pick last one; should be sorted
+    echo "OVERRIDE: Using $pdir for restart files."
+    PDIR= # unset pdir; only ever use this feature on first 'day' of a new experiment
   fi
-  # PREPARE FOR THE LOOP
-  case $SPINDOWNOPT in # determine experiment type
-    1) radiationoff=true surfaceoff=true frictionoff=false ;;
-    2) radiationoff=true surfaceoff=false frictionoff=false ;;
-    3) radiationoff=true surfaceoff=true frictionoff=true ;;
-    4) radiationoff=false surfaceoff=false frictionoff=true ;;
-    *) echo "ERROR: Unknown spindown identifier \"$SPINDOWNOPT\"."; exit 1 ;;
-  esac
-  $radiationoff && radiation=off || radiation=on
-  $surfaceoff && surface=off || surface=on
-  $frictionoff && friction=off || friction=on
-  echo "Running spindown experiment $SPINDOWNOPT from days ${TCONTROL[@]} for $TSPINEND days."\
-       "Radiation $radiation, surface radiation $surface, friction $friction."
-  origin=$(date +%s)
-  nckeep=false
-  ncrecord=false
-  # ITERATE THROUGH STARTING DAYS
-  for eday in "${TCONTROL[@]}"; do
-    cday=0 # current day relative to start of equilibrium
-    nday=$(($cday + $DAYS)) # next day, relative to start
-    prefix=$basedir/d$(printf "%04d" $eday) # for successive spindown runs
-    fstart=$basedir/d$(printf "%04d" $(($eday - $DAYS)))-d$(printf "%04d" $eday) # for restart files from control
-    origin=$(date +%s) # record time
-    echo "Starting radiation-off spindown run from day $eday for $TSPINEND days."
-    while [ $nday -le $TSPINEND ]; do
-      # SKIP THIS TIME (OPTIONALLY)
-      if [ $cday -lt $TSPINSTART ]; then
-        echo "Skipping $cday."
-        pday=$cday # previous day
-        cday=$(($pday + $DAYS))
-        nday=$(($cday + $DAYS))
-        continue
-      fi
-      # GET DIRECTORIES
-      cdir=$prefix-spindown$SPINDOWNOPT-d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
-      [ $cday -eq 0 ] && pdir=$fstart || { # new line for visibility
-        pdir=$prefix-spindown$SPINDOWNOPT-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
-        }
-      # RUN THE MODEL and COMBINE OUTPUT
-      [[ " ${TSPINRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
-      [[ " ${TSPINKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
-      Setup $cdir $ncrecord # sets up working directory, cd into it
-      if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
-        Restart $pdir # add restart files
-        Iterate $ncrecord $nckeep # run model
-      fi
-      # STEP THINGS FORWARD, FOR NEXT ITERATION
-      pday=$cday # previous day
-      cday=$(($pday + $DAYS))
-      nday=$(($cday + $DAYS))
-    done
-    echo "Spindown from $eday completed successfully in $(($(date +%s) - $origin)) seconds!"
-    echo "Timestamp: $(date)."
-  done
-  echo "Processing last file..."
-  wait $p2
-  p2=
-  echo "The spindown runs completed successfuly in $(($(date +%s) - $origin)) seconds!"
-  echo "Timestamp: $(date)."
-fi
-################################################################################
-# Finally, apply post-processing to the output data
-################################################################################
-# if $postprocess; then
-#   echo "Running post-processing steps..."
-#   tpost=$(date +%s)
-#   if $testing; then flags="-t"; else flags=""; fi
-#   $postprocess $flags $FILENAME $scratch $storage ${KAS[@]}
-#   echo "Post-processing finished in $(($(date +%s) - $tpost))s!"
-#   # . deactivate ncl_stable # de-activate the NCL environment
-# fi
+  [[ " ${TRECORD[@]} " =~ " $(printf "%04d" $cday) " ]] && ncrecord=true || ncrecord=false
+  [[ " ${TKEEP[@]} " =~ " $(printf "%04d" $cday) " ]] && nckeep=true || nckeep=false
+  Setup $cdir $ncrecord # sets up working directory, cd into it
+  if [ $? == 0 ]; then # setup fails if user doesn't want to overwrite old experiments; see NEWDAYS option
+    [[ $cday -gt 0 || ! -z $PDIR ]] && Restart $pdir # add restart files
+    $nckeep && echo "Keeping original longitude info."
+    Iterate $ncrecord $nckeep # run model
+  fi
+  # STEP THINGS FORWARD, FOR NEXT ITERATION
+  pday=$cday
+  cday=$(($pday + $DAYS))
+  nday=$(($cday + $DAYS))
+done
+echo "Processing last file..."
+wait $p2
+p2=
+echo "The control run completed successfully in $(($(date +%s) - $origin)) seconds!"
+echo "Timestamp: $(date)."

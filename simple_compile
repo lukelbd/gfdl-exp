@@ -6,26 +6,24 @@
 #------------------------------------------------------------------------------
 expname=hs
 hostname=${HOSTNAME%%.*} # trims e.g. monde.atmos.colostate.edu
-case $hostname in
-  monde)
-    include=(/usr/include/mpich-x86_64) # location of C header files
-    links=(/usr/lib64/mpich/lib) # location of lib files to be linked
-    root=/home/ldavis/gfdl # location of source code
-    pgi=/opt/pgi/linux86-64/17.10/bin # location of PGI compilers
-    ;;
-  *)
-    echo "Error: Unknown host \"$hostname\", must configure library and binary locations before running."
-    exit 1 ;;
-esac
+if [[ "$hostname" == "monde" ]]; then # everything is bunched together
+  include=(/usr/include/mpich-x86_64)
+  links=(/usr/lib64/mpich/lib)
+  root=/home/ldavis/gfdl
+  pgi=/opt/pgi/linux86-64/17.10/bin
+else
+  echo "Error: Unknown host, must configure library and binary locations before running."
+  exit
+fi
 #------------------------------------------------------------------------------
 # Build executable model code and post-processing tool
 #------------------------------------------------------------------------------
 execdir=$(pwd)/exe_${expname}_${hostname}      # where code is compiled and executable is created
 src=$root/src_$expname                         # path to directory containing model source code
 mkmf=$root/bin/mkmf                            # path to executable mkmf
-pathnames=$src/path_names                      # stored in source directory
 mkmftemplate=$root/bin/mkmf.template           # template of most basic settings
 mppnsource=$root/postprocessing/mppnccombine.c # source code
+pathnames=$src/path_names                      # stored in source directory
 cppdefs="-Duse_libMPI -Duse_netCDF"            # not sure what this does
 flags_links="${links[@]/#/-L}"                 # search these paths for library files
 flags_include="${include[@]/#/-I}"             # include flags
@@ -33,10 +31,11 @@ flags_libs="-lmpl -lmpich -lfmpich -lmpichf90 -lnetcdff -lnetcdf -lhdf5_hl -lhdf
 # Make sure necessary things tools are in path
 if [ ! -d $execdir ]; then
   mkdir $execdir
-else echo "Warning: Leaving old compiled source. To do a completely fresh compilation, remove all *.mod and *.o files from \"$execdir\"."
+else
+  echo "Warning: Leaving old compiled source..."
 fi
 if [ ! -r $pathnames ]; then
-  echo "Error: Could not find path_names file $pathnames.."
+  echo "Error: Could not find path_names file $pathnames."
   exit
 fi
 if [ ! -d $src ]; then
@@ -52,10 +51,11 @@ if [ ! -r $mkmftemplate ]; then
   exit
 fi
 if [ ! -r $mkmf ]; then
-  echo "Error: Could not find mkmf Makefile-generating outility $mkmf."
+  echo "Error: Could not find Makefile-generating utility $mkmf."
   exit
 fi
 # Create mppnccombine; should supply with same libraries supplied to model executable through its makefile
+# $pgi/pgcc -O -o $mppnccombine -I$netcdfc/include -I$mpich/include $mppnsource $flags_links $flags_libs
 time=$(date +%s)
 echo "Generating mppnccombine executable..."
 $pgi/pgcc -O -o mppnccombine $flags_include $mppnsource $flags_links $flags_libs
@@ -90,4 +90,3 @@ $mkmf -p fms.x -t mkmf.template -c "$cppdefs" -a $src $pathnames \
 echo "Compiling source code..."
 make -f Makefile
 echo "This script took $(($(date +%s) - $time)) seconds."
-

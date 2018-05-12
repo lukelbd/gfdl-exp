@@ -6,7 +6,6 @@
 #------------------------------------------------------------------------------
 expname=hs
 hostname=${HOSTNAME%%.*} # trims e.g. monde.atmos.colostate.edu
-execdir=$PWD/${hostname}_${expname} # where code is compiled and executable is created
 if [[ "$hostname" == "olbers" ]]; then # netcdf-c lib is separate from netcdf-fortran lib
   include=(/usr/local/mpich3/include /usr/local/netcdf4/include /usr/local/netcdf4-pgi/include)
   links=(/usr/local/mpich3/lib /usr/local/netcdf4/lib /usr/local/netcdf4-pgi/lib /usr/local/hdf5/lib)
@@ -33,56 +32,54 @@ elif [[ "$hostname" == "euclid" ]]; then # everything is bunched together
   pgi=/opt/pgi/linux86-64/2013/bin
   fix=''
 else
-  echo "ERROR: Unknown host, must configure library and binary locations before running."
+  echo "Error: Unknown host, must configure library and binary locations before running."
   exit
 fi
 #------------------------------------------------------------------------------
 # Build executable model code and post-processing tool
 #------------------------------------------------------------------------------
-src=$root/src_$expname   # path to directory containing model source code
-mkmf=$root/bin/mkmf # path to executable mkmf
-pathnames=$src/path_names # stored in source directory
-mkmftemplate=$root/bin/mkmf.template # template of most basic settings
+execdir=$(pwd)/exe_${expname}_${hostname}      # where code is compiled and executable is created
+src=$root/src_$expname                         # path to directory containing model source code
+mkmf=$root/bin/mkmf                            # path to executable mkmf
+mkmftemplate=$root/bin/mkmf.template           # template of most basic settings
 mppnsource=$root/postprocessing/mppnccombine.c # source code
-cppdefs="-Duse_libMPI -Duse_netCDF" # not sure what this does
-flags_links="${links[@]/#/-L}" # search these paths for library files
-flags_include="${include[@]/#/-I}" # include flags
-# echo $flags_links
-# echo $flags_include
-# exit
+pathnames=$src/path_names                      # stored in source directory
+cppdefs="-Duse_libMPI -Duse_netCDF"            # not sure what this does
+flags_links="${links[@]/#/-L}"                 # search these paths for library files
+flags_include="${include[@]/#/-I}"             # include flags
 flags_libs="-lmpl -lmpich -lfmpich -lmpichf90 -lnetcdff -lnetcdf -lhdf5_hl -lhdf5 -lm -lz $fix" # for mppnccombine
 # Make sure necessary things tools are in path
 if [ ! -d $execdir ]; then
   mkdir $execdir
 else
   # echo "WARNING: Removing old compiled source..."
-  echo "WARNING: Leaving old compiled source..."
+  echo "Warning: Leaving old compiled source..."
 fi
 if [ ! -r $pathnames ]; then
-  echo "ERROR: Could not find path_names file $pathnames.."
+  echo "Error: Could not find path_names file $pathnames."
   exit
 fi
 if [ ! -d $src ]; then
-  echo "ERROR: Could not find source code directory $src."
+  echo "Error: Could not find source code directory $src."
   exit
 fi
 if [ ! -r $mppnsource ]; then
-  echo "ERROR: Could not find mppnccombine source code."
+  echo "Error: Could not find mppnccombine source code."
   exit
 fi
 if [ ! -r $mkmftemplate ]; then
-  echo "ERROR: Could not find mppnccombine source code."
+  echo "Error: Could not find mppnccombine source code."
   exit
 fi
 if [ ! -r $mkmf ]; then
-  echo "ERROR: Could not find mkmf Makefile-generating outility $mkmf."
+  echo "Error: Could not find Makefile-generating utility $mkmf."
   exit
 fi
 # Create mppnccombine; should supply with same libraries supplied to model executable through its makefile
 # $pgi/pgcc -O -o $mppnccombine -I$netcdfc/include -I$mpich/include $mppnsource $flags_links $flags_libs
 time=$(date +%s)
 echo "Generating mppnccombine executable..."
-$pgi/pgcc -O -o ${hostname}_mppnccombine $flags_include $mppnsource $flags_links $flags_libs
+$pgi/pgcc -O -o mppnccombine $flags_include $mppnsource $flags_links $flags_libs
   # -O[level] = set optimization level; sets to 2 if number not specified
   # -o file = use this file as name of executable
   # -Idirectory = add directory to compiler search path; these are 'header' files
@@ -115,5 +112,5 @@ $mkmf -p fms.x -t mkmf.template -c "$cppdefs" -a $src $pathnames \
 # Compile source
 echo "Compiling source code..."
 make -f Makefile
-echo "This script took $(expr $(date +%s) - $time) seconds."
+echo "This script took $(($(date +%s) - $time)) seconds."
 

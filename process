@@ -29,7 +29,7 @@ testing=$2          # check if testing mode enabled; if true, keep all intermedi
 basedir=${0%/*}     # same location as this file; trim filename from right
 interpwithcdo=false # interpolate with CDO instead of NCL? much slower during testing (see notes)
 hostname=${HOSTNAME%%.*} # trim e.g. monde.atmos.colostate.edu --> monde
-mppnccombine=$basedir/${hostname}_mppnccombine # combine; needs to have been compiled here
+mppnccombine=$basedir/mppnccombine # combine; needs to have been compiled here
 interpcdo=$basedir/process_interp     # interpolate with CDO
 interpncl=$basedir/process_interp.ncl # interpolate with NCL, automatic iteration
 # interpncl=$basedir/process_interpex.ncl # interpolate with NCL, explicitly interpolate select variables
@@ -40,39 +40,39 @@ lorenz=$basedir/process_energy.ncl  # eddy and mean Lorenz energy cycle terms wi
 # energy=$basedir/process_energy    # Lorenz energy cycle terms with CDO
 # Double check some stuff
 if [ -z "$nckeep" ]; then
-  echo "ERROR: Must pass bash true/false whether you want to keep original longitude-res data."
+  echo "Error: Must pass bash true/false whether you want to keep original longitude-res data."
   exit 999
 fi
 if [ -z "$testing" ]; then
-  echo "ERROR: Must pass bash true/false whether you want to use testing mode."
+  echo "Error: Must pass bash true/false whether you want to use testing mode."
   exit 999
 fi
 if ! hash ncl 2>/dev/null; then
-  echo "ERROR: NCL is not in $PATH."
+  echo "Error: NCL is not in $PATH."
   exit 999
 fi
 if ! hash cdo 2>/dev/null; then
-  echo "ERROR: CDO is not in $PATH."
+  echo "Error: CDO is not in $PATH."
   exit 999
 fi
 if ! hash ncrename 2>/dev/null || ! hash ncks 2>/dev/null; then
-  echo "ERROR: NCO is not in $PATH."
+  echo "Error: NCO is not in $PATH."
   exit 999
 fi
 if [ ! -x $mppnccombine ]; then
-  echo "ERROR: The mpp combine executable $mppnccombine is missing."
+  echo "Error: The mpp combine executable $mppnccombine is missing."
   exit 999
 fi
 if [ ! -x $basics ]; then
-  echo "ERROR: The script $basics is missing."
+  echo "Error: The script $basics is missing."
   exit 999
 fi
 if [ ! -x $lorenz ]; then
-  echo "ERROR: The script $lorenz is missing."
+  echo "Error: The script $lorenz is missing."
   exit 999
 fi
 if [ ! -r $interpncl ]; then
-  echo "ERROR: The script $interpncl is missing."
+  echo "Error: The script $interpncl is missing."
   exit 999
 fi
 
@@ -85,7 +85,7 @@ fi
 t=$(date +%s)
 for ncfile in *.nc.0000; do
   if [ "$ncfile" == "*.nc.0000" ]; then # make sure nullglob turned off
-    echo "ERROR: No output netcdf files found."
+    echo "Error: No output netcdf files found."
     exit 1 # tell invoking shell that previous model failed
   fi # then combine, if any exist
   files=(${ncfile%%.*}.nc*) # put into array
@@ -130,14 +130,14 @@ for ncfile in *.nc; do
   if $interpwithcdo; then
     echo "Interpolating with CDO..."
     $interpcdo $ncfile $interpfile &>log.interp # that simple babe
-    [ $? != 0 ] && echo "ERROR: Something failed during CDO interpolation." && exit $?
+    [ $? != 0 ] && echo "Error: Something failed during CDO interpolation." && exit $?
     ! $testing && rm interp?.nc
   # b) Use NCL vint2hp_ecmwf for interpolation
   else
     echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
     ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$interpfile\"" $interpncl &>log.interp #2> /dev/null
     if nclcheck log.interp || [ ! -r $interpfile ]; then
-      echo "ERROR: Something failed during NCL interpolation." && exit 2
+      echo "Error: Something failed during NCL interpolation." && exit 2
     fi
   fi
   # Standardize attributes
@@ -155,7 +155,7 @@ for ncfile in *.nc; do
   # echo "Getting extra parameters with NCL..." # -Q = no banner, -n = do not enumerate print statements
   # ncl -n -Q "filename=\"$ncfile\"" $params &>log.params #2> /dev/null
   # if nclcheck log.params; then
-  #   echo "ERROR: Something failed getting extra parameters with NCL." && exit 3
+  #   echo "Error: Something failed getting extra parameters with NCL." && exit 3
   # fi
   # echo "  * Time for getting extra parameters with NCL: $(($(date +%s) - $t))s."
 
@@ -167,7 +167,7 @@ for ncfile in *.nc; do
   echo "Getting basic terms..."
   $basics $ncfile &>log.basic &
   pbasics=$!
-  # [ $? != 0 ] && echo "ERROR: Something failed while getting basic terms." && exit 3
+  # [ $? != 0 ] && echo "Error: Something failed while getting basic terms." && exit 3
   # echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
   ##############################################################################
   # 3) Get energy terms in another file
@@ -178,20 +178,20 @@ for ncfile in *.nc; do
   ncl -n -Q "filename=\"$ncfile\"" $lorenz &>log.lorenz &
   plorenz=$!
   # if nclcheck log.lorenz; then
-  #   echo "ERROR: Something failed getting extra parameters with NCL." && exit 4
+  #   echo "Error: Something failed getting extra parameters with NCL." && exit 4
   # fi
   # echo "  * Time for getting Lorenz energy terms with NCL: $(($(date +%s) - $t))s."
   ##############################################################################
   # Manage background processes
   # First the basic term
   wait $pbasics # wait for basic terms
-  [ $? != 0 ] && echo "ERROR: Something failed while getting basic terms." && exit 3
+  [ $? != 0 ] && echo "Error: Something failed while getting basic terms." && exit 3
   twait=$(tail -1 log.basic | sed 's/[^0-9]*//g')
   echo "  * Time for getting basic terms with CDO: ${twait}s."
   # Next the Lorenz terms
   wait $plorenz # wait for Lorenz terms
   if nclcheck log.lorenz; then
-    echo "ERROR: Something failed getting extra parameters with NCL." && exit 4
+    echo "Error: Something failed getting extra parameters with NCL." && exit 4
   fi
   twait=$(tail -1 log.lorenz | sed 's/[^0-9]*//g')
   echo "  * Time for getting Lorenz energy terms with NCL: ${twait}s."
