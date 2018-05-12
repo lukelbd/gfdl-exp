@@ -627,6 +627,7 @@ if $SPINDOWN; then
       Setup $cdir $ncrecord # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         Restart $pdir # add restart files
+        $nckeep && echo "Keeping longitude resolution data."
         Iterate $ncrecord $nckeep # run model
       fi
       # STEP THINGS FORWARD, FOR NEXT ITERATION

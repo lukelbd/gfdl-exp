@@ -19,10 +19,10 @@ SPINDOWNSTART=0 # start day for spindown file
 SPINDOWNEND=600 # end day for spindown file
 
 # Variables without loops
-CORES=16 # core count
+CORES=8 # core count
 DAYS=100 # time step for pausing model to output results
 DT=600 # time step in seconds
-EXPOPT=2 # the control option; 1 for no boundary-layer timescale scaling
+EXPOPT=1 # the control option; 1 for no boundary-layer timescale scaling
 SPINDOWNOPT=1 # the spindown option; see run code for details
 
 # Variables with loops
@@ -31,21 +31,21 @@ KTS=(20) # one KT for now
 # KAS=(40) KFS=(0.05 0.1 8 16) # new friction experiments
 # KAS=(0.1 0.25 0.5 1 2.5 5 320 640) KFS=(1) # new rad experiments
 # KAS=(320 640) KFS=(1)
-KAS=(10 160) # more spindown experiments
+# KFS=(1) KAS=(40) # fix processing steps
+KFS=(1) KAS=(10 160) # more spindown experiments
 NTRUNCS=(42) # truncation numbers
 LEVS=(40) # vertical coordinate specifiers
 
 # Control experiment timing
-TSTART=2000 # first day of integration; set to 0 for new run.
-TEND=5000 # last day of integration after spin-up
+TSTART=0 # first day of integration; set to 0 for new run.
+TEND=6000 # last day of integration after spin-up
 TRECORD=({0000..9999}) # when to record anything at all?
 TKEEP=(1000) # when to retain longitude info?
 
 # Spindown experiment timing
-TCONTROL=({17..59}00) # last time stopped at day 1500 run
 TCONTROL=({10..59}00) # just one equilibrium run, for testing?
 TSPINRECORD=({0000..9999}) # when to record anything at all?
-TSPINKEEP=(-1) # when to keep spindown data?
+TSPINKEEP=(-100) # when to keep longitude resolution data?
 TSPINSTART=0 # start day for spindown (in days after tcontrol)
 TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
@@ -55,7 +55,7 @@ PARALLEL=false # run post-processing stuff in parallel?
 ENERGY=false # get energy?
 CLIMATE=false # get the climate stuff?
 EOFS=false # get EOFs?
-TAU=false # get timescale estimate?
+TAU=true # get timescale estimate?
 SPINDOWNAVE=false # get every record of area-averaged spindown processes?
 SPINDOWNXS=false # get ensemble-mean cross-section of spindown process?
 TIMESCALE=true # get the timescale?
@@ -63,7 +63,7 @@ TIMESCALE=true # get the timescale?
 # DIFFS=false # get the ensemble analysis of equilibrium stuff?
 
 # The experiment specifications
-EXPNAME=hs # can be "hs", "hs", or "pk"
+EXPNAME=hs # can be "hs" or "pk"
 EXPTYPE=spectral # change this for different file
 FILENAME=4xdaily_inst # name for output files
 TOPOFILE= # path to file e.g. $PWD/topo.nc
