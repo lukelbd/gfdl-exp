@@ -426,7 +426,8 @@ function Timescale() {
   # echo $(realpath $0)
   python3 << EOF
 $(cat $cwd/postprocess_timescales.py)
-tau(spindown="$fspindownpoles", climate="$fclimate", output="$ftimescale")
+tau(spindown="$fspindownpoles", climate="$fclimate", output="$ftimescale",
+  timestep=slice(-4*100,None)) # use the last 100 days for equilibrium state
 EOF
   ncks -O -x -v lon,lat,time $ftimescale $ftimescale # drop vars and alphabetize
   # Simple CDO approach for the dynamical timescale

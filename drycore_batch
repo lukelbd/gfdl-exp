@@ -50,10 +50,9 @@ TKEEP=(1000) # when to retain longitude info?
 SPINDOWNOPT=1 # the spindown option; see run code for details
 SPINDOWNSTART=0 # start day for spindown file
 SPINDOWNEND=600 # end day for spindown file
-TCONTROL=({17..59}00) # last time stopped at day 1500 run
 TCONTROL=({10..59}00) # just one equilibrium run, for testing?
 TSPINRECORD=({0000..9999}) # when to record anything at all?
-TSPINKEEP=(-1) # when to keep spindown data?
+TSPINKEEP=(-100) # when to keep longitude resolution data?
 TSPINSTART=0 # start day for spindown (in days after tcontrol)
 TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
@@ -67,15 +66,15 @@ CLIMOEND=1200
 ENERGY=false # get energy?
 CLIMATE=true # get the climate stuff?
 EOFS=false # get EOFs?
-TAU=false # get timescale estimate?
+TAU=true # get timescale estimate?
 SPINDOWNAVE=false # get every record of area-averaged spindown processes?
 SPINDOWNXS=false # get ensemble-mean cross-section of spindown process?
-TIMESCALE=false # get the timescale?
+TIMESCALE=true # get the timescale?
 # EQUILIBRIUM=false # get supposed "equilibrium" climate?
 # DIFFS=false # get the ensemble analysis of equilibrium stuff?
 
 # The experiment specifications
-EXPNAME=hs # can be "hs", "hs", or "pk"
+EXPNAME=hs # can be "hs" or "pk"
 EXPTYPE=spectral # change this for different file
 FILENAME=4xdaily_inst # name for output files
 TOPOFILE= # path to file e.g. $PWD/topo.nc
