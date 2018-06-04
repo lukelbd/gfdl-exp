@@ -1,7 +1,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; This function interpolates model level output to pressure levels
-; Will probably be superceded by CDO because can be slow as fuck
+; Turns out this is *much faster* than CDO interpolation; compare
+; performance of process_interp.ncl vs. process_interp bash script
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Function declaration
 ; See this page: https://www.ncl.ucar.edu/Support/talk_archives/2011/1363.html
@@ -98,6 +99,7 @@ o->plev_bnds = pouti_edges ; will rename later and add atributes
 do i=0,dimsizes(varnames)-1
   varname := varnames(i) ; wrap in array to strip attributes
   if .not. any(varname .eq. dimnames) then
+    ;---------------------------------------------------------------------------
     ; Get variable and verify some stuff
     var := f->$varname$ ; load from old file
     if dimsizes(dimsizes(var)) .eq. 1 then
@@ -115,6 +117,7 @@ do i=0,dimsizes(varnames)-1
     else
       varflag = 0
     end if end if
+    ;---------------------------------------------------------------------------
     ; Interpolate the variable and save it
     var_out = vinth2p_ecmwf(var, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True, varflag, tbot, zbot)
     var_out!1 = "plev" ; rename dimension; simple as that

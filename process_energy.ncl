@@ -21,8 +21,9 @@
 ;   -chname,u,EKE -divc,9.81 -divc,2 \
 ;   -add -zonmean -sqr -sub -selvar,u $ncfile -enlarge,$ncfile -zonmean -selvar,u $ncfile \
 ;        -zonmean -sqr -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
-;   $out; verify $out
-
+;   $out; verify $out 
+; Warning: apparently the CopyVarCoords command will add singleton dimension
+; right after 'time' dimension by default, if 'lon' dimension has been destroyed.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Function declaration
 ; See this page: https://www.ncl.ucar.edu/Support/talk_archives/2011/1363.html
@@ -88,13 +89,14 @@ clat = cos(rlat)
 tlat = tan(rlat)
 p = t&plev*100 ; convert levels to Pa
 p0 = 100000.   ; convert 1000mb to Pa
-tbar = conform(t,dim_avg_n(t,dimlon),(/0,1,2/)) ; average and restore longitude dimension
-ubar = conform(u,dim_avg_n(u,dimlon),(/0,1,2/))
-vbar = conform(v,dim_avg_n(v,dimlon),(/0,1,2/))
-wbar = conform(w,dim_avg_n(w,dimlon),(/0,1,2/))
-qbar = conform(q,dim_avg_n(q,dimlon),(/0,1,2/))
-udbar = conform(ud,dim_avg_n(ud,dimlon),(/0,1,2/))
-vdbar = conform(vd,dim_avg_n(vd,dimlon),(/0,1,2/))
+tzy = (/0,1,2/) ; the time, pressure, and lat dimensions
+tbar = conform(t,dim_avg_n(t,dimlon),tzy) ; average and restore longitude dimension
+ubar = conform(u,dim_avg_n(u,dimlon),tzy)
+vbar = conform(v,dim_avg_n(v,dimlon),tzy)
+wbar = conform(w,dim_avg_n(w,dimlon),tzy)
+qbar = conform(q,dim_avg_n(q,dimlon),tzy)
+udbar = conform(ud,dim_avg_n(ud,dimlon),tzy)
+vdbar = conform(vd,dim_avg_n(vd,dimlon),tzy)
 tstar = t-tbar ; need both anomaly and average
 ustar = u-ubar
 vstar = v-vbar
@@ -108,9 +110,10 @@ tBar = dim_avg_wgt_n(tbar(:,:,:,0),clat,0,dimlat) ; arg2 are weights, arg3=1 mea
 ; print("TESTING")
 ; print(dimsizes(conform_dims(avedims,qBar,(/0,1/))))
 ; print(dimsizes(qbar(:,:,:,0)))
-qStar = qbar(:,:,:,0)-conform_dims(avedims,qBar,(/0,1/))
-tStar = tbar(:,:,:,0)-conform_dims(avedims,tBar,(/0,1/))
-wStar = wbar(:,:,:,0)-conform_dims(avedims,wBar,(/0,1/))
+tz = (/0,1/) ; the time and pressure dimensions
+qStar = qbar(:,:,:,0)-conform_dims(avedims,qBar,tz)
+tStar = tbar(:,:,:,0)-conform_dims(avedims,tBar,tz)
+wStar = wbar(:,:,:,0)-conform_dims(avedims,wBar,tz)
 message("  * Time for getting NCL preliminary parameters")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

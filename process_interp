@@ -2,7 +2,10 @@
 ncfile=$1
 outfile=$2
 flags="-s -O"
-
+################################################################################
+# This function interpolates model level output to pressure levels
+# Turns out this is *much slower* than NCL interpolation; compare
+# performance of this script with process_interp.ncl
 ############################################################################
 # 1) Pre-processing steps. CDO expects levels to be named mlev/ilev for
 # middle/intermediate levs, so change dim names. Can't be done in CDO. Also

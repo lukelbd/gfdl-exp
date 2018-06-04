@@ -7,7 +7,7 @@ import numpy as np
 import xarray as xr
 import scipy.optimize as opt # curve fitting
 
-def tau(spindown=None, climate=None, output=None, timestep=None):
+def timescales(spindown=None, climate=None, output=None, timestep=None):
     """
     Gets time scale along axes.
     Interactive option: supply loaded temperature DataArray.
