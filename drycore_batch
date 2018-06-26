@@ -3,28 +3,35 @@
 # set -e # exit if runscript triggered error
 
 # Tasks to run
-RUN=false # run the model?
-POST=true # run post-processing on the model results?
-
-# Subtasks and most basic settings
+MODE=2 # 1 is run the model, 2 is process the xyz files to yz, and
+# 3 is post-process the yz files to climate means and such
 TESTING=false # do quick test control/spindown runs? note that
 # in post-processing mode this will process the default Held-Suarez results
-SPINDOWN=false # do spindown runs?
+
+# Model run settings
 CONTROL=true  # do control run?
+SPINDOWN=false # do spindown runs?
 NEWEXPER=false # do not write to existing experiment directories?
 NEWDAYS=false # do not overwrite existing dXXXX-dYYYY directories?
-INIT=false # just show the initial state of model?
+INIT=false # just produce the initial model state, then exit?
+# Experiment specifications
+EXPNAME=hs # which source code to use; can be "hs" or "pk"
+EXPTYPE=spectral # change this for different file
+FILENAME=4xdaily_inst # name for output files
+TOPOFILE= # path to topography e.g. $PWD/topo.nc
 
 #-------------------------------------------------------------------------------
 # General model-run variables
 CORES=16 # core count
 KTS=(20) # one KT for now
-# KFS=(0.025 0.05 0.1 0.25 0.5 1 2 4 8 16 32 64) KAS=(40)
 # KFS=(1) KAS=(0.1 0.25 0.5 1 2.5 5 10 20 40 "80 40" "160 80" "320 160" "640 320") # continuation for the later ones
 # KFS=(1) KAS=("80 40" "160 80" "320 160" "640 320") # with reference experiments
 # KFS=(1) KAS=("1024 640" "2048 1024") # why the fuck not?
-EXPOPTS=(2 3) KFS=(1) KAS=(40 0.1 0.25 0.5 1 2.5 5 10 20 80 160 320 640 \
-  "80 40" "160 80" "320 160" "640 320") # continuation for the later ones
+# EXPOPTS=(2 3) KFS=(1) KAS=(40 0.1 0.25 0.5 1 2.5 5 10 20 80 160 320 640 \
+#   "80 40" "160 80" "320 160" "640 320") # continuation for the later ones
+EXPOPTS=(2 3) KFS=(1) KAS=(40 0.1 0.25 0.5 1 2.5 5 10 20 \
+  "80 40" "160 80" "320 160" "640 320") # only the continuation experiments
+# EXPOPTS=(1) KAS=(40) KFS=(0.025 0.05 0.1 0.25 0.5 1 2 4 8 16 32 64)
 # KFS=(1) KAS=(40) EXPOPTS=(1) # re-do
 # NTRUNC=(85) LEVS=(era) # the ERA-Interim conventions
 NTRUNCS=(42) LEVS=(40) # truncation numbers
@@ -46,6 +53,8 @@ TKEEP=(1000) # when to retain longitude info?
 #-------------------------------------------------------------------------------
 # Spindown experiment timing
 SPINDOWNOPT=1 # the spindown option; see run code for details
+  # 1 for radiation off, 2 for radiation off but surface on, 
+  # 3 for everything off (radiation, surface, and friction), 4 for friction off
 SPINDOWNSTART=0 # start day for spindown file
 SPINDOWNEND=600 # end day for spindown file
 TCONTROL=({10..59}00) # just one equilibrium run, for testing?
@@ -56,22 +65,15 @@ TSPINEND=600 # how long to run equilibrium?
   # so an extra 500 days for each
 
 #-------------------------------------------------------------------------------
-# The experiment specifications
-EXPNAME=hs # can be "hs" or "pk"
-EXPTYPE=spectral # change this for different file
-FILENAME=4xdaily_inst # name for output files
-TOPOFILE= # path to file e.g. $PWD/topo.nc
-  # 1 for radiation off, 2 for radiation off but surface on, 
-  # 3 for everything off (radiation, surface, and friction), 4 for friction off
-
-#-------------------------------------------------------------------------------
 # Post-processing variables
 # Option to run in parallel
 PARALLELMAX=4 # maximum parallel post-processing events
 CLIMOSTART=1000 CLIMOEND=2000 # start/end climatology for post processing
 CLIMOSTART=200 CLIMOEND=1200 # for continuation experiments, this should be fine
 # CLIMOSTART=1000 CLIMOEND=1100 # for testing
-PARALLEL=false COVAR=false AUTOCORR=false ENERGY=false CLIMATE=false EOF2D=true EOF=false
+PARALLEL=false
+COVAR=false AUTOCORR=false
+REGIONAL=true ENERGY=true CLIMATE=false EOF2D=false EOF=false
   # time-series of volume-integrated energy; average cross-section; 2d and 1d EOFs
 SPINDOWNAVE=false SPINDOWNXS=false SPINDOWNTAU=false
   # time-series of area-averaged quantities; full cross-section time-series; timescale estimate
@@ -93,6 +95,23 @@ if $TESTING; then # overwrite some settings
   CLIMOSTART=1000 CLIMOEND=1100
 fi
 
+#------------------------------------------------------------------------------#
+# Function for writing a *modified* namelist file
+# Will read input_default.nml and change lines with sed; easy peasy
+# function namelist() {
+#   # Just assign namelist based on environmental variables
+#   updates="ka=$KA kf=$KF ntrunc=$NTRUN"
+#   for string in $updates; do
+#     if ! grep '^\s*'${string%=*}'\b' $nml &>/dev/null; then
+#       echo "Error: Param \"${string%=*}\" not found in namelist."
+#       rm -r $rundir
+#       exit 1
+#     else
+#       sed -i 's/^\([[:space:]]*\)'${string%=*}'\W.*$/\1'$string', /g' $nml
+#     fi # sed -i 's/^\([[:space:]]*\)'${string%=*}'\(.*\)$/\1'$string'\2/g' $nml
+#   done
+# }
+
 #-------------------------------------------------------------------------------
 # Run multiple experiments consecutively
 counter=0 # counter
@@ -103,41 +122,50 @@ for IEXPOPT in "${EXPOPTS[@]}"; do # describes scaling of surface damping rate
       for KT in "${KTS[@]}"; do # stratosphere timescales
         for KA in "${KAS[@]}"; do # troposphere timescales
           for KF in "${KFS[@]}"; do # friction timescales
-            #-------------------------------------------------------------------
+            #------------------------------------------------------------------#
             # Initial stuff before calling anything
             # Ensure are still in same directory
             cd $cwd
             # Experiment directory setup
             KARESTART= # reset this variable
-            [[ "$KA" =~ " " ]] && KARESTART=${KA##* } && KA=${KA%% *} # syntax is ka="<restart_ka> <new_ka>"
-            [[ "$KA" == 40 ]] && EXPOPT=1 || EXPOPT=${IEXPOPT} # experiment option only applies to different KAs from default
+            [ "$KA" == 40 ] && EXPOPT=0 || EXPOPT=$IEXPOPT # if radiation is already Held-Suarez, make expopt 0
+            [[ "$KF" =~ " " ]] && KFRESTART=${KF##* } KF=${KF%% *}
+            [[ "$KA" =~ " " ]] && KARESTART=${KA##* } KA=${KA%% *} # syntax is ka="<restart_ka> <new_ka>"
             EXPDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPT}r$(printf "%08.3f" $KA)f$(printf "%08.3f" $KF)"
-            if [ ! -z $KARESTART ]; then
-              [[ "$KARESTART" == 40 ]] && EXPOPTRESTART=1 || EXPOPTRESTART=$EXPOPT # same but for the restart file
-              PDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPTRESTART}r$(printf "%08.3f" $KARESTART)f$(printf "%08.3f" $KF)"
+            if [ ! -z "$KARESTART" ] || [ ! -z "$KFRESTART" ]; then
+              [ "$KARESTART" == 40 ] && EXPOPTRESTART=0 || EXPOPTRESTART=$IEXPOPT # same but for the restart file
+              [ -z "$KARESTART" ] && KARESTART=$KA
+              [ -z "$KFRESTART" ] && KFRESTART=$KF
+              PDIR="t${NTRUNC}l${LEV}_${EXPNAME}${EXPOPTRESTART}r$(printf "%08.3f" $KARESTART)f$(printf "%08.3f" $KFRESTART)"
               EXPDIR="${EXPDIR}continued" # special name for experiment restarted this way
-              [ $KARESTART != 40 ] && PDIR="${PDIR}continued" # only continue from other 'continuation' experiments, unless starting from default
+              [[ $KARESTART != 40 || $KFRESTART != 1 ]] && PDIR="${PDIR}continued" # only continue from other 'continuation' experiments, unless starting from default
             fi
+            #------------------------------------------------------------------#
             # Boundary layer timescale setup
             case $EXPOPT in
-              1) KS=4 ;; # hold boundary layer value constant
-              2) KS=$(bc -l <<< "$KA/10") ;; # hold ratio constant
-              3) KS=$(bc -l <<< "1/(1/4 - 1/40 + 1/$KA)") ;; # preserve 'boundary layer' component
-              *) echo "ERROR: Unknown experiment option ${EXPOPT}." && exit 1 ;;
+              [01]) KS=4 ;; # hold boundary layer value constant
+              2) KS=$(bc -l <<< "$KA/10") ;; # hold ratio constant; i.e. keep it at
+              3) KS=$(bc -l <<< "(4^-1 + ($KA^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
+              *) echo "Error: Unknown experiment option ${EXPOPT}." && exit 1 ;;
             esac
-            #-------------------------------------------------------------------
+            #------------------------------------------------------------------#
             # Run model
-            if $RUN; then
+            if [ $MODE -eq 0 ]; then
               # Print information and source the runscript
               $TESTING && EXPDIR="test" # override to this dummy directory
               echo "Current experiment directory: ${EXPDIR}."
               echo "Truncation number $NTRUNC ($CORES cores). Vertical coordinates ${LEV}."
               echo "Radiation ${KA}days surface radiation ${KS}days friction ${KF}days."
               source drycore_run # can read variables declared here
-            fi
-            #-------------------------------------------------------------------
+            #------------------------------------------------------------------#
+            # Process model
+            elif [ $MODE -eq 1 ]; then
+              continue
+              # Process data directly, using the 'full' files as input
+              # How da fuck to do this?
+            #------------------------------------------------------------------#
             # Call post-process script
-            if $POST; then
+            elif [ $MODE -eq 2 ]; then
               $PARALLEL && [ $(($counter % $PARALLELMAX)) == 0 ] \
                 && echo "Waiting for spawned processes." && wait
               $TESTING && EXPDIR="test"
