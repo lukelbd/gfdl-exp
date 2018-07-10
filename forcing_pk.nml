@@ -1,0 +1,28 @@
+! Forcing namelist for GFDL model compiled with code for the
+! modified Polvani-Kushner version
+&hs_forcing_nml
+  no_forcing         = .false., 
+  pk_strat           = .true.,  ! whether or not to use Polvani-Kushner strat at all
+  strat_sponge       = .true.,
+  t_zero             = 315.,
+  t_strat            = 200.,
+  delh               = 60.,
+  delv               = 10.,
+  eps                = 0,
+  sigma_b            = 0.7,
+  vtx_edge           = 50.,
+  vtx_wid            = 10.,
+  vtx_gam            = 2.e-3,
+  p_sponge           = 5.e-1,
+  P00                = 1.e5, 
+  p_tropopause       = 100.,
+  kf                 = -1,
+  ka                 = -40,
+  ks                 = -4,
+  k_sponge           = -0.5,
+  k_strat            = -20,
+  k_strat            = -3,
+  do_conserve_energy = .true.,
+  trflux             = 1.e-5, ! tracer stuff
+  trsink             = -4.,   ! tracer stuff
+/

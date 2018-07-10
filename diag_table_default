@@ -1,0 +1,65 @@
+"Results from dry core damping experiments."
+0 0 0 0 0 0
+################################################################################
+# Diagnostic table, describes data saved to netCDF
+# First two lines *must* contain the experiment name, and the base time for
+# the time axis. No comments above there.
+# Warning: If you accidentally try to output two vars w/ same name, get
+# silent failure.
+# Note this is not a builtin fortran concept; GFDL model just reads and
+# parses this file according to a certain syntax.
+################################################################################
+# First declare filenames:
+# 1. name
+# 2. save-frequency [-1==at end, 0==all, >0==units]
+# 3. save-frequency units
+# 4. format [1 = netCDF, only supported format]
+# 5. time dimension unit
+# 6. time dimension name
+FILENAME, OUTFREQ, FREQUNITS, 1, "days", "time",
+################################################################################
+# Variables to save:
+# 1. module name
+# 2. fortran name
+# 3. save name
+# 4. file name
+# 5. time-sampling freq for averages
+# 6. whether we take average
+# 7. other options
+# 8. save size [currently F32]
+# Note cannot save time-average data in same file as non-time-average data, it seems
+# Some decisions regarding output variables:
+#   * Store A and B hybrid coefficients as hyai and hybi to match the ECHAM conventions;
+#     they MUST BE STORED THIS WAY for CDO interpolation procedure to read them.
+#   * Keep SLP as a generally useful diagnostic; zonal means are interesting too
+#   * Don't store zonal-mean div, because really would only need it in analysis of overturning
+#     circulation, and for that can use zonal-mean omega, u, v.
+#   * Keep vort for PV calculation, but discard right after; will just calculate
+#     on the fly using CDO spectral-coordinate algorithm, if necessary.
+#   * Don't bother with tau and Teq; can calculate them from model parameters,
+#     and although tau is function of model level can approximate from p data
+"dynamics",   "temp",      "t",     FILENAME, "all", .false., "none", 2,
+"dynamics",   "ucomp",     "u",     FILENAME, "all", .false., "none", 2,
+"dynamics",   "vcomp",     "v",     FILENAME, "all", .false., "none", 2,
+"dynamics",   "height",    "z",     FILENAME, "all", .false., "none", 2,
+"dynamics",   "slp",       "slp",   FILENAME, "all", .false., "none", 2,
+"dynamics",   "omega",     "omega", FILENAME, "all", .false., "none", 2,
+"dynamics",   "bk",        "hybi",  FILENAME, "all", .false., "none", 2,
+"dynamics",   "pk",        "hyai",  FILENAME, "all", .false., "none", 2,
+"hs_forcing", "tdt_ndamp", "ndamp", FILENAME, "all", .false., "none", 2,
+"hs_forcing", "udt_rdamp", "udamp", FILENAME, "all", .false., "none", 2,
+"hs_forcing", "vdt_rdamp", "vdamp", FILENAME, "all", .false., "none", 2,
+# Previous options; can consider adding them back:
+# "hs_forcing",  "tdt_diss_rdamp",  "rdamp",         FILENAME,    "all",  .false., "none", 2,
+# "dynamics",    "pres_full",       "p",             FILENAME,    "all",  .false., "none", 2,
+# "hs_forcing",  "diss_heat_rdamp", "D",             FILENAME,    "all",  .false., "none", 2,
+# "dynamics",    "vor",             "vor",           FILENAME,    "all",  .false., "none", 2
+# "dynamics",    "bk",              "bhalf",         "6xdaily_inst", "all",  .false., "none", 2,
+# "ave",         -1,                "hours",         1,              "days", "time",
+# "8xdaily_ave", 3,                 "hours",         1,              "days", "time",
+# "dynamics",    "temp",            "t",             "8xdaily_ave",  "all",  .true.,  "none", 2,
+# "hs_forcing",  "teq",             "teq",           "ave",          "all",  .true.,  "none", 2,
+# "hs_forcing",  "temp",            "t",             "ave",          "all",  .true.,  "none", 2,
+# "dynamics",    "ps",              "p",             6xdaily_inst", "all",  .false., "none", 2,
+# "hs_forcing",  "tdt_ndamp",       "tdt_newtonian", 6xdaily_inst", "all",  .false., "none", 2,
+# "hs_forcing",  "tdt_diss_rdamp",  "tdt_rayleigh",  6xdaily_inst", "all",  .false., "none", 2,
