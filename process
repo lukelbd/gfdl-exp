@@ -23,17 +23,18 @@ function nclcheck() { # input log file as argument
     # ignore ^warning: because these will also happen if we have a systemfunc error possibly
 }
 # Parse input flags
-nomove=false    # keep data in original folder, instead of moving to ../netcdf? useful for testing
-keepxyz=false    # keep original "full" results?
-resume=false    # process old "full" files?
-cdointerp=false # slower than NCO
+nomove=false      # keep data in original folder, instead of moving to ../netcdf? useful for testing
+keepxyz=false     # keep original "full" results?
+resume=false      # process old "full" files?
+cdointerp=false   # slower than NCO
+onlycombine=false # just run mppnccombine
 while [ $# -gt 0 ]; do
   case $1 in
-    -q|--quit) echo "Skipping processing." && exit 0 ;; # do nothing and quit (see drycore_run)
-    -k|--keep)       keepxyz=true     ;; # whether to keep longitudinal data
-    -r|--resume)     resume=true     ;; # process old results
-    -m|--no-move)    nomove=true     ;; # if true, keep all intermediate files
-    -c|--cdo-interp) cdointerp=false ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
+    -k|--keep)         keepxyz=true     ;; # whether to keep longitudinal data
+    -r|--resume)       resume=true      ;; # process old results
+    -m|--no-move)      nomove=true      ;; # if true, keep all intermediate files
+    -i|--cdo-interp)   cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
+    -c|--combine-only) onlycombine=true ;; # only combine data
     *) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
   esac
   shift # shift by one
@@ -51,13 +52,13 @@ process3d=$bin/process_3d         # 3d processing with CDO and stuff
 # lorenz=$bin/process_lorenz      # Lorenz energy cycle terms with CDO
 # energy=$bin/process_energy      # Lorenz energy cycle terms with CDO
 # Double check some stuff
-[ ! -x $basics ]        && echo "Error: The script \"$basics\" is missing."                   && exit 127
-[ ! -x $lorenz ]        && echo "Error: The script \"$lorenz\" is missing."                   && exit 127
-[ ! -r $interpncl ]     && echo "Error: The script \"$interpncl\" is missing."                && exit 127
-[ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable $mppnccombine is missing." && exit 127
-! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                                 && exit 127
-! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                                 && exit 127
-! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                                 && exit 127
+[ ! -x $basics ]        && echo "Error: The script \"$basics\" is missing."                       && exit 127
+[ ! -x $lorenz ]        && echo "Error: The script \"$lorenz\" is missing."                       && exit 127
+[ ! -r $interpncl ]     && echo "Error: The script \"$interpncl\" is missing."                    && exit 127
+[ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable \"$mppnccombine\" is missing." && exit 127
+! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                                     && exit 127
+! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                                     && exit 127
+! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                                     && exit 127
 
 ################################################################################
 # Combine the files produced in parallel
@@ -84,6 +85,10 @@ else
   # Initialize directory for output
   [ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
   ncfiles=(*.nc) # each output file
+fi
+# Optional exit, if only wanted to combine data
+if $onlycombine; then
+  exit 0
 fi
 
 ################################################################################

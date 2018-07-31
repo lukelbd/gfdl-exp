@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Rename experiment directories into something fucking sensible for god's sake
+# For your next project actually think carefully about how to name them
+#------------------------------------------------------------------------------#
+# New convention:
+#   <forcing type>_<experiment series>_<resolution spec>_<relevant parameter values>
+# Forcing type:
+#  * simple, can be either of pk, hs, or da
+# Experiment 'series' names:
+#  * default
+#  * fric
+#  * troprad[123] (letter is boundary layer scheme)
+#  * stratrad[D][AB] (D is depth of transition region in km, AB refers to upper boundary damping option)
+#  * diag[1-3] (probably won't do more diagonal experiments)
+# Resolution spec as per usual, but added suffix letter:
+#  * e for ERA-Interim
+#  * p for Polvani Kushner
+#  * s for simple, evenly spaced sigma coordinates
+# Relevant parameter values:
+#  * just precede each parameter by the letter 'p'
+#  * most experiments series just change one parameter, but the diagonal radiation-friction
+#    experiments changed two.
+#  * if experiment is a *continuation* from final day of previous one in the series, use
+#    the suffix 'c'
+#------------------------------------------------------------------------------#
+explocs="/mdata1/ldavis $HOME/data"
+for exploc in $explocs; do
+  for expdir in $exploc/*; do
+    path=${expdir%/*}
+    basename=${expdir##*/}
+    if [[ -d $expdir && $basename =~ ^t[0-9].* ]]; then
+      # Determine experiment properties from old naming convention
+      # Many of these are redundant/not informative, which is why we are changing shit
+      reso=${basename%%_*}
+      ftype=${basename##*_}
+      ftype=${ftype%%r*}
+      bltype=${ftype##*[^0-9]}
+      ftype=${ftype%[0-9]}
+      rad=${basename##*r}
+      rad=${rad%%f*}
+      fric=${basename##*f}
+      fric=${basename##*f}
+      fric=${fric%%[a-z]*}
+      cont=${basename##*[0-9]}
+      # Translate resolution
+      trunc=${reso%%l*}
+      vert=${reso##*l}
+      case $vert in
+        era) vert=l60e ;;
+        jer) vert=l40p ;;
+        *)   vert=l${vert}s ;;
+      esac
+      # Build new experiment name with way better convention
+      drad='0040.000'  # default radiation
+      dfric='0001.000' # default friction
+      if [ $rad != $drad ]; then
+        if [ $fric == $dfric ]; then
+          designation=troprad${bltype}
+          nums=p${rad}
+        else
+          designation=diag${bltype}
+          nums=p${rad}p${fric}
+        fi
+      elif [ $rad == $drad ]; then
+        if [ $fric == $dfric ]; then
+          designation=base
+          nums=
+        else
+          designation=fric
+          nums=p${fric}
+        fi
+      fi
+      [ ! -z $cont ] && c=c || c=
+      expname=$path/${ftype}_${designation}_${trunc}${vert}_${nums}$c
+      expname=${expname%_}  # remove trailing underscore
+      expname=${expname%_c} # weird error
+      # Move directory to new name, forcing user to read it each time
+      read -e -p "Rename ${expdir##*/} to ${expname##*/}? ([y]/n) " response
+      if [[ ! ${response[0]} =~ [nN] ]]; then
+        if [ -d $expname ]; then
+          echo "Error: Directory $expname exists."
+        else
+          mv -vn $expdir $expname
+        fi
+      fi
+    fi
+  done
+done
+echo "Renaming finished (if there was anything to rename)."

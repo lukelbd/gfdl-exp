@@ -1,152 +1,227 @@
 #!/bin/bash
+################################################################################
 # Use this to loop through model run and post-processing scripts
-# Those scripts were written to be totally self-contained -- idea is that we can
-# hardcode flags in a special batch script to run them, and this is the only place
-# where we are hardcoding stuff.
-# set -e # exit if runscript triggered error
+# Those scripts were written to be totally self-contained -- they accept various
+# flags passed by this script.
+# Experiments will be named as follows:
+#    <forcetype>_<series>_<resolution>_<parameter spec>
+# Experiment series naming conventions:
+#    troprad[123]     - change tropospheric damping; number is boundary layer option
+#    diag[123]        - change both friction and tropospheric damping
+#    fric             - change just friction
+#    stratrad[XX][cl] - change just stratospheric damping, XX is the depth of
+#                       transition layer and the suffix controls upper stratosphere option
+# Resolution designation: t[XX]l[YY][spe]
+#   * First number is truncation number.
+#   * Second number is level count.
+#   * Suffix controls level spacing option: [s]imple/even [s]igma, [p]olvani
+#     kushner spacing, or [e]ra-interim spacing.
+# Parameter specifications: p[XXX]p[YYY]...
+#   * Each parameter preceded by p; which parameter(s) are being changed
+#     depends on the experiment series. Most just change one.
+################################################################################
 # Tasks to run
-echo
-mode=0     # 0 is run the model, 1 is process the XYZ files to YZ, and 2 is postprocess the YZ files
-runmode=0  # 0 is control run, the rest are different spindown modes:
+dryrun=false  # just print function calls
+batchmode=2 # 0 is run the model, 1 is process the XYZ files to YZ, and 2 is postprocess the YZ files
+testmode=0  # 0 is no test, 1 is run for a day or two, 2 is check initial output
+runmode=0   # 0 is control run, the rest are different spindown modes:
   # 1 for radiation off, 2 for radiation off but surface on, 
   # 3 for everything off (radiation, surface, and friction), 4 for friction off
-# 3 is post-process the yz files to climate means and such
-quick=false # do really really quick test?
-dryrun=false  # just print function calls
-testing=false # do quick test control/spindown runs? note that
 # Model run settings
 newexper=false # do not write to existing experiment directories?
-newdays=false  # do not overwrite existing dXXXX-dYYYY directories?
+resume=false  # do not overwrite existing dXXXX-dYYYY directories?
 # Experiment specifications
-forcetype=pk # which source code to use; can be "hs" or "pk"
-
-################################################################################
-#-------------------------------------------------------------------------------
-# General model-run variables
-cores=8 # core count
-ptrop=100 # tropopause level for Polvani-Kushner experiments
-# kfs=(1) kas=(0.1 0.25 0.5 1 2.5 5 10 20 40 "80 40" "160 80" "320 160" "640 320") # continuation for the later ones
-# kfs=(1) kas=("80 40" "160 80" "320 160" "640 320") # with reference experiments
-# kfs=(1) kas=("1024 640" "2048 1024") # why the fuck not?
-# blopts=(2 3) kfs=(1) kas=(40 0.1 0.25 0.5 1 2.5 5 10 20 80 160 320 640 \
-#   "80 40" "160 80" "320 160" "640 320") # continuation for the later ones
-kstrats=(20) # stratosphere timescale
-blopts=(2) kfs=(1) kas=(40 0.1 0.25 0.5 1 2.5 5 10 20 \
-  40 "40 80" "80 160" "160 320" "320 640") # only the continuation experiments
-kas=(40 "40 80" "80 160")
-# blopts=(1) kas=(40) kfs=(0.025 0.05 0.1 0.25 0.5 1 2 4 8 16 32 64)
-# kfs=(1) kas=(40) blopts=(1) # re-do
-# ntruncs=(85) levs=(era) # the ERA-Interim conventions
-ntruncs=(42) levs=(40) # truncation numbers
-
-#-------------------------------------------------------------------------------
-# Output stuff
-outfreq=6             # every 6
-frequnits=hours       # hours
-filename=4xdaily_inst # name for output files
-# Time stepping and length of model run blocks
-# dt=300   # for 0.05 radiation experiment
-dt=600   # for other experiments
-# More timing
-tstart=0     # first day of integration; set to 0 for new run.
-tend=1200    # for new experiments just do 1200 day integrations; dump the first 200
-tkeep=1000   # when to retain longitude info?
-tblank= # when to skip output entirely?
-tinit="$(seq 1000 100 5900 | xargs)" # for spindown initiation
-
-#-------------------------------------------------------------------------------
-# Post-processing variables
-# Option to run in parallel
-parallelmax=4 # maximum parallel post-processing events
+forcetype=da   # can be either of 'hs', 'pk', or 'da'
+# Post-processing variable options
+parallelmax=1 # maximum parallel post-processing events
 spinstart=0 spinend=100000
 climostart=200 climoend=1200 # skip first 200 days; but for spindown data, want to process all of it usually
-postprocess+="--climate"
-# postprocess+=" --parallel" # optional
-# postprocess+="--energy --time-series"
+postprocess+="--climate "
+# postprocess+="--parallel " # optional
+# postprocess+="--energy --time-series "
 
+################################################################################
+# Variables without loops
+cores=8  # core count
+kdepth=5 # will be ignored if not a pk/da experiment
+# Next parameter sweeps and timing
+case $testmode in 0)
+  #-------------------------------------------------------------------------------
+  # Parameter sweep settings
+  # Trop experiments
+  # resos="t42l40s"
+  # series="troprad2"
+  # params1=(40 "40 80")
+  # Strat experiments
+  # Do 16, with a few different configurations
+  resos="t42l50p"
+  # series="stratrad10c stratrad10l stratrad5c stratrad5l"
+  series="stratrad10c stratrad10l stratrad5c stratrad5l"
+  series="stratrad10c stratrad10l stratrad4c stratrad4l stratrad2c stratrad2l stratrad1c stratrad1l"
+  params1=(40 20 10 4)
+  #-------------------------------------------------------------------------------
+  # Output and timing
+  filename=4xdaily_inst # name for output files
+  frequnits=hours       # hours
+  outfreq=6             # every 6
+  dt=600     # for other experiments
+  days=100   # make resolution dependent?
+  secs=0     # normally is zero
+  tstart=0   # first day of integration; set to 0 for new run.
+  tend=1200  # for new experiments just do 1200 day integrations; dump the first 200
+  tkeep=1000 # when to retain longitude info?
+  tinit=1000
+  # tinit="$(seq 1000 100 5900 | xargs)" # for spindown initiation
 #-------------------------------------------------------------------------------
-# Override for test experiments
-extra+=""
-if $testing; then # overwrite some settings
-  extra="--no-move " # passed to process script; don't move/delete anything
-  blopts=(1) ntruncs=(42) levs=(40) kstrats=(20) kas=(40) kfs=(1)
-  climostart=1000 climoend=1100
-  rdir="t42l40_hs0r0040.000f0001.000/d1100-d1200" # override previous directory
-  days=1 tstart=1200 tend=1203 tinit=1203
-  [ $runmode -gt 0 ] && tstart=0 tend=3 # spindown run; run an extra 3 days
-  tblank="" tkeep="" newexper=false newdays=false
-  # ntruncs=(42) levs=(era) kstrats=(20) kas=(40) kfs=(1)
-  # days=1 tstart=0 tend=1 tinit="10"
-fi
-# This special option runs the model for a few seconds, then exits
-secs=0
-if $quick; then
-  dt=1
-  days=0
-  secs=100
-  outfreq=1
-  frequnits=seconds
-fi
+# Test experiment
+;; 1)
+  # Sweep settings
+  batchmode=0 # run model
+  resos="t42l40s"
+  series="base"
+  # Timing and other
+  filename="test"
+  extra="--no-move " # pass to process script; don't move/delete anything
+  rdir="${forcetype}_base_t42l40s/d1100-d1200" # override previous directory
+  dt=600 days=1 secs=0 outfreq=1 frequnits=hours
+  tstart=0 tend=3 tinit=3
+  newexper=false resume=false
+# Initial conditions
+# Run at high resolution to get really clear picture
+;; 2)
+  # Sweep settings
+  batchmode=0 # run model
+  resos="t85l50p"
+  series="base"
+  # Other settings
+  filename="init"
+  extra="--combine-only --no-move " # passed to process script; don't post-process anything
+  cores=1 # easier for debugging, otherwise print statements executed simultaneously
+  dt=1 days=0 secs=1 outfreq=1 frequnits=seconds
+  tstart=0 tend=0 tinit=0
+  newexper=false resume=false
+;; *) echo "Error: Unknown testmode \"$testmode\"." && exit 1
+;; esac
 
 #------------------------------------------------------------------------------#
+# Helper functions
+#------------------------------------------------------------------------------#
+# Call this function as Add param v<value> param v<value>
+function Add() {
+  while [ $# -ne 0 ]; do
+    if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
+      [ "${2:0:1}" != v ] && echo "Error: Values must be input as v<value>." && exit 1
+      params+=("$1")
+      values+=("${2#v}")
+    fi
+    shift 2
+  done
+}
+#----------------------------------------------------------------------------#
 # Function for writing a *modified* namelist file
 # Will read input_default.nml and change lines with sed; easy peasy
 function Namelist() {
-  #----------------------------------------------------------------------------#
-  # Determine a few *dependent* namelist parameters
-  # First the boundary layer tau; the 'scale' parameter sets precision
-  ika=${ka%% *} # pick first one, if has multiple parts
-  ikf=${kf%% *}
-  ikstrat=${kstrat%% *}
-  case $blopt in
-    [01]) iks=4 ;; # hold boundary layer value constant
-    2) iks=$(bc -l <<< "scale=3; $ika/10") ;; # hold ratio constant; i.e. keep it at
-    3) iks=$(bc -l <<< "scale=3; (4^-1 + ($ika^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
-    *) echo "Error: Unknown experiment option ${blopt}." && exit 1 ;;
+  # Initial stuff
+  local ktrop kfric kbl kstrat \
+        ntrunc nsphere nlat nlon coord nlev message
+  expname="$1"
+  unset params values
+  [ -z "$expname" ] && echo "Error: Requires one argument." && exit 1
+  # Parse the experiment name, figure out what needs to be written
+  series="${expname#*_}"
+  series="${series%%_*}"
+  reso="${expname#*_}"
+  reso="${reso#*_}"
+  reso="${reso%%_*}"
+  if [ $series == base ]; then
+    vals=()
+  else
+    vals="${expname##*_}"
+    vals="${vals%c}"
+    vals=($(echo $vals | tr -t 'p' ' ' | xargs printf "%.3f "))
+  fi
+  # Change forcing namelist parameters
+  # Add to this as you design new experiment series
+  case $series in
+    base)
+    ;; troprad[0-9]|diag[0-9])
+      ktrop=${vals[0]}
+      blopt=${series##*[a-z]}
+      case "$blopt" in
+        [01]) kbl=4 ;; # hold boundary layer value constant
+        2)    kbl=$(bc -l <<< "scale=3; $ktrop/10") ;; # hold ratio constant; i.e. keep it at
+        3)    kbl=$(bc -l <<< "scale=3; (4^-1 + ($ktrop^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
+        *) echo "Error: Unknown experiment option ${blopt}." && exit 1 ;;
+      esac
+    ;; stratrad*)
+      kstrat=${vals[0]}
+      kdepth=${series#stratrad}
+      kdepth=${kdepth%[a-z]}
+      stratdamp=${series##*[0-9]}
+      case "$stratdamp" in
+        l) stratdamp='linear' ;;
+        c) stratdamp='constant' ;;
+        *) echo "Error: Unknown stratosphere damping option ${stratdamp}." && exit 1 ;;
+      esac
+    ;; fric)
+      kfric=${vals[1]}
+    ;; *) echo "Error: Unknown experiment series \"$series\"." && exit 1 ;;
   esac
+  Add strat_mode v\'$forcetype\' strat_damp v\'$stratdamp\'
+  Add ktrop v-$ktrop kfric v-$kfric kbl v-$kbl kstrat v-$kstrat z_kdepth v$kdepth
   # Horizontal coordinates
+  ntrunc=${reso%l*}
+  ntrunc=${ntrunc#t}
   case $ntrunc in
-    42) nlat=64 ;;
-    63) nlat=96 ;;
-    85) nlat=128 ;;
-    *) echo "Error: Invalid number of cores."; exit 1 ;;
+    42)  nlat=64  ;;
+    63)  nlat=96  ;;
+    85)  nlat=128 ;;
+    106) nlat=160 ;;
+    170) nlat=256 ;;
+    *) echo "Error: Invalid truncation number \"$ntrunc\"."; exit 1 ;;
   esac
   nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
   nlon=$(($nlat * 2)) # always twice the res
+  Add num_fourier v$ntrunc num_spherical v$nsphere lat_max v$nlat lon_max v$nlon
   # Now vertical resolution options
   # Will raise error if string-specifier is unknown
-  case $lev in
-    jer) coord=input;      nlev=40;     ;;
-    era) coord=input;      nlev=60;     ;;
-    *[!0-9]*) echo "Error: Unknown vertical coordinate identifier ${lev}."; exit 1; ;;
-    *)   coord=even_sigma; nlev="$lev"; ;;
+  vert=${reso#*l}
+  case $vert in
+    *e) coord=input;      nlev=60;       levels=levels_era.nml ;;
+    *j) coord=input;      nlev=40;       levels=levels_jer.nml ;;
+    *p) coord=pk_sigma;   nlev=${vert%p}; levels=               ;;
+    *s) coord=even_sigma; nlev=${vert%s}; levels=               ;; # ERA-Interim coordinates
+    *) echo "Error: Unknown vertical coordinate identifier \"${vert}\"."; exit 1; ;;
   esac
+  Add num_levels v$nlev vert_coord_option v\'$coord\'
+  # Timing variables
+  Add dt_atmos v$dt days v$days seconds v$secs
   #----------------------------------------------------------------------------#
   # Modify namelist parameters
-  # First copy over the default namelist
+  # Message
+  echo "Updating namelist with:"
+  index=0; width=8; while [ $index -le ${#params[@]} ]; do
+    message+="${params[@]:$index:$width}\n${values[@]:$index:$width}\n\n"
+    let index+=$width
+  done
+  printf "$message" | column -t
+  # Copy over the default namelist
   def=input_default.nml
   nml=input.nml
   cp $def $nml # move over defaut
-  #----------------------------------------------------------------------------#
   # Add forcing namelist
-  force=forcing_${forcetype}.nml
+  force=forcing_default.nml
   [ ! -r "$force" ] && echo "Error: File \"$force\" not found." && exit 1
   cat $force >>$nml # append that shit
   # Add coordinate namelist, potentially
-  if [ $coord == "input" ]; then
-    levels=levels_${lev}.nml
+  if [ ! -z "$levels" ]; then
     [ ! -r "$levels" ] && echo "Error: File \"$levels\" not found." && exit 1
     cat $levels >>$nml
   fi
-  #----------------------------------------------------------------------------#
   # Now loop through variables and assign them
-  params=(ka    kf    ks    num_levels vert_coord_option num_fourier num_spherical dt_atmos days  seconds)
-  values=(-$ika -$ikf -$iks $nlev      "'"$coord"'"      $ntrunc     $nsphere      $dt      $days $secs)
-  if [ $forcetype == pk ]; then
-    echo "Will update special Polvani-Kushner params."
-    params+=(k_strat   p_tropopause)
-    values+=(-$ikstrat $ptrop)
-  fi
+  # Only modify the parameter sweep variables, resolution variables, and
+  # timing variables. For others, just change in the namelist file directly.
+  [ ${#params[@]} -ne ${#values[@]} ] && echo "Error: One of the batch script namelist params is unset." && exit 1
   for i in $(seq 0 $((${#params[@]}-1))); do
     param=${params[$i]}
     value=${values[$i]}
@@ -159,8 +234,7 @@ function Namelist() {
   # Remove comments to be safe
   sed -i 's/!.*$//g;/^[ \t]*$/d' $nml # remove comments
   # Message
-  echo "Truncation number $ntrunc ($cores cores). Vertical coordinates ${lev}."
-  echo "Radiation ${ka%% *}days boundary layer ${ks}days friction ${kf%% *}days."
+  return
 }
 #------------------------------------------------------------------------------#
 # Copy over the diag table, and modify a couple params
@@ -168,9 +242,10 @@ function Namelist() {
 # so will just remove them after the fact
 function Diag() {
   # Modify diag table
-  cp diag_table_default diag_table
-  sed -i 's/FILENAME/"'$filename'"/g;s/OUTFREQ/'$outfreq'/g;s/FREQUNITS/"'$frequnits'"/g;s/LONGNAME/"'"$longname"'"/g' diag_table
-  sed -i 's/#.*$//g;/^[ \t]*$/d' diag_table # remove comments
+  [ $testmode -eq 2 ] && diag=diag_table_init || diag=diag_table_default
+  cp $diag diag_table
+  sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' diag_table
+  sed -i 's/#.*$//g;/^[ \t]*$/d' diag_table # remove comments, empty lines, for clarity
 }
 
 #------------------------------------------------------------------------------#
@@ -199,7 +274,7 @@ PATH="$mpibin:$PATH" # will *not* be exported to invoking shell; so this is nbd
 [ ! -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
 #------------------------------------------------------------------------------#
 # Copy over the appropriate executable file
-execdir=${forcetype}_${HOSTNAME%%.*}
+execdir=${HOSTNAME%%.*}
 cp $execdir/fms.x ./ # location of executables
 [ $? -ne 0 ] && echo "Error: fms.x not found in \"$execdir\"." && exit 1
 cp $execdir/mppnccombine.x ./ # location of executables
@@ -208,96 +283,122 @@ cp $execdir/mppnccombine.x ./ # location of executables
 ################################################################################
 #-------------------------------------------------------------------------------
 # Run multiple experiments consecutively
-counter=0 # counter
+echo
 cwd=$(pwd)
-[[ $forcetype != pk ]] && kstrats=(na) # single value, will be ignored
-for blopt in "${blopts[@]}"; do       # option describing scaling of surface damping rate
-  for lev in "${levs[@]}"; do           # vertical level spcification
-    for ntrunc in "${ntruncs[@]}"; do   # horizontal resolution
-      for kstrat in "${kstrats[@]}"; do # stratosphere timescales
-        for ka in "${kas[@]}"; do       # troposphere timescales
-          for kf in "${kfs[@]}"; do     # friction timescales
-            cd $cwd # ensure are still in same directory
-            #------------------------------------------------------------------#
-            # Number of days per file dependent on resolution
-            case $ntrunc in
-              42) days=100; ;;
-              85) days=20; ;;
-              *) echo "Error: Unknown day count for trunction $ntrunc." && exit 1; ;;
-            esac
-            #------------------------------------------------------------------#
-            # This loop enables "continuation experiments" -- picking up for new timescale
-            # experiment from the end of the control run from an old experiment
-            # First *detect* if the so-called "ka" is of the form "40 80" e.g., which means
-            # pick up from ka=40 experiment, and start a ka=80 experiment
-            flags=""  # for run script
-            suffix=""
-            expname=""
-            roverride=""
-            ! $testing && rdir="" # for tests sometimes want to override, start from a spun up control run to see if processed output is correct
-            i=0; for a in $ka; do for f in $kf; do i=$(($i+1))
-              [[ $i -gt 1 && $a == 40 && $f == 1 ]] && echo "Error: Idea is to launch continuation experiments from Held-Suarez as starting point." && exit 1
-              [[ $i -gt 2 ]] && echo "Error: Cannot do 'diagonal' continuation experiment across KA-KF parameter space." && exit 1
-              [[ $i -gt 1 ]] && suffix=continued || suffix=
-              [[ $a == 40 ]] && bl=0 || bl=$blopt  # if radiation is already Held-Suarez, make expopt 0
-              [ ! -z $expname ] && rdir="$expname" # syntax is "current" (i.e. cold start) or "restart current" -- e.g. "40", "40 80"
-              expname="t${ntrunc}l${lev}_${forcetype}${bl}r$(printf "%08.3f" $a)f$(printf "%08.3f" $f)${suffix}"
-            done; done
-            #------------------------------------------------------------------#
-            # Set up input.nml and diag_table in current directory
-            # Also set up process script flags
-            Namelist
-            Diag
-            #------------------------------------------------------------------#
-            # Run model
-            if [ $mode -eq 0 ]; then
-              # Print information and source the runscript
-              # source drycore_run # will have access to variables declared here
-              expdir="$scratch/$expname"         # running model
-              $testing  && expdir="$scratch/test" # override to this dummy directory
-              $newdays  && flags+="--new-days "       # do not overwrite existing dXXXX-dYYYY days?
-              $newexper && flags+="--new-experiment " # do not write to existing experiment folders?
-              [ ! -z "$rdir" ] && [ $runmode -eq 0 ] && echo "Warning: Running continuation experiment from \"${rdir}\"." \
-                                 && flags+="--restart $scratch/$rdir " # override with this restart directory
-              [ ! -z "$tblank" ] && flags+="--days-blank $tblank " # record zero data
-              [ ! -z "$tkeep" ]  && flags+="--days-keep $tkeep " # keep XYZ data
-              $dryrun && cmd="echo ./drycore_run" || cmd="./drycore_run"
-              echo "Running experiment: $expdir"
-              $cmd $expdir $flags --mode $runmode --start $tstart --end $tend --days-per-run $days \
-                --cores $cores --days-init $tinit --extra "$extra" # could be empty string
-              [ $? -ne 0 ] && echo "Error: Model run script failed." && exit 1 # keyboard interruption does not trigger this
-            #------------------------------------------------------------------#
-            # Process model
-            elif [ $mode -eq 1 ]; then
-              $testing && echo "Error: Invalid mode for test run." && exit 1
-              continue
-              # Process data directly, using the 'full' files as input
-              # How da fuck to do this?
-              ./process
-            #------------------------------------------------------------------#
-            # Call post-process script
-            elif [ $mode -eq 2 ]; then
-              $testing && echo "Error: Invalid mode for test run." && exit 1
-              # Ugly parallelize
-              if $parallel && [ $(($counter % $parallelmax)) == 0 ]; then
-                echo "Waiting for spawned processes."
-                wait
-              fi
-              # Run stuff
-              echo "Current experiment directory: ${expdir}."
-              input="$scratch/$expname"
-              output="$storage/data/$expname"    # saving processed data
-              $dryrun && cmd="echo ./postprocess" || cmd="./postprocess"
-              $cmd "$filename" "$input" "$output" \
-                --climate-start $climostart --climate-end $climoend \
-                --spin-start $spinstart --spin-end $spinend
-                --mode $runmode $postprocess
-              counter=$(($counter + 1))
-            fi
-          done
-        done
+counter=0 # counter
+expnames=() # record completed experiments
+pids=() # record postprocess exit codes
+for se in $series; do
+  # Simple error checks for experiment series
+  if [ "$series" == base ]; then
+    params1=(na)
+  elif [ -z "$params1" ]; then
+    echo "Error: You must define an array of parameters \"\$params1\"." && exit 1
+  fi
+  if [ "$series" != diag ]; then
+    params2=(na)
+  elif [ -z "$params2" ]; then
+    echo "Error: You must define a second array of parameters \"\$params1\"." && exit 1
+  fi
+  for reso in $resos; do
+    for param1 in "${params1[@]}"; do
+      for param2 in "${params2[@]}"; do
+        cd $cwd # ensure are still in same directory
+        #----------------------------------------------------------------------#
+        # Parallelize stuff
+        if [ ${#pids[@]} -gt 0 ] && [ $(( ($counter-1) % $parallelmax )) == 0 ]; then
+          echo "Waiting for processes: ${pids[@]}."
+          for pid in ${pids[@]}; do
+            wait $pid
+            [ $? -ne 0 ] && echo "Error: A post-processing step failed." && exit 1
+          done; pids=() # reset tracked process ids
+        fi
+        #------------------------------------------------------------------#
+        # This loop enables "continuation experiments" -- picking up for new timescale
+        # experiment from the end of the control run from an old experiment
+        # First *detect* if the so-called "ktrop" is of the form "40 80" e.g., which means
+        # pick up from ktrop=40 experiment, and start a ktrop=80 experiment
+        let counter=$counter+1
+        unset flags suffix expname roverride err
+        [ $counter -gt 1 ] && unset rdir # allow override for first experiment
+        i=0; for iparam1 in $param1; do for iparam2 in $param2; do let i=$i+1
+          # Error checks
+          unset ise ip1 ip2 suffix
+          [ $i -gt 2 ] && echo "Error: Cannot do 'diagonal' continuation experiments." && exit 1
+          # Record restart directory
+          if [ ! -z $expname ]; then
+            rdir="$expname"; suffix=c; [[ ! $rdir =~ base ]] && rdir="${rdir}c"
+          fi
+          # Check whether this is a 'base' experiment. Experiment series can
+          # 'intersect' each other, and this ensures we aren't duplicating results.
+          ise=$se; case $se in
+            troprad*)  [[ $iparam1 == 40 ]] && ise=base iparam1=; ;;
+            fric*)     [[ $iparam1 == 1 ]]  && ise=base iparam1=; ;;
+            diag*)     [[ $iparam1 == 40 && $iparam2 == 1 ]] && ise=base iparam1= iparam2=; ;;
+            stratrad*) [[ $iparam1 == 40 ]] && ise=base iparam1= iparam2=
+          esac
+          [ -n "$iparam1" ] && [ "$iparam1" != na ] && ip1="_p$(printf "%08.3f" $iparam1)"
+          [ -n "$iparam2" ] && [ "$iparam2" != na ] && ip2="_p$(printf "%08.3f" $iparam2)"
+          expname="${forcetype}_${ise}_${reso}${ip1}${ip2}${suffix}"
+        done; done
+        if [[ " ${expnames[@]} " =~ " $expname " ]]; then
+          echo "Already processed $expname in this loop."
+          continue
+        else
+          echo "Experiment name: $expname"
+          expnames+=($expname) # record in list
+        fi
+        #------------------------------------------------------------------#
+        # Set up input.nml and diag_table in current directory
+        # Will parse the experiment name designations and change corresponding namelist values
+        Namelist "$expname"
+        Diag
+        #------------------------------------------------------------------#
+        # Run model
+        if [ $batchmode -eq 0 ]; then
+          # Full experiment directory path
+          case $testmode in
+            0) expdir="$scratch/$expname" ;; # running model
+            1) expdir="$scratch/test" ;;
+            2) expdir="$scratch/init" ;;
+          esac
+          # Flags
+          $resume   && flags+="--resume "       # do not overwrite existing dXXXX-dYYYY days?
+          $newexper && flags+="--new-experiment " # do not write to existing experiment folders?
+          [ ! -z "$rdir" ] && [ $runmode -eq 0 ] && echo "Warning: Using \"${rdir}\" for restart files." \
+                             && flags+="--restart $scratch/$rdir " # override with this restart directory
+          [ ! -z "$tblank" ] && flags+="--days-blank $tblank " # record zero data
+          [ ! -z "$tkeep" ]  && flags+="--days-keep $tkeep " # keep XYZ data
+          # Run experiment
+          $dryrun && cmd="echo ./drycore_run" || cmd="./drycore_run"
+          $cmd $expdir $flags --mode $runmode --start $tstart --end $tend \
+            --cores $cores --days-init $tinit --extra "$extra" # could be empty string
+          [ $? -ne 0 ] && echo "Error: Model run script failed." && exit 1 # keyboard interruption does not trigger this
+        #------------------------------------------------------------------#
+        # Process model
+        elif [ $batchmode -eq 1 ]; then
+          [ $testmode -ne 0 ] && echo "Error: Invalid mode for test run." && exit 1
+          continue
+          # Process data directly, using the 'full' files as input
+          # How da fuck to do this?
+          ./process
+        #------------------------------------------------------------------#
+        # Call post-process script
+        elif [ $batchmode -eq 2 ]; then
+          [ $testmode -ne 0 ] && echo "Error: Invalid mode for test run." && exit 1
+          # Run stuff
+          echo "Current experiment directory: ${expname}."
+          input="$scratch/$expname"
+          output="$storage/data/$expname"    # saving processed data
+          $dryrun && cmd="echo ./postprocess" || cmd="./postprocess"
+          $cmd "$filename" "$input" "$output" \
+            --climate-start $climostart --climate-end $climoend \
+            --spin-start $spinstart --spin-end $spinend \
+            --mode $runmode $postprocess &
+          pids+=($!)
+        fi
       done
     done
   done
 done
-echo
+echo # space

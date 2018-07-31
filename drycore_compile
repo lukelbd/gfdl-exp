@@ -42,7 +42,7 @@ esac
 # Build executable model code and post-processing tool
 #------------------------------------------------------------------------------
 # Definitions
-execdir=${expname}_${HOSTNAME%%.*}      # where code is compiled and executable is created
+execdir=${HOSTNAME%%.*}      # where code is compiled and executable is created
 src=$root/src                                  # path to directory containing model source code
 mkmf=$root/bin/mkmf                            # path to executable mkmf
 mkmftemplate=$root/bin/mkmf.template           # template of most basic settings
@@ -57,7 +57,7 @@ flags_libs="-lmpl -lmpich -lfmpich -lmpichf90 -lnetcdff -lnetcdf -lhdf5_hl -lhdf
 [ ! -d $src ]          && echo "Error: Could not find source code directory $src."        && exit 1
 [ ! -r $pathnames ]    && echo "Error: Could not find path_names file $pathnames."        && exit 1
 [ ! -r $mppnsource ]   && echo "Error: Could not find mppnccombine source code."          && exit 1
-[ ! -r $mkmftemplate ] && echo "Error: Could not find mppnccombine source code."          && exit 1
+[ ! -r $mkmftemplate ] && echo "Error: Could not find Makefile template."          && exit 1
 [ ! -r $mkmf ]         && echo "Error: Could not find Makefile-generating utility $mkmf." && exit 1
 #------------------------------------------------------------------------------#
 # Create mppnccombine; should supply with same libraries supplied to model executable through its makefile
@@ -67,11 +67,9 @@ echo "Generating mppnccombine executable..."
 $pgi/pgcc -O -o mppnccombine.x $flags_include $mppnsource $flags_links $flags_libs
   # -O[level] = set optimization level; sets to 2 if number not specified
   # -o file = use this file as name of executable
-  # -Idirectory = add directory to compiler search path; these are 'header' files
-  # -Ldirectory = change the directory in which "linker" searches for libraries
-  # -llibrary = load lib<library>.a from the standard library directory (supplied by L?)
-  # ...the mpllibs in MPICH seem to only have .so instead of .a ... not sure what that means
-  # ...also it seems there is no libm.a or libz.a
+  # -I directory = add directory to compiler search path; these are 'header' files
+  # -L directory = change the directory in which "linker" searches for libraries
+  # -l library = load lib<library>.a from the standard library directory (supplied by L?)
 #------------------------------------------------------------------------------#
 # Build makefile template (assumes pgi bin is on $PATH)
 cd $execdir # move to source directory

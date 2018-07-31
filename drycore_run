@@ -34,9 +34,9 @@ cwd=$(pwd)
 # Declare defaults
 cores=8            # number of cores for parallel
 mode=0             # default is to run the control
-days=$(Parse days) # number of days in each block
 newexper=false     # do not write to existing experiment directory?
-newdays=false      # do not overwrite existing run block?
+resume=false       # do not overwrite existing run block?
+days=$(Parse days) # number of days in each block
 # Parse input flags
 # Read the comments to see explanations for each option
 # This function returns an a string that can be used in an eval statement... hideous
@@ -51,15 +51,14 @@ function parse_list() { # will echo an eval string
 }
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    --new-days)       newdays=true;  ;; # do not overwrite existing dXXXX-dYYYY folders?
+    --resume)         resume=true;  ;; # do not overwrite existing dXXXX-dYYYY folders?
     --new-experiment) newexper=true; ;; # do not write to existing experiment folders?
-    --cores)          cores=$2;     shift ;;
-    --start)          tstart=$2;    shift ;; # starting day
-    --end)            tend=$2;      shift ;; # ending day
-    --days-per-run)   days=$2;      shift ;; # number of days per file
-    --mode)           mode=$2;      shift ;; # 0 is control, 1 is spindown, 2...
-    --extra)          extra=$2;     shift ;; # flags for processing script
-    --restart)        roverride=$2; shift ;; # manual override restart directory
+    --cores)          cores=$2;     shift; ;;
+    --start)          tstart=$2;    shift; ;; # starting day
+    --end)            tend=$2;      shift; ;; # ending day
+    --mode)           mode=$2;      shift; ;; # 0 is control, 1 is spindown, 2...
+    --extra)          extra=$2;     shift; ;; # flags for processing script
+    --restart)        roverride=$2; shift; ;; # manual override restart directory
     --days-init)      eval "tinit=$(parse_list $@)"; ;; # initial times from control run for spindown run
     --days-blank)     eval "tblank=$(parse_list $@)"; ;;
     --days-keep)      eval "tkeepxyz=$(parse_list $@)"; ;;
@@ -84,51 +83,45 @@ process=$cwd/process # the script for on-the-fly processing
 $newexper && [ -d $expdir ] && echo "Error: Working directory already exists. Continuing..." && exit 1
 if [ ! -d $expdir ]; then
   mkdir $expdir # make directory
-  [ $? -ne 0 ] && echo "Error: Could not make experiment directory." && exit 1
+  [ $? -ne 0 ] && echo "Error: Could not create experiment directory \"$expdir\"." && exit 1
 fi
 
 ################################################################################
 # Helper functions for model runs
 ################################################################################
-# Set up input files for model executable to read; tried to make the function readable
-# by matching indentation, which can be done with <<-DELIM; literal tab chars ignored
-# https://unix.stackexchange.com/questions/76481/cant-indent-heredoc-to-match-nestings-indent
-################################################################################
+# Set up input files for model executable to read
 # Takes two arguments: 1) the working directory, and 2) the iteration mode
+################################################################################
 function Setup() {
   #----------------------------------------------------------------------------#
   # Set up working directory, and move there
   # Action depends on settings
   wdir="$1" # where to move files
-  if [ -z $wdir ]; then
-    echo "Error: Must provide directory to Setup function." && exit 1
-  elif [ -d $wdir ]; then
-    if $newdays; then
-      if compgen -G "$wdir/*.nc" &>/dev/null; then
-        echo "Working directory ${wdir##*/} contains failed processing step. Deleting..."
-      elif [ -z "$(\ls $wdir/RESTART)" ]; then # need to check *contents*; don't care about empty one
-        echo "Working directory ${wdir##*/} contains unfinished integration. Deleting..."
-      else
-        echo "Working directory ${wdir##*/} already exists. Canceling integration..."
-        return 1 # breaks out of if statement
-      fi
-      # Batch script will iterate over drycore_run until finding an incomplete or empty
-      # directory; then, it will set newdays to false, as we are now picking up where we left
-      # off and don't want to interrupt any future runs
-      newdays=false
-      rm -r $wdir
-    else
-      echo "Working directory ${wdir##*/} already exists. Deleting..."
-      rm -r $wdir
-    fi
-  else
+  [ $# -ne 1 ] && echo "Error: Setup() functions requires exactly 1 argument." && exit 1
+  if [ ! -d $wdir ]; then
     # Resume run here
-    newdays=false
-    echo "Setting up work directory ${wdir##*/}..."
+    resume=false
+    echo "Setting up working directory ${wdir##*/}..."
+  elif $resume; then
+    if compgen -G "$wdir/*.nc" &>/dev/null; then
+      echo "Working directory ${wdir##*/} contains failed processing step. Deleting..."
+    elif [ -z "$(\ls $wdir/RESTART)" ]; then # need to check *contents*; don't care about empty one
+      echo "Working directory ${wdir##*/} contains unfinished integration. Deleting..."
+    else
+      echo "Working directory ${wdir##*/} contains completed integration. Cancelling..."
+      return 1 # breaks out of if statement
+    fi
+    # Otherwise, resume run and delete 'unfinished' contents
+    resume=false
+    rm -r $wdir
+  else
+    echo "Working directory ${wdir##*/} already exists. Deleting..."
+    rm -r $wdir
   fi
   #----------------------------------------------------------------------------#
   # Make directory and move stuff over
   mkdir $wdir
+  [ $? -ne 0 ] && echo "Error: Failed to create working directory \"$wdir\"." && return 1
   cd $wdir
   cp $fms ./fms.x # move executable inside (declared at top of file)
   mkdir RESTART # model spits out stuff here, can be accepted as input to new iteration
@@ -148,11 +141,11 @@ function Setup() {
   fi
   #----------------------------------------------------------------------------#
   # Change namelist properties
-  if [ $mode -gt 0 ]; then case $mode in # determine spindown type
-    1) Replace ka 0 ks 0 ;;      # turn off all thermal damping
-    2) Replace ka 0 ;;           # turn off damping except in boundary layer
-    3) Replace ka 0 ks 0 kf 0 ;; # turn off all damping
-    4) Replace kf 0 ;;           # turn off friction
+  if [ $mode -gt 0 ]; then case $mode in   # determine spindown type
+    1) Replace k_trop 0 k_bl 0 ;;          # turn off all thermal damping
+    2) Replace k_trop 0 ;;                 # turn off damping except in boundary layer
+    3) Replace k_trop 0 k_bl 0 k_fric 0 ;; # turn off all damping
+    4) Replace k_fric 0 ;;                 # turn off friction
     *) echo "Error: Unknown experiment identifier \"$mode\"."; exit 1 ;;
   esac; fi
   # Parent script will test return code; ensure zero here
@@ -160,7 +153,7 @@ function Setup() {
 }
 
 ################################################################################
-# Function for running the next model step from a previous step,
+# Function for running the next model step from a previous step
 # applying post-processing to a previous model step in the background, and organizing
 # all the NetCDF files
 ################################################################################
@@ -215,7 +208,7 @@ function Run() {
   rm fms.x # remove executable, because takes up space
   # Process new data, and remove old data
   # Record the PID when done
-  echo "Calling processing script with flags: ${pflags% } ${extra% }"
+  echo "Calling processing script with flags: $(echo $pflags $extra | xargs)"
   $process $pflags $extra &>log.process & # processing
   pp=$! # record PID
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
@@ -239,12 +232,8 @@ function Restart() {
   # resfiles="atmos_model.res atmos_tracers.res.nc bgrid_prog_var.res.nc" # brid type
   echo "Moving restart files from ${rdir##*/}/RESTART to ${PWD##*/}/INPUT..."
   for file in $resfiles; do
-    if [ ! -r $rdir/RESTART/$file ]; then
-      echo "Error: Missing restart file ${rdir##*/}/RESTART/${file}."
-      exit 1
-    else
-      cp $rdir/RESTART/$file INPUT/$file
-    fi
+    [ ! -r $rdir/RESTART/$file ] && echo "Error: Missing restart file ${rdir##*/}/RESTART/${file}." && exit 1
+    cp $rdir/RESTART/$file INPUT/$file
   done
 }
 
@@ -256,10 +245,6 @@ function Restart() {
 estatus=0
 case $mode in
   0) # CHECK THAT TIMING VARIABLES ARE DECLARED
-  if [ -z $tstart ] || [ -z $tend ]; then
-    echo "Error: One or more of the timing variables was not set."
-    exit 1
-  fi
   # PREPARE FOR THE LOOP
   echo "Running control experiment from day $tstart to day $tend."
   coldstart=true # assume cold start by default
@@ -289,7 +274,7 @@ case $mode in
     [[ " ${tblank[@]} " =~ " $(printf "%04d" $cday) " ]] && pflags+=" -q"
     [[ " ${tkeepxyz[@]} " =~ " $(printf "%04d" $cday) " ]] && pflags+=" -k"
     Setup $cdir # sets up working directory, cd into it
-    if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'newdays' option is set
+    if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
         Restart $rdir # put files into RESTART directory
       else
@@ -297,6 +282,8 @@ case $mode in
       fi
       Run $rdir # run model
     fi
+    # EXIT FOR INITIAL CONDITION EXPERIMENT
+    [ $days -eq 0 ] && break
     # STEP THINGS FORWARD, FOR NEXT ITERATION
     pday=$cday
     cday=$(($pday + $days))

@@ -50,8 +50,6 @@ while [ $# -gt 0 ]; do
   esac
   shift # shift at least once for flags; for key-value pairs, make sure to shift twice
 done
-exit
-[ -z $mode ] || [ -z $] 
 # File management/names
 log=log_ # log prefix
 fprefix=${filename}_summary # original prefix file names
@@ -66,9 +64,14 @@ ftimescale=${filename}_timescale${mode}.nc # the timescale stuff
 # Directory management; move to save directory
 cwd=$(pwd) # directory where scripts stored (you must run this script from current directory!)
 input=$input/netcdf # location of data
-[ ! -d $input/netcdf ] && echo "Error: Cannot find input directory \"$input/netcdf\"." && exit 1
+[ ! -d $input ] && echo "Error: Cannot find input directory \"$input\"." && exit 1
 [ ! -d $output ] && mkdir $output
 cd $output # move here
+
+################################################################################
+# Energy terms
+energy_params=CKEKM,CPEKE,CPMKM,CPMPE,DKE,DKM,GPE,GPM,KE,KM,PE,PM
+ts_params=KE,KM,PE,PM,EHF,EMF
 
 ################################################################################
 # Helper functions
@@ -194,11 +197,8 @@ function Climate() {
     exit 1
   fi
   # Very simple again
-  # * Will delete some variables that might be in old model runs, but decided
-  #   to omit in newer runs; right now those are static stability and pt
   echo "Getting temporal mean from days ${climofiles[@]##*/${fprefix}.}."
-  commands=("${climofiles[@]/#/ -timmean -delname,s,pt }")
-  variables=CKEKM,CPEKE,CPMKM,CPMPE,DKE,DKM,GPE,GPM,KE,KM,PE,PM
+  commands=("${climofiles[@]/#/ -timmean }")
   cdo $flags -ensmean ${commands[@]} $fclimate
 }
 
@@ -213,8 +213,7 @@ function Autocorr() {
   fi
   # Get the single time-series file
   echo "Getting time series of energy terms through days ${climofiles[@]##*/${fprefix}.}."
-  variables=CKEKM,CPEKE,CPMKM,CPMPE,DKE,DKM,GPE,GPM,KE,KM,PE,PM
-  commands=("${climofiles[@]/#/ -selname,$variables }")
+  commands=("${climofiles[@]/#/ -selname,$energy_params }")
   cdo $flags -mergetime ${commands[@]} tmp.nc # merge the means
   # Get the autocorrelation
   # Have to be clever here -- no builtin function, but there is a builtin
@@ -244,8 +243,7 @@ function Covar() {
   fi
   # Get the single time-series file
   echo "Getting time series of energy terms through days ${climofiles[@]##*/${fprefix}.}."
-  variables=CKEKM,CPEKE,CPMKM,CPMPE,DKE,DKM,GPE,GPM,KE,KM,PE,PM
-  commands=("${climofiles[@]/#/ -selname,$variables }")
+  commands=("${climofiles[@]/#/ -selname,$energy_params }")
   cdo $flags -mergetime ${commands[@]} tmp.nc # merge the means
   # Now get the covariance matrix trace; note that fldcovar just gets the
   # area-weighted sum of each point dotted with itself
@@ -270,8 +268,7 @@ function Energy() {
   fi
   # Very simple again
   echo "Getting time series of energy terms through days ${allfiles[@]##*/${fprefix}.}."
-  variables=CKEKM,CPEKE,CPMKM,CPMPE,DKE,DKM,GPE,GPM,KE,KM,PE,PM
-  commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$variables }")
+  commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$energy_params }")
   cdo $flags -mergetime ${commands[@]} $fenergy # merge the means
 }
 
@@ -292,8 +289,7 @@ function Timeseries() {
   echo "Getting time series of hemispheric means through days ${allfiles[@]##*/${fprefix}.}."
   for region in SH NH; do
     selregion=$(Regions $region)
-    variables=KE,KM,PE,PM,EHF,EMF
-    commands=("${allfiles[@]/#/ -fldmean -selname,$variables $selregion }")
+    commands=("${allfiles[@]/#/ -fldmean -selname,$ts_params $selregion }")
     # cdo -v -O ${commands[0]} test.nc; echo ${commands[0]}; echo Region $region; exit 1
     cdo $flags -mergetime ${commands[@]} ${fregion%.nc}${region}.nc # merge the means
   done
@@ -797,6 +793,7 @@ function Main() {
 # Call main script!
 # Nice to organize it this way, so the final block of code shows up in ctags
 Main
+exit 0
 
 ################################################################################
 # # Get ensemble-statistics for equilibrium climate files

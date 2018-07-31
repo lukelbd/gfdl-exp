@@ -11,7 +11,8 @@ exe*
 
 # VIM extras #
 ##############
-.session.*
+.session.vim
+.vimsession
 .*.sw[a-z]
   # VERY IMPORTANT, need to install manually with :PlugInstall
   # on every server, otherwise everything fails

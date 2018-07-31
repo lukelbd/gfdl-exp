@@ -2,12 +2,13 @@
 0 0 0 0 0 0
 ################################################################################
 # Diagnostic table, describes data saved to netCDF
-# First two lines *must* contain the experiment name, and the base time for
-# the time axis. No comments above there.
-# Warning: If you accidentally try to output two vars w/ same name, get
-# silent failure.
-# Note this is not a builtin fortran concept; GFDL model just reads and
-# parses this file according to a certain syntax.
+# * First two lines *must* contain the experiment name, and the base time for
+#   the time axis. No comments above there.
+# * Warning: If you accidentally try to output two vars w/ same name, get
+#   silent failure.
+# * Note this is not a builtin fortran feature; GFDL model just reads and
+#   parses this file according to a certain syntax.
+
 ################################################################################
 # First declare filenames:
 # 1. name
@@ -16,7 +17,8 @@
 # 4. format [1 = netCDF, only supported format]
 # 5. time dimension unit
 # 6. time dimension name
-FILENAME, OUTFREQ, FREQUNITS, 1, "days", "time",
+filename, outfreq, frequnits, 1, "days", "time",
+
 ################################################################################
 # Variables to save:
 # 1. module name
@@ -31,25 +33,22 @@ FILENAME, OUTFREQ, FREQUNITS, 1, "days", "time",
 # Some decisions regarding output variables:
 #   * Store A and B hybrid coefficients as hyai and hybi to match the ECHAM conventions;
 #     they MUST BE STORED THIS WAY for CDO interpolation procedure to read them.
-#   * Keep SLP as a generally useful diagnostic; zonal means are interesting too
-#   * Don't store zonal-mean div, because really would only need it in analysis of overturning
-#     circulation, and for that can use zonal-mean omega, u, v.
-#   * Keep vort for PV calculation, but discard right after; will just calculate
-#     on the fly using CDO spectral-coordinate algorithm, if necessary.
-#   * Don't bother with tau and Teq; can calculate them from model parameters,
-#     and although tau is function of model level can approximate from p data
-"dynamics",   "temp",      "t",     FILENAME, "all", .false., "none", 2,
-"dynamics",   "ucomp",     "u",     FILENAME, "all", .false., "none", 2,
-"dynamics",   "vcomp",     "v",     FILENAME, "all", .false., "none", 2,
-"dynamics",   "height",    "z",     FILENAME, "all", .false., "none", 2,
-"dynamics",   "slp",       "slp",   FILENAME, "all", .false., "none", 2,
-"dynamics",   "omega",     "omega", FILENAME, "all", .false., "none", 2,
-"dynamics",   "bk",        "hybi",  FILENAME, "all", .false., "none", 2,
-"dynamics",   "pk",        "hyai",  FILENAME, "all", .false., "none", 2,
-"hs_forcing", "tdt_ndamp", "ndamp", FILENAME, "all", .false., "none", 2,
-"hs_forcing", "udt_rdamp", "udamp", FILENAME, "all", .false., "none", 2,
-"hs_forcing", "vdt_rdamp", "vdamp", FILENAME, "all", .false., "none", 2,
-# Previous options; can consider adding them back:
+#   * Don't save vor; can calculate on the fly using CDO spectral-coordinate
+#     algorithm, if necessary.
+#   * Don't bother with tau and Teq; can calculate them from model parameters
+#     (Although tau is function of model level can approximate from p data).
+"dynamics", "temp",      "t",     filename, "all", .false., "none", 2,
+"dynamics", "ucomp",     "u",     filename, "all", .false., "none", 2,
+"dynamics", "vcomp",     "v",     filename, "all", .false., "none", 2,
+"dynamics", "height",    "z",     filename, "all", .false., "none", 2,
+"dynamics", "slp",       "slp",   filename, "all", .false., "none", 2,
+"dynamics", "omega",     "omega", filename, "all", .false., "none", 2,
+"dynamics", "bk",        "hybi",  filename, "all", .false., "none", 2,
+"dynamics", "pk",        "hyai",  filename, "all", .false., "none", 2,
+"forcing",  "tdt_ndamp", "ndamp", filename, "all", .false., "none", 2,
+"forcing",  "udt_rdamp", "udamp", filename, "all", .false., "none", 2,
+"forcing",  "vdt_rdamp", "vdamp", filename, "all", .false., "none", 2,
+# Other options:
 # "hs_forcing",  "tdt_diss_rdamp",  "rdamp",         FILENAME,    "all",  .false., "none", 2,
 # "dynamics",    "pres_full",       "p",             FILENAME,    "all",  .false., "none", 2,
 # "hs_forcing",  "diss_heat_rdamp", "D",             FILENAME,    "all",  .false., "none", 2,
@@ -63,3 +62,4 @@ FILENAME, OUTFREQ, FREQUNITS, 1, "days", "time",
 # "dynamics",    "ps",              "p",             6xdaily_inst", "all",  .false., "none", 2,
 # "hs_forcing",  "tdt_ndamp",       "tdt_newtonian", 6xdaily_inst", "all",  .false., "none", 2,
 # "hs_forcing",  "tdt_diss_rdamp",  "tdt_rayleigh",  6xdaily_inst", "all",  .false., "none", 2,
+
