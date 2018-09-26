@@ -22,7 +22,7 @@
 ################################################################################
 # Tasks to run
 dryrun=false  # just print function calls
-batchmode=2 # 0 is run the model, 1 is process the XYZ files to YZ, and 2 is postprocess the YZ files
+batchmode=0 # 0 is run the model, 1 is process the XYZ files to YZ, and 2 is postprocess the YZ files
 testmode=0  # 0 is no test, 1 is run for a day or two, 2 is check initial output
 runmode=0   # 0 is control run, the rest are different spindown modes:
   # 1 for radiation off, 2 for radiation off but surface on, 
@@ -30,8 +30,6 @@ runmode=0   # 0 is control run, the rest are different spindown modes:
 # Model run settings
 newexper=false # do not write to existing experiment directories?
 resume=false  # do not overwrite existing dXXXX-dYYYY directories?
-# Experiment specifications
-forcetype=da   # can be either of 'hs', 'pk', or 'da'
 # Post-processing variable options
 parallelmax=1 # maximum parallel post-processing events
 spinstart=0 spinend=100000
@@ -44,21 +42,27 @@ postprocess+="--climate "
 # Variables without loops
 cores=8  # core count
 kdepth=5 # will be ignored if not a pk/da experiment
+kmeso=-4  # will be ignored of not a pk/da experiment, or if use a 'constant' stratosphere damping mode, instead of linear transition to top boundary
 # Next parameter sweeps and timing
 case $testmode in 0)
   #-------------------------------------------------------------------------------
-  # Parameter sweep settings
+  # This is not a test
+  # Parameter sweep
   # Trop experiments
-  # resos="t42l40s"
-  # series="troprad2"
-  # params1=(40 "40 80")
-  # Strat experiments
-  # Do 16, with a few different configurations
-  resos="t42l50p"
+  forcetype=hs # can be either of 'hs', 'pk', or 'da'
+  resos="t42l20s" # teeny sigma better
+  series="troprad2-mean"
+  [ -n "$1" ] && series="$1"
+  # params1=(40 10 80 4)
+  params1=(20 10 4 2 1 0.4 "40 80" "80 160")
+  # Strat experiments; do 16, with a few different configurations
+  # forcetype=da # can be either of 'hs', 'pk', or 'da'
+  # resos="t42l50p"
   # series="stratrad10c stratrad10l stratrad5c stratrad5l"
-  series="stratrad10c stratrad10l stratrad5c stratrad5l"
-  series="stratrad10c stratrad10l stratrad4c stratrad4l stratrad2c stratrad2l stratrad1c stratrad1l"
-  params1=(40 20 10 4)
+  # series="stratrad10c stratrad10l stratrad4c stratrad4l stratrad2c stratrad2l stratrad1c stratrad1l"
+  # series="stratrad10c stratrad4c stratrad2c stratrad1c"
+  # params1=(40 20 10 4)
+  # params1=(2 1) # try super duper fast damping!
   #-------------------------------------------------------------------------------
   # Output and timing
   filename=4xdaily_inst # name for output files
@@ -73,10 +77,11 @@ case $testmode in 0)
   tinit=1000
   # tinit="$(seq 1000 100 5900 | xargs)" # for spindown initiation
 #-------------------------------------------------------------------------------
-# Test experiment
+# Run really fast test run
 ;; 1)
   # Sweep settings
-  batchmode=0 # run model
+  batchmode=0  # run model
+  forcetype=hs # can be either of 'hs', 'pk', or 'da'
   resos="t42l40s"
   series="base"
   # Timing and other
@@ -90,8 +95,9 @@ case $testmode in 0)
 # Run at high resolution to get really clear picture
 ;; 2)
   # Sweep settings
-  batchmode=0 # run model
-  resos="t85l50p"
+  batchmode=0  # run model
+  forcetype=pk # can be either of 'hs', 'pk', or 'da'
+  resos="t42l50p"
   series="base"
   # Other settings
   filename="init"
@@ -107,6 +113,11 @@ case $testmode in 0)
 # Helper functions
 #------------------------------------------------------------------------------#
 # Call this function as Add param v<value> param v<value>
+# Modifies ***global*** arrays 'params' and 'values'
+# If the <value> part is empty (e.g., if this particular experiment
+# series does not change that value), will not add to arrays
+# Function accounts for situation when you pass an empty string parameter
+# or negative number, and have weird strings like "v-" and "v''"
 function Add() {
   while [ $# -ne 0 ]; do
     if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
@@ -142,19 +153,39 @@ function Namelist() {
   fi
   # Change forcing namelist parameters
   # Add to this as you design new experiment series
+  # TODO: Perhaps will have
   case $series in
-    base)
-    ;; troprad[0-9]|diag[0-9])
-      ktrop=${vals[0]}
-      blopt=${series##*[a-z]}
-      case "$blopt" in
-        [01]) kbl=4 ;; # hold boundary layer value constant
-        2)    kbl=$(bc -l <<< "scale=3; $ktrop/10") ;; # hold ratio constant; i.e. keep it at
-        3)    kbl=$(bc -l <<< "scale=3; (4^-1 + ($ktrop^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
-        *) echo "Error: Unknown experiment option ${blopt}." && exit 1 ;;
-      esac
+    base) # Dun do shit
+    ;; troprad[0-9]|troprad[0-9]-anom|troprad[0-9]-mean|troprad[0-9]-fixedmean|diag[0-9])
+      # First set mean and anomaly components of troposphere damping
+      ktrop=-${vals[0]}
+      [[ $series =~ diag[0-9] ]] && kfric=-${vals[1]} # diagaonal experiment
+      if [[ $series =~ -anom$ ]]; then
+        ktrop="-40,$ktrop"
+      elif [[ $series =~ -mean$ ]]; then
+        ktrop="$ktrop,-40"
+      fi
+      # Next, separately scale boundary layer damping rate
+      kbl=""
+      blopt=${series%%-*} # e.g. trim -fixedmean
+      blopt=${blopt##*[a-z]} # get number
+      for iktrop in ${ktrop/,/ }; do
+        case "$blopt" in
+          [01]) ikbl=-4 ;; # hold boundary layer value constant
+          2)    ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at
+          3)    ikbl=-$(bc -l <<< "scale=3; (4^-1 + (${iktrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
+          *) echo "Error: Unknown blopt ${blopt}." && exit 1 ;;
+        esac
+        kbl=$kbl,$ikbl # mean and anomaly components
+      done
+      kbl=${kbl#,} # trim leading comma
+      # Special fixes background state case
+      if [[ $series =~ -fixedmean$ ]]; then
+        ktrop="3600,$ktrop" # model breaks on scale of minutes, but seems to handle 1 hour o.k. (i.e. 0.05days)
+        kbl="3600,$kbl"
+      fi
     ;; stratrad*)
-      kstrat=${vals[0]}
+      kstrat=-${vals[0]}
       kdepth=${series#stratrad}
       kdepth=${kdepth%[a-z]}
       stratdamp=${series##*[0-9]}
@@ -164,11 +195,11 @@ function Namelist() {
         *) echo "Error: Unknown stratosphere damping option ${stratdamp}." && exit 1 ;;
       esac
     ;; fric)
-      kfric=${vals[1]}
+      kfric=-${vals[0]}
     ;; *) echo "Error: Unknown experiment series \"$series\"." && exit 1 ;;
   esac
   Add strat_mode v\'$forcetype\' strat_damp v\'$stratdamp\'
-  Add ktrop v-$ktrop kfric v-$kfric kbl v-$kbl kstrat v-$kstrat z_kdepth v$kdepth
+  Add ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
   # Horizontal coordinates
   ntrunc=${reso%l*}
   ntrunc=${ntrunc#t}
@@ -200,7 +231,7 @@ function Namelist() {
   # Modify namelist parameters
   # Message
   echo "Updating namelist with:"
-  index=0; width=8; while [ $index -le ${#params[@]} ]; do
+  index=0; width=6; while [ $index -le ${#params[@]} ]; do
     message+="${params[@]:$index:$width}\n${values[@]:$index:$width}\n\n"
     let index+=$width
   done
@@ -332,10 +363,11 @@ for se in $series; do
           # Check whether this is a 'base' experiment. Experiment series can
           # 'intersect' each other, and this ensures we aren't duplicating results.
           ise=$se; case $se in
-            troprad*)  [[ $iparam1 == 40 ]] && ise=base iparam1=; ;;
-            fric*)     [[ $iparam1 == 1 ]]  && ise=base iparam1=; ;;
-            diag*)     [[ $iparam1 == 40 && $iparam2 == 1 ]] && ise=base iparam1= iparam2=; ;;
-            stratrad*) [[ $iparam1 == 40 ]] && ise=base iparam1= iparam2=
+            troprad[0-9]-fixedmean) ;; # no 'base' because background damping always huge
+            troprad[0-9]*) [[ $iparam1 == 40 ]] && ise=base iparam1= ;; # base is 40 day zonal-mean or anomaly damping
+            fric)          [[ $iparam1 == 1 ]]  && ise=base iparam1= ;;
+            diag[0-9]*)    [[ $iparam1 == 40 && $iparam2 == 1 ]] && ise=base iparam1= iparam2= ;;
+            stratrad*)     [[ $iparam1 == 40 ]] && ise=base iparam1= iparam2= ;;
           esac
           [ -n "$iparam1" ] && [ "$iparam1" != na ] && ip1="_p$(printf "%08.3f" $iparam1)"
           [ -n "$iparam2" ] && [ "$iparam2" != na ] && ip2="_p$(printf "%08.3f" $iparam2)"
@@ -374,6 +406,10 @@ for se in $series; do
           $cmd $expdir $flags --mode $runmode --start $tstart --end $tend \
             --cores $cores --days-init $tinit --extra "$extra" # could be empty string
           [ $? -ne 0 ] && echo "Error: Model run script failed." && exit 1 # keyboard interruption does not trigger this
+          # Move initialization files
+          if [ $testmode -eq 2 ]; then
+            cp $expdir/d0000-d0000/init.nc $HOME/data/init_${forcetype}_${reso}.nc
+          fi
         #------------------------------------------------------------------#
         # Process model
         elif [ $batchmode -eq 1 ]; then
@@ -386,16 +422,20 @@ for se in $series; do
         # Call post-process script
         elif [ $batchmode -eq 2 ]; then
           [ $testmode -ne 0 ] && echo "Error: Invalid mode for test run." && exit 1
-          # Run stuff
-          echo "Current experiment directory: ${expname}."
+          # Run stuff; will generate individual logs for each 'type' of
+          # post-process, and a bigger log that indicates what processes are running
+          echo "Current experiment directory: \"${expname}\"."
           input="$scratch/$expname"
           output="$storage/data/$expname"    # saving processed data
+          [ ! -d $output ] && mkdir $output
           $dryrun && cmd="echo ./postprocess" || cmd="./postprocess"
+          flags="$postprocess"
+          echo "Calling postprocess with flags: $flags"
           $cmd "$filename" "$input" "$output" \
             --climate-start $climostart --climate-end $climoend \
             --spin-start $spinstart --spin-end $spinend \
-            --mode $runmode $postprocess &
-          pids+=($!)
+            --mode $runmode $flags &>$output/log &
+          pids+=($!) # record process
         fi
       done
     done

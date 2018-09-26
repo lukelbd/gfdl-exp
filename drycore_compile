@@ -4,8 +4,6 @@
 #------------------------------------------------------------------------------
 # Fix host-specific settings
 #------------------------------------------------------------------------------
-expname=pk
-hostname=${HOSTNAME%%.*} # trims e.g. monde.atmos.colostate.edu
 case ${HOSTNAME%%.*} in
   olbers) # netcdf-c lib is separate from netcdf-fortran lib
     include=(/usr/local/mpich3/include /usr/local/netcdf4/include /usr/local/netcdf4-pgi/include)
@@ -38,16 +36,17 @@ case ${HOSTNAME%%.*} in
     ;;
   *) echo "Error: Unknown host, must configure library and binary locations before running." && exit 1 ;;
 esac
+
 #------------------------------------------------------------------------------
 # Build executable model code and post-processing tool
 #------------------------------------------------------------------------------
 # Definitions
-execdir=${HOSTNAME%%.*}      # where code is compiled and executable is created
 src=$root/src                                  # path to directory containing model source code
+execdir=${HOSTNAME%%.*}                        # where code is compiled and executable is created
+pathnames=$src/path_names_new                  # change this to pick different blocks of code
 mkmf=$root/bin/mkmf                            # path to executable mkmf
 mkmftemplate=$root/bin/mkmf.template           # template of most basic settings
 mppnsource=$root/postprocessing/mppnccombine.c # source code
-pathnames=$src/path_names_$expname             # stored in source directory
 cppdefs="-Duse_libMPI -Duse_netCDF"            # not sure what this does
 flags_links="${links[@]/#/-L}"                 # search these paths for library files
 flags_include="${include[@]/#/-I}"             # include flags

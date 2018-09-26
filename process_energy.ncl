@@ -58,9 +58,9 @@ if (.not. isvar("filename")) then
 end if
 f = addfile(filename,"r") ; just read data from here
 plev_bnds = f->plev_bnds ; save this little guy
-ud = f->udamp ; this if a *force* term; units are acceleration
-vd = f->vdamp ; same as above
-q = f->ndamp*cp ; heat capacity times rate of change
+ud = (f->udamp1 + f->udamp2) ; this if a *force* term; units are acceleration
+vd = (f->vdamp1 + f->vdamp2) ; same as above
+q  = (f->ndamp1 + f->ndamp2)*cp ; heat capacity times rate of change
 w = f->omega ; the vertical velocity
 t = f->t
 u = f->u

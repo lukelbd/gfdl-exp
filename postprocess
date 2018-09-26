@@ -11,7 +11,16 @@ shopt -s nullglob # will return empty if no match
 # Optional environmental variables, with defaults
 # The flag names should be descriptive enough, but feel free to read comments
 mode=2
-parallel=false
+climate=false
+covar=false
+autocorr=false
+energy=false
+eof=false
+eof2d=false
+timeseries=false
+spinclimate=false
+spintimeseries=false
+spintimescale=false
 climostart=0
 spinstart=0
 climoend=100000
@@ -21,22 +30,21 @@ function check() {
 }
 while [ $# -gt 0 ]; do
   case $1 in
-    --mode)          mode=$2;       check $2; shift; ;;
-    --climate-start) climostart=$2; check $2; shift; ;;
-    --climate-end)   climoend=$2;   check $2; shift; ;;
-    --parallel)   parallel=true;   ;;
-    --climate)    climate=true;    ;;
-    --covar)      covar=true;      ;;
-    --autocorr)   autocorr=true;   ;;
-    --energy)     energy=true;     ;;
-    --eof)        eof=true;        ;;
-    --eof-2d)     eof2d=true;      ;;
-    --time-series) timeseries=true; ;;
-    --spin-start) spinstart=$2; check $2; shift; ;;
-    --spin-end)   spinend=$2;   check $2; shift; ;;
-    --spin-climate)    spinclimate=true;    ;;
-    --spin-timeseries) spintimeseries=true; ;;
-    --spin-timescale)  spintimescale=true;  ;;
+    --mode)            mode=$2;       check $2; shift; ;;
+    --climate-start)   climostart=$2; check $2; shift; ;;
+    --climate-end)     climoend=$2;   check $2; shift; ;;
+    --climate)         climate=true;                   ;;
+    --covar)           covar=true;                     ;;
+    --autocorr)        autocorr=true;                  ;;
+    --energy)          energy=true;                    ;;
+    --eof)             eof=true;                       ;;
+    --eof-2d)          eof2d=true;                     ;;
+    --time-series)     timeseries=true;                ;;
+    --spin-start)      spinstart=$2; check $2; shift;  ;;
+    --spin-end)        spinend=$2;   check $2; shift;  ;;
+    --spin-climate)    spinclimate=true;               ;;
+    --spin-timeseries) spintimeseries=true;            ;;
+    --spin-timescale)  spintimescale=true;             ;;
     -*) echo "Error: Unknown flag \"${1}\"." && exit 1 ;;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
@@ -51,11 +59,11 @@ while [ $# -gt 0 ]; do
   shift # shift at least once for flags; for key-value pairs, make sure to shift twice
 done
 # File management/names
-log=log_ # log prefix
+log=log_ # log prefix; easy to change by making it a variable
 fprefix=${filename}_summary # original prefix file names
 fclimate=${filename}_climate.nc
 fenergy=${filename}_energy.nc
-fregion=${filename}_region.nc
+fregion=${filename}_timeseries.nc
 fautocorr=${filename}_autocorr.nc
 fcovar=${filename}_covar.nc
 fspinclimate=${filename}_spindown${mode}xs.nc # cross-section
@@ -77,12 +85,7 @@ ts_params=KE,KM,PE,PM,EHF,EMF
 # Helper functions
 # Wait for processes from array of process IDs, and check their exit statuses
 function Call() {
-  # Run in parallel, or alone
-  if ! $parallel; then
-    $1 2>&1 | tee $2 # run in foreground
-  else
-    $1 &>$2 & # send to background
-  fi
+  $1 &>$2 & # send to background, save logfile
 }
 function CheckProcesses() {
   local processes=($@)
@@ -150,7 +153,7 @@ for startday in ${startdays[@]}; do
   done
   spinavefiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
 done
-echo "${spinavefiles[@]##*/}"
+# echo "${spinavefiles[@]##*/}"
 # for spindowngroup in "${spinavefiles[@]}"; do # testing
 #   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/}
 # done
@@ -176,7 +179,7 @@ for daystring in ${daystrings[@]}; do
   done
   spinclimatefiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
 done
-echo "${spinclimatefiles[@]##*/}"
+# echo "${spinclimatefiles[@]##*/}"
 # for spindowngroup in "${spinclimatefiles[@]}"; do # testing
 #   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/${fprefix}.}
 # done
