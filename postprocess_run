@@ -25,7 +25,9 @@ climostart=0
 spinstart=0
 climoend=100000
 spinend=100000
+# Parse user input
 function check() {
+  echo $1
   [[ -z "$1" || "$1" =~ ^- ]] && echo "Error: Invalid argument." && exit 1
 }
 while [ $# -gt 0 ]; do
@@ -34,6 +36,7 @@ while [ $# -gt 0 ]; do
     --climate-start)   climostart=$2; check $2; shift; ;;
     --climate-end)     climoend=$2;   check $2; shift; ;;
     --climate)         climate=true;                   ;;
+    --daily)           daily=true;                     ;;
     --covar)           covar=true;                     ;;
     --autocorr)        autocorr=true;                  ;;
     --energy)          energy=true;                    ;;
@@ -62,6 +65,7 @@ done
 log=log_ # log prefix; easy to change by making it a variable
 fprefix=${filename}_summary # original prefix file names
 fclimate=${filename}_climate.nc
+fdaily=${filename}_daily.nc
 fenergy=${filename}_energy.nc
 fregion=${filename}_timeseries.nc
 fautocorr=${filename}_autocorr.nc
@@ -203,6 +207,21 @@ function Climate() {
   echo "Getting temporal mean from days ${climofiles[@]##*/${fprefix}.}."
   commands=("${climofiles[@]/#/ -timmean }")
   cdo $flags -ensmean ${commands[@]} $fclimate
+}
+
+################################################################################
+# Daily data
+################################################################################
+function Daily() {
+  # Combine time-means of individual files saved during control run
+  if [[ ${#climofiles[@]} -eq 0 ]]; then
+    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    exit 1
+  fi
+  # Very simple again
+  echo "Getting daily means from days ${climofiles[@]##*/${fprefix}.}."
+  commands=("${climofiles[@]/#/ -daymean }")
+  cdo $flags -mergetime ${commands[@]} $fdaily
 }
 
 ################################################################################
@@ -743,6 +762,11 @@ function Main() {
   if $climate; then
     echo "Control climate."
     Call Climate ${log}climate
+  fi
+  # Daily data
+  if $daily; then
+    echo "Daily means."
+    Call Daily ${log}daily
   fi
   # NH/SH regional means, no averaging in pressure-space
   if $timeseries; then

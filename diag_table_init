@@ -31,12 +31,12 @@ filename, outfreq, frequnits, 1, "days", "time",
 # 8. save size [currently F32]
 # Note cannot save time-average data in same file as non-time-average data, it seems
 # Some decisions regarding output variables:
-#   * Store A and B hybrid coefficients as hyai and hybi to match the ECHAM conventions;
-#     they MUST BE STORED THIS WAY for CDO interpolation procedure to read them.
-#   * Don't save vor; can calculate on the fly using CDO spectral-coordinate
-#     algorithm, if necessary.
-#   * Don't bother with tau and Teq; can calculate them from model parameters
-#     (Although tau is function of model level can approximate from p data).
+# * Store A and B hybrid coefficients as hyai and hybi to match the ECHAM conventions;
+#   they MUST BE STORED THIS WAY for CDO interpolation procedure to read them.
+# * Don't save vor; can calculate on the fly using CDO spectral-coordinate
+#   algorithm, if necessary.
+# * Don't bother with tau and Teq; can calculate them from model parameters
+#   (Although tau is function of model level can approximate from p data).
 "dynamics", "temp",  "t",     filename, "all", .false., "none", 2,
 "dynamics", "bk",    "hybi",  filename, "all", .false., "none", 2,
 "dynamics", "pk",    "hyai",  filename, "all", .false., "none", 2,

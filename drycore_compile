@@ -8,7 +8,7 @@ case ${HOSTNAME%%.*} in
   olbers) # netcdf-c lib is separate from netcdf-fortran lib
     include=(/usr/local/mpich3/include /usr/local/netcdf4/include /usr/local/netcdf4-pgi/include)
     links=(/usr/local/mpich3/lib /usr/local/netcdf4/lib /usr/local/netcdf4-pgi/lib /usr/local/hdf5/lib)
-    root=/home/ldavis/gfdl
+    root=/home/ldavis/drycore-gfdl
     pgi=/opt/pgi/linux86-64/2017/bin
     # fix=' -lcurl' # not sure why needed this, probably fake news
     ;;
@@ -16,21 +16,21 @@ case ${HOSTNAME%%.*} in
          # 'pgi' and 'gcc' options, should be copies; only netcdf-fortran can be compiled with either)
     include=(/usr/local/mpich3-pgi /usr/local/netcdf4-pgi/include)
     links=(/usr/local/mpich3-pgi/lib /usr/local/netcdf4-pgi /usr/local/hdf5-pgi/lib)
-    root=/home/ldavis/gfdl
+    root=/home/ldavis/drycore-gfdl
     pgi=/opt/pgi/linux86-64/2016/bin
     # fix=' -lcurl'
     ;;
   monde)
     include=(/usr/include/mpich-x86_64)
     links=(/usr/lib64/mpich/lib)
-    root=/home/ldavis/gfdl
+    root=/home/ldavis/drycore-gfdl
     pgi=/opt/pgi/linux86-64/17.10/bin
     # fix=' -lcurl'
     ;;
   euclid) # everything is bunched together
     include=(/usr/local/include)
     links=(/usr/local/lib)
-    root=/birner-home/ldavis/gfdl
+    root=/birner-home/ldavis/drycore-gfdl
     pgi=/opt/pgi/linux86-64/2013/bin
     # fix=''
     ;;

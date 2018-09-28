@@ -22,14 +22,19 @@
 ################################################################################
 # Tasks to run
 dryrun=false  # just print function calls
-batchmode=0 # 0 is run the model, 1 is process the XYZ files to YZ, and 2 is postprocess the YZ files
-testmode=0  # 0 is no test, 1 is run for a day or two, 2 is check initial output
-runmode=0   # 0 is control run, the rest are different spindown modes:
+batchmode=$1 # 0 is run the model, 1 is process the XYZ files to YZ, and 2 is postprocess the YZ files
+testmode=0   # 0 is no test, 1 is run for a day or two, 2 is check initial output
+runmode=0    # 0 is control run, the rest are different spindown modes:
   # 1 for radiation off, 2 for radiation off but surface on, 
   # 3 for everything off (radiation, surface, and friction), 4 for friction off
+if [ -z "$batchmode" ]; then
+  echo "Error: Must call script with integer indicating batch mode." && exit 1
+elif [[ ! "$batchmode" =~ [012] ]]; then
+  echo "Error: Invalid batch mode ${batchmode}." && exit 1
+fi
 # Model run settings
+resume=false # do not overwrite existing dXXXX-dYYYY directories?
 newexper=false # do not write to existing experiment directories?
-resume=false  # do not overwrite existing dXXXX-dYYYY directories?
 # Post-processing variable options
 parallelmax=1 # maximum parallel post-processing events
 spinstart=0 spinend=100000
@@ -51,10 +56,24 @@ case $testmode in 0)
   # Trop experiments
   forcetype=hs # can be either of 'hs', 'pk', or 'da'
   resos="t42l20s" # teeny sigma better
-  series="troprad2-mean"
-  [ -n "$1" ] && series="$1"
-  # params1=(40 10 80 4)
-  params1=(20 10 4 2 1 0.4 "40 80" "80 160")
+  #----------------------------------------------------------------------------#
+  # Rad experiments
+  series="troprad3-fixedmean"
+  params1=(20 10 4 2 1 "40 80" "80 160")
+  [ -n "$2" ] && series="$2"
+  # params1=("40 80" "80 160" "160 320")
+  # params1=("160 320" "320 640")
+  # series="troprad2-fixedmean"
+  # params1=(40 20 10 4 2 1 0.4 "40 80" "80 160" 0.2 0.1 "160 320")
+  # series="troprad2-anom"
+  # params1=(1 2 4 10 20 40)
+  # params1=(20 10 4 2 1 0.4 0.2 0.1 "40 80" "80 160" "160 320")
+  # params1=(20 10 4 2 1 0.4 "40 80" "80 160")
+  #----------------------------------------------------------------------------#
+  # T grad experiments
+  # series="tgrad"
+  # params1=(30 40 50 70 80 90)
+  #----------------------------------------------------------------------------#
   # Strat experiments; do 16, with a few different configurations
   # forcetype=da # can be either of 'hs', 'pk', or 'da'
   # resos="t42l50p"
@@ -71,10 +90,10 @@ case $testmode in 0)
   dt=600     # for other experiments
   days=100   # make resolution dependent?
   secs=0     # normally is zero
-  tstart=0   # first day of integration; set to 0 for new run.
+  tstart=200 # first day of integration; set to 0 for new run.
   tend=1200  # for new experiments just do 1200 day integrations; dump the first 200
-  tkeep=1000 # when to retain longitude info?
   tinit=1000
+  tkeep="200 300 400 500 600 700 800 900 1000 1100" # when to retain longitude info?
   # tinit="$(seq 1000 100 5900 | xargs)" # for spindown initiation
 #-------------------------------------------------------------------------------
 # Run really fast test run
@@ -96,8 +115,8 @@ case $testmode in 0)
 ;; 2)
   # Sweep settings
   batchmode=0  # run model
-  forcetype=pk # can be either of 'hs', 'pk', or 'da'
-  resos="t42l50p"
+  forcetype=da # can be either of 'hs', 'pk', or 'da'
+  resos="t42l20s"
   series="base"
   # Other settings
   filename="init"
@@ -155,8 +174,14 @@ function Namelist() {
   # Add to this as you design new experiment series
   # TODO: Perhaps will have
   case $series in
-    base) # Dun do shit
+    base*) # Dun do shit
+      if [[ $series =~ -fixedmean$ ]]; then
+        ktrop="3600,-40"
+        kbl="3600,-4"
+      fi
     ;; troprad[0-9]|troprad[0-9]-anom|troprad[0-9]-mean|troprad[0-9]-fixedmean|diag[0-9])
+      #------------------------------------------------------------------------#
+      # Troposphere experiments
       # First set mean and anomaly components of troposphere damping
       ktrop=-${vals[0]}
       [[ $series =~ diag[0-9] ]] && kfric=-${vals[1]} # diagaonal experiment
@@ -172,7 +197,7 @@ function Namelist() {
       for iktrop in ${ktrop/,/ }; do
         case "$blopt" in
           [01]) ikbl=-4 ;; # hold boundary layer value constant
-          2)    ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at
+          2)    ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at 10
           3)    ikbl=-$(bc -l <<< "scale=3; (4^-1 + (${iktrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
           *) echo "Error: Unknown blopt ${blopt}." && exit 1 ;;
         esac
@@ -184,7 +209,13 @@ function Namelist() {
         ktrop="3600,$ktrop" # model breaks on scale of minutes, but seems to handle 1 hour o.k. (i.e. 0.05days)
         kbl="3600,$kbl"
       fi
+    ;; tgrad*)
+      #------------------------------------------------------------------------#
+      # Temp gradient experiments
+      delh=${vals[0]} # easy peasy!
     ;; stratrad*)
+      #------------------------------------------------------------------------#
+      # Stratosphere damping experiments
       kstrat=-${vals[0]}
       kdepth=${series#stratrad}
       kdepth=${kdepth%[a-z]}
@@ -195,9 +226,12 @@ function Namelist() {
         *) echo "Error: Unknown stratosphere damping option ${stratdamp}." && exit 1 ;;
       esac
     ;; fric)
+      #------------------------------------------------------------------------#
+      # Friction experiments
       kfric=-${vals[0]}
     ;; *) echo "Error: Unknown experiment series \"$series\"." && exit 1 ;;
   esac
+  Add delh v$delh
   Add strat_mode v\'$forcetype\' strat_damp v\'$stratdamp\'
   Add ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
   # Horizontal coordinates
@@ -305,14 +339,15 @@ PATH="$mpibin:$PATH" # will *not* be exported to invoking shell; so this is nbd
 [ ! -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
 #------------------------------------------------------------------------------#
 # Copy over the appropriate executable file
-execdir=${HOSTNAME%%.*}
-cp $execdir/fms.x ./ # location of executables
-[ $? -ne 0 ] && echo "Error: fms.x not found in \"$execdir\"." && exit 1
-cp $execdir/mppnccombine.x ./ # location of executables
-[ $? -ne 0 ] && echo "Error: mppnccombine.x not found in \"$execdir\"." && exit 1
+if [ $batchmode -eq 0 ]; then
+  execdir=${HOSTNAME%%.*}
+  cp $execdir/fms.x ./ # location of executables
+  [ $? -ne 0 ] && echo "Error: fms.x not found in \"$execdir\"." && exit 1
+  cp $execdir/mppnccombine.x ./ # location of executables
+  [ $? -ne 0 ] && echo "Error: mppnccombine.x not found in \"$execdir\"." && exit 1
+fi
 
 ################################################################################
-#-------------------------------------------------------------------------------
 # Run multiple experiments consecutively
 echo
 cwd=$(pwd)
@@ -353,6 +388,7 @@ for se in $series; do
         unset flags suffix expname roverride err
         [ $counter -gt 1 ] && unset rdir # allow override for first experiment
         i=0; for iparam1 in $param1; do for iparam2 in $param2; do let i=$i+1
+          #--------------------------------------------------------------------#
           # Error checks
           unset ise ip1 ip2 suffix
           [ $i -gt 2 ] && echo "Error: Cannot do 'diagonal' continuation experiments." && exit 1
@@ -360,10 +396,11 @@ for se in $series; do
           if [ ! -z $expname ]; then
             rdir="$expname"; suffix=c; [[ ! $rdir =~ base ]] && rdir="${rdir}c"
           fi
+          #--------------------------------------------------------------------#
           # Check whether this is a 'base' experiment. Experiment series can
           # 'intersect' each other, and this ensures we aren't duplicating results.
           ise=$se; case $se in
-            troprad[0-9]-fixedmean) ;; # no 'base' because background damping always huge
+            troprad[0-9]-fixedmean) [[ $iparam1 == 40 ]] && ise=base-fixedmean iparam1= ;; # no 'base' because background damping always huge
             troprad[0-9]*) [[ $iparam1 == 40 ]] && ise=base iparam1= ;; # base is 40 day zonal-mean or anomaly damping
             fric)          [[ $iparam1 == 1 ]]  && ise=base iparam1= ;;
             diag[0-9]*)    [[ $iparam1 == 40 && $iparam2 == 1 ]] && ise=base iparam1= iparam2= ;;
