@@ -40,6 +40,7 @@ __pycache__
 *.mod
 *.o
 *.so
+*.cppdefs
 
 # Logs and databases #
 ######################
