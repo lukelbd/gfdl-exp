@@ -30,10 +30,11 @@ cdointerp=false   # slower than NCO
 onlycombine=false # just run mppnccombine
 while [ $# -gt 0 ]; do
   case $1 in
+    -q|--quit) echo "Skipping processing." && exit 0 ;;
     -k|--keep)         keepxyz=true     ;; # whether to keep longitudinal data
     -r|--resume)       resume=true      ;; # process old results
     -m|--no-move)      nomove=true      ;; # if true, keep all intermediate files
-    -i|--cdo-interp)   cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
+    -i|--interp-cdo)   cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
     -c|--combine-only) onlycombine=true ;; # only combine data
     *) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
   esac

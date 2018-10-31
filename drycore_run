@@ -34,44 +34,35 @@ cwd=$(pwd)
 # Declare defaults
 cores=8            # number of cores for parallel
 mode=0             # default is to run the control
-newexper=false     # do not write to existing experiment directory?
+new=false          # do not write to existing experiment directory?
 resume=false       # do not overwrite existing run block?
 days=$(Parse days) # number of days in each block
 # Parse input flags
 # Read the comments to see explanations for each option
-# This function returns an a string that can be used in an eval statement... hideous
-function parse_list() { # will echo an eval string
-  local nums
-  counter=0 # counter
-  for num in ${@:2}; do # skip first argument
-    [[ "$num" =~ - ]] && break || nums+="$num " # break always returns success
-    counter=$(($counter+1)) # shift by 1; this is a number
-  done
-  echo "($nums); shift $counter" # shift can be 0
-}
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    --resume)         resume=true;  ;; # do not overwrite existing dXXXX-dYYYY folders?
-    --new-experiment) newexper=true; ;; # do not write to existing experiment folders?
-    --cores)          cores=$2;     shift; ;;
-    --start)          tstart=$2;    shift; ;; # starting day
-    --end)            tend=$2;      shift; ;; # ending day
-    --mode)           mode=$2;      shift; ;; # 0 is control, 1 is spindown, 2...
-    --extra)          extra=$2;     shift; ;; # flags for processing script
-    --restart)        roverride=$2; shift; ;; # manual override restart directory
-    --days-init)      eval "tinit=$(parse_list $@)"; ;; # initial times from control run for spindown run
-    --days-blank)     eval "tblank=$(parse_list $@)"; ;;
-    --days-keep)      eval "tkeepxyz=$(parse_list $@)"; ;;
+    --new)        new=true    ;; # do not write to existing experiment folders?
+    --resume)     resume=true ;; # do not overwrite existing dXXXX-dYYYY folders?
+    --cores=*)    cores=${1#*=}     ;;
+    --start=*)    tstart=${1#*=}    ;; # starting day
+    --end=*)      tend=${1#*=}      ;; # ending day
+    --mode=*)     mode=${1#*=}      ;; # 0 is control, 1 is spindown, 2...
+    --extra=*)    extra="${1#*=}"   ;; # flags for processing script, separated by spaces
+    --restart=*)  roverride=${1#*=} ;; # manual override restart directory
+    --days-spindown=*) tspindown=($(echo ${1#*=} | tr ',' ' ')) ;; # initial times from control run for spindown run
+    --days-alldata=*)  talldata=($(echo ${1#*=}  | tr ',' ' ')) ;; # initial times from control run for spindown run
+    --days-nodata=*)   tnodata=($(echo ${1#*=}   | tr ',' ' ')) ;; # initial times from control run for spindown run
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
-    *) [ ! -z $expdir ] && echo "Error: More than one experiment directory specified." && exit 1
+    *)  [ -n "$expdir" ] && echo "Error: More than one experiment directory specified." && exit 1
       expdir="$1" ;;
   esac; shift # shift by at least one
 done
-# echo Init: ${tinit[@]}
-# echo Blank: ${tblank[@]}
-# echo Keep: ${tkeepxyz[@]}
+# echo Init: ${tspindown[@]}
+# echo Blank: ${tnodata[@]}
+# echo Keep: ${talldata[@]}
 [ -z $expdir ] && echo "Error: You must declare the experiment directory." && exit 1
 [[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared." && exit 1
+echo "Keeping full resolution: days ${talldata[@]}"
 
 # Check that required scripts are available
 fms=$cwd/fms.x       # location of executables
@@ -80,7 +71,7 @@ process=$cwd/process # the script for on-the-fly processing
 [ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
 
 # Optionally exit from script if directory already exists
-$newexper && [ -d $expdir ] && echo "Error: Working directory already exists. Continuing..." && exit 1
+$new && [ -d $expdir ] && echo "Error: Working directory already exists. Continuing..." && exit 1
 if [ ! -d $expdir ]; then
   mkdir $expdir # make directory
   [ $? -ne 0 ] && echo "Error: Could not create experiment directory \"$expdir\"." && exit 1
@@ -130,14 +121,14 @@ function Setup() {
   # Copy existing namelist file over
   # For shutdown experiments, can edit on the fly to turn off
   # radiation, et cetera, but this is starting point
-  [ ! -r "$cwd/input.nml" ]  && echo "Error: input.nml file not found."  && exit 1
-  [ ! -r "$cwd/diag_table" ] && echo "Error: diag_table file not found." && exit 1
-  cp $cwd/input.nml  ./
-  cp $cwd/diag_table ./
+  [ ! -r "../input.nml" ]  && echo "Error: input.nml file not found."  && exit 1
+  [ ! -r "../diag_table" ] && echo "Error: diag_table file not found." && exit 1
+  cp ../input.nml  ./
+  cp ../diag_table ./
   topo=$(Parse "topography_option") # use helper function
-  if [[ "$topo" == "input" ]]; then
-    [[ ! -r $cwd/topography.data.nc ]] && echo "Error: Topography file not available." && exit 1
-    cp $cwd/topography.data.nc ./
+  if [ "$topo" == "input" ]; then
+    [ ! -r ../topography.data.nc ] && echo "Error: Topography file not available." && exit 1
+    cp ../topography.data.nc ./
   fi
   #----------------------------------------------------------------------------#
   # Change namelist properties
@@ -271,8 +262,8 @@ case $mode in
       [ ! -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
     fi
     unset pflags
-    [[ " ${tblank[@]} " =~ " $(printf "%04d" $cday) " ]] && pflags+=" -q"
-    [[ " ${tkeepxyz[@]} " =~ " $(printf "%04d" $cday) " ]] && pflags+=" -k"
+    [[ " ${tnodata[@]} "   =~ " $cday " ]] && pflags+=" --quit"
+    [[ " ${talldata[@]} " =~ " $cday " ]]  && pflags+=" --keep"
     Setup $cdir # sets up working directory, cd into it
     if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
@@ -299,12 +290,12 @@ case $mode in
 # User must specify which namelist params are getting abruptly changed.
 ##############################################################################
   ;; *) # CHECK THAT TIMING VARIABLES ARE DECLARED
-  [ -z $tinit ] && echo "Error: Must declare starting times for spindown experiments." && exit 1
+  [ -z $tspindown ] && echo "Error: Must declare starting times for spindown experiments." && exit 1
   # PREPARE FOR THE LOOP
-  echo "Running spindown experiment $mode from days ${tinit[@]} for $tend days."
+  echo "Running spindown experiment $mode from days ${tspindown[@]} for $tend days."
   origin=$(date +%s)
   # ITERATE THROUGH STARTING DAYS
-  for eday in "${tinit[@]}"; do
+  for eday in "${tspindown[@]}"; do
     cday=0 # current day relative to start of equilibrium
     nday=$(($cday + $days)) # next day, relative to start
     prefix=$expdir/d$(printf "%04d" $eday) # for successive spindown runs
@@ -326,8 +317,8 @@ case $mode in
         rdir=$prefix-spindown$mode-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
       # RUN THE MODEL and COMBINE OUTPUT
       unset pflags
-      [[ " ${tblank[@]} " =~ " $(printf "%04d" $cday) " ]] && pflags+=" -q"
-      [[ " ${tkeepxyz[@]} " =~ " $(printf "%04d" $cday) " ]] && pflags+=" -k"
+      [[ " ${tnodata[@]} "   =~ " $cday " ]] && pflags+=" -q"
+      [[ " ${talldata[@]} " =~ " $cday " ]] && pflags+=" -k"
       Setup $cdir # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         Restart $rdir # add restart files

@@ -2,7 +2,7 @@
 ! modified Polvani-Kushner version
 &forcing_nml
   no_forcing      = .false., ! turn off forcing altogether (same as setting each 'k' to zero)
-  ndamp_decomp    = .false., ! separate zonal mean/anomaly components of damping?
+  ndamp_decomp    = .true., ! separate zonal mean/anomaly components of damping?
   rdamp_decomp    = .false.,
   strat_vtx       = .true.,  ! turn on and off the polar vortex
   strat_sponge    = .true.,  ! turn on sponge

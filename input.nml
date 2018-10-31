@@ -1,5 +1,5 @@
 &main_nml
-  dt_atmos = 600,
+  dt_atmos = 10,
   days     = 100,
   hours    = 0,
   minutes  = 0,
@@ -28,7 +28,7 @@
   reference_sea_level_press = 101325.,
   lon_max                   = 128,
   lat_max                   = 64,
-  num_levels                = 20,
+  num_levels                = 40,
   num_fourier               = 42,
   num_spherical             = 43,
   fourier_inc               = 1,
@@ -39,7 +39,7 @@
 /
 &forcing_nml
   no_forcing      = .false., 
-  ndamp_decomp    = .false., 
+  ndamp_decomp    = .true., 
   rdamp_decomp    = .false.,
   strat_vtx       = .true.,  
   strat_sponge    = .true.,  
@@ -62,8 +62,8 @@
   vtx_gam         = 2.,   
   ksponge         = -0.5,
   kfric           = -1.,
-  kbl             = -4.000,-3.076,
-  ktrop           = -40,-10.000,
+  kbl             = -0.1,-3.076,
+  ktrop           = -0.1,-10.000,
   kstrat          = -40.,  
   kmeso           = -4,
   trsink          = -4.,   

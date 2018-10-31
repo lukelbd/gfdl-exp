@@ -1,44 +1,53 @@
 #!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
+# dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
+# to logarithmically sweep space. Existing directories have been moved to their
+# closest values in this new spacing. White lie, but probably insignificant differences.
+#------------------------------------------------------------------------------#
 # Processes files in directories matching some glob pattern
 # Much much much smarter than the method before
 # If you want to process some specific new experiments, just use
 # multiple glob patterns matching exact names
-storage=/home/ldavis
-scratch=/home/ldavis # on Euclid, home is unmounted/not backed up; so disk I/O is quick
-case ${HOSTNAME%%.*} in
-  olbers)
-    mpibin=/usr/local/mpich3/bin
-    ;;
-  gauss)
-    mpibin=/usr/local/mpich3-pgi/bin
-    scratch=/birner-scratch/ldavis # need to use special scratch directory
-    ;;
-  euclid)
-    mpibin=/usr/local/bin
-    storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
-    ;;
-  monde)
-    mpibin=/usr/lib64/mpich/bin
-    scratch=/mdata1/ldavis
-    ;;
-  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
-esac
-# Iterate through
+# 1 for radiation off, 2 for radiation off but surface on, 
+# 3 for everything off (radiation, surface, and friction), 4 for friction off
 runmode=0 # 0 is control run, the rest are different spindown modes:
-  # 1 for radiation off, 2 for radiation off but surface on, 
-  # 3 for everything off (radiation, surface, and friction), 4 for friction off
+parallel_max=8 # maximum parallel post-processing events
 dryrun=false
 filename=4xdaily_inst # prefix for files to be read
-parallelmax=1 # maximum parallel post-processing events
-spinstart=0 spinend=100000
-climostart=200 climoend=1200 # skip first 200 days; but for spindown data, want to process all of it usually
-# globs=('*tgrad*t42l20s*' '*troprad2*t42l20s*')
-# globs=('*tgrad*t42l20s*' '*troprad3*t42l20s*')
-# globs=('*troprad[23]*t42l40s*')
+spin_start=0 spin_end=100000
 # globs=('*stratrad1c*t42l50p*' '*stratrad10c*t42l50p*' '*base*t42')
-# globs=('*base*t42*')
-globs=('*troprad3*t42l20s*')
-postprocess+="--daily --climate "
+# globs=('*troprad2_t42l20s*' '*base_t42l20s*')
+# globs=('*troprad2_t42l20s*' '*base_t42l20s*')
+# globs=('*tgrad*p0090.000')
+# globs=('*troprad3*t42l20s*0000.*') # only for the fast runs
+# Quick runs
+# climo_start=100 climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
+# globs=('*troprad3*t42l20s*0000.*') # only for the fast runs
+climo_start=200 climo_end=1100 # NOTE: use this for troprad3 runs, which were screwed in last 100 days
+globs=('*troprad3-anom*')
+# globs=('*tgrad*020.000')
+postprocess="--climo "
+# postprocess="--eof2d "
+subfolder=netcdf
+storage=/home/ldavis/data
+scratch=/home/ldavis # on Euclid, home is unmounted/not backed up; so disk I/O is quick
+# Host-specific settings
+case ${HOSTNAME%%.*} in
+  uriah) # special case -- we may store real data here
+    storage=/Users/ldavis/data
+    scratch=/Users/ldavis/data
+    subfolder=
+    postprocess+="--use-daily " # no subfolder
+  ;; gauss)
+    scratch=/birner-scratch/ldavis # need to use special scratch directory
+  ;; euclid)
+    storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
+  ;; monde)
+    scratch=/mdata1/ldavis
+  ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+# Iterate
 for glob in ${globs[@]}; do
   for input in $scratch/$glob; do
     # Check
@@ -46,9 +55,8 @@ for glob in ${globs[@]}; do
       echo "Warning: No directories for glob pattern ${input}." && sleep 3 && continue
     fi
     echo "Directory: ${input}."
-    # sleep 3
     # Crude parallelization across multiple experiments
-    if [ ${#pids[@]} -gt 0 ] && [ $(( ($counter-1) % $parallelmax )) == 0 ]; then
+    if [ ${#pids[@]} -gt 0 ] && [ $(( ($counter-1) % $parallel_max )) == 0 ]; then
       echo "Waiting for processes: ${pids[@]}."
       for pid in ${pids[@]}; do
         wait $pid
@@ -57,18 +65,22 @@ for glob in ${globs[@]}; do
     fi
     # Run stuff; will generate individual logs for each 'type' of
     # post-process, and a bigger log that indicates what processes are running
-    expname="${input##*/}"
-    output="$storage/data/$expname"    # saving processed data
-    echo "Current experiment directory: \"${expname}\"."
+    echo "Current experiment directory: \"${input##*/}\"."
+    output="$storage/${input##*/}/" # saving processed data
+    input="$input/$subfolder" # loading raw data
     [ ! -d $output ] && mkdir $output
     $dryrun && cmd="echo ./postprocess_run" || cmd="./postprocess_run"
-    flags="$postprocess"
+    flags="$postprocess --mode $runmode
+      --spin-start $spin_start --spin-end $spin_end
+      --climo-start $climo_start --climo-end $climo_end"
+    # Opionally run in parallel, or just linearly
     echo "Calling postprocess with flags: $flags"
-    $cmd "$filename" "$input" "$output" \
-      --climate-start $climostart --climate-end $climoend \
-      --spin-start $spinstart --spin-end $spinend \
-      --mode $runmode $flags
-      # --mode $runmode $flags &>$output/log &
+    sleep 1
+    if [ $parallel_max -eq 1 ]; then
+      $cmd "$filename" "$input" "$output" $flags --debug
+    else
+      $cmd "$filename" "$input" "$output" $flags &>$output/log &
+    fi
     pids+=($!) # record process
   done
 done

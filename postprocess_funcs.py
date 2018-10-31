@@ -6,7 +6,6 @@ For now is extremely simple.
 import numpy as np
 import xarray as xr
 import scipy.optimize as opt # curve fitting
-
 def timescales(spindown=None, climate=None, output=None, timestep=None):
     """
     Gets time scale along axes.

@@ -6,48 +6,53 @@
 # This script was recently modified, but should be fine now
 ################################################################################
 # Verify environmental variables are set
-flags="-s -O" # overwrite, and only issue warnings
+# flags="-s -O" # overwrite, and only issue warnings
+flags="-O"
 shopt -s nullglob # will return empty if no match
 # Optional environmental variables, with defaults
 # The flag names should be descriptive enough, but feel free to read comments
 mode=2
+debug=false # disable sending stuff to background?
+daily=false
+use_daily=false # use pre-combined daily means instead of raw output?
 climate=false
+climo_start=0
+climo_end=100000
+climo_timeseries=false
 covar=false
 autocorr=false
 energy=false
-eof=false
+eof1d=false
 eof2d=false
-timeseries=false
-spinclimate=false
-spintimeseries=false
-spintimescale=false
-climostart=0
-spinstart=0
-climoend=100000
-spinend=100000
+spin_climate=false
+spin_timeseries=false
+spin_timescale=false
+spin_start=0
+spin_end=100000
 # Parse user input
 function check() {
-  echo $1
-  [[ -z "$1" || "$1" =~ ^- ]] && echo "Error: Invalid argument." && exit 1
+  [[ -z "$1" || "$1" =~ ^- ]] && echo "Error: Invalid argument." && echo $1 && exit 1
 }
 while [ $# -gt 0 ]; do
   case $1 in
-    --mode)            mode=$2;       check $2; shift; ;;
-    --climate-start)   climostart=$2; check $2; shift; ;;
-    --climate-end)     climoend=$2;   check $2; shift; ;;
-    --climate)         climate=true;                   ;;
-    --daily)           daily=true;                     ;;
-    --covar)           covar=true;                     ;;
-    --autocorr)        autocorr=true;                  ;;
-    --energy)          energy=true;                    ;;
-    --eof)             eof=true;                       ;;
-    --eof-2d)          eof2d=true;                     ;;
-    --time-series)     timeseries=true;                ;;
-    --spin-start)      spinstart=$2; check $2; shift;  ;;
-    --spin-end)        spinend=$2;   check $2; shift;  ;;
-    --spin-climate)    spinclimate=true;               ;;
-    --spin-timeseries) spintimeseries=true;            ;;
-    --spin-timescale)  spintimescale=true;             ;;
+    --mode)             mode=$2;               check $2; shift; ;;
+    --debug)            debug=true;            ;;
+    --daily)            daily=true;            ;;
+    --use-daily)        use_daily=true;        ;;
+    --climo)            climate=true;          ;;
+    --climo-start)      climo_start=$2;        check $2; shift; ;;
+    --climo-end)        climo_end=$2;          check $2; shift; ;;
+    --climo-timeseries) climo_timeseries=true; ;;
+    --covar)            covar=true;            ;;
+    --autocorr)         autocorr=true;         ;;
+    --energy)           energy=true;           ;;
+    --eof1d)           eof1d=true;            ;;
+    --eof2d)           eof2d=true;            ;;
+    --spin-start)       spin_start=$2;         check $2; shift; ;;
+    --spin-end)         spin_end=$2;           check $2; shift; ;;
+    --spin-climate)     spin_climate=true;     ;;
+    --spin-timeseries)  spin_timeseries=true;  ;;
+    --spin-timescale)   spin_timescale=true;   ;;
     -*) echo "Error: Unknown flag \"${1}\"." && exit 1 ;;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
@@ -61,11 +66,12 @@ while [ $# -gt 0 ]; do
   esac
   shift # shift at least once for flags; for key-value pairs, make sure to shift twice
 done
+echo file $filename input $input output $output
 # File management/names
 log=log_ # log prefix; easy to change by making it a variable
-fprefix=${filename}_summary # original prefix file names
+psummary=${filename}_summary # original prefix file names
+fdaily=${filename}_daily.nc # use these for processing EOFs and stuff
 fclimate=${filename}_climate.nc
-fdaily=${filename}_daily.nc
 fenergy=${filename}_energy.nc
 fregion=${filename}_timeseries.nc
 fautocorr=${filename}_autocorr.nc
@@ -75,7 +81,6 @@ fspindownpoles=${filename}_spindown${mode}poles.nc # spindown rate at the poles
 ftimescale=${filename}_timescale${mode}.nc # the timescale stuff
 # Directory management; move to save directory
 cwd=$(pwd) # directory where scripts stored (you must run this script from current directory!)
-input=$input/netcdf # location of data
 [ ! -d $input ] && echo "Error: Cannot find input directory \"$input\"." && exit 1
 [ ! -d $output ] && mkdir $output
 cd $output # move here
@@ -89,7 +94,11 @@ ts_params=KE,KM,PE,PM,EHF,EMF
 # Helper functions
 # Wait for processes from array of process IDs, and check their exit statuses
 function Call() {
-  $1 &>$2 & # send to background, save logfile
+  if $debug; then # don't send to background
+    $1 # just naked call to command
+  else
+    $1 &>$2 & # send to background, save logfile
+  fi
 }
 function CheckProcesses() {
   local processes=($@)
@@ -122,41 +131,49 @@ function Regions() {
 ################################################################################
 # Climate files
 # Used for climate means and climate variability stuff
-echo "Getting list of climate files within days $climostart and $climoend."
-climofiles=()
-allfiles=($input/${fprefix}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc)
-for file in ${allfiles[@]}; do
-  daystring=${file#$input/${fprefix}.}
-  daystring=${daystring%.nc}
-  day1=${daystring%%-*} day1=${day1#d}
-  day2=${daystring##*-} day2=${day2#d}
-  [ $day1 -ge $climostart ] && [ $day2 -le $climoend ] && climofiles+=($file)
-done
-echofiles="${climofiles[@]%*/}"
+function ClimoFiles() {
+  echo "Getting list of climate files within days $climo_start and $climo_end."
+  if $use_daily; then
+    climofiles=($input/$fdaily)
+    echo ${allfiles[@]}
+  else
+    climofiles=()
+    allfiles=($input/${psummary}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc)
+    for file in ${allfiles[@]}; do
+      daystring=${file#$input/${psummary}.}
+      daystring=${daystring%.nc}
+      day1=${daystring%%-*} day1=${day1#d}
+      day2=${daystring##*-} day2=${day2#d}
+      [ $day1 -ge $climo_start ] && [ $day2 -le $climo_end ] && climofiles+=($file)
+    done
+  fi
+}
 
 ################################################################################
 # Spindown files grouped by spindown day
 # Used for determining if spindowns are 'unique'
-echo "Getting list of spindown files within days $spinstart to $spinend, grouped by control run initiation day."
-startdays=()
-for file in $input/${fprefix}.d[0-9][0-9][0-9][0-9]-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
-  startday=${file#$input/${fprefix}.}
-  startday=${startday%%-*} # the spindown day
-  startdays+=($startday)
-done
-startdays=($(echo "${startdays[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
-spinavefiles=()
-for startday in ${startdays[@]}; do
-  spindowngroup="" # for particular days
-  for file in $input/${fprefix}.${startday}-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
-    daystring=${file#$input/${fprefix}.${startday}-spindown$mode-} # trim leading pattern
-    daystring=${daystring%.nc}
-    day1=${daystring%%-*} day1=${day1#d}
-    day2=${daystring##*-} day2=${day2#d}
-    [ $day1 -ge $spinstart ] && [ $day2 -le $spinend ] && spindowngroup+=" $file"
+function SpindownFiles1() {
+  echo "Getting list of spindown files within days $spin_start to $spin_end, grouped by control run initiation day."
+  startdays=()
+  for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+    startday=${file#$input/${psummary}.}
+    startday=${startday%%-*} # the spindown day
+    startdays+=($startday)
   done
-  spinavefiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
-done
+  startdays=($(echo "${startdays[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
+  spinavefiles=()
+  for startday in ${startdays[@]}; do
+    spindowngroup="" # for particular days
+    for file in $input/${psummary}.${startday}-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+      daystring=${file#$input/${psummary}.${startday}-spindown$mode-} # trim leading pattern
+      daystring=${daystring%.nc}
+      day1=${daystring%%-*} day1=${day1#d}
+      day2=${daystring##*-} day2=${day2#d}
+      [ $day1 -ge $spin_start ] && [ $day2 -le $spin_end ] && spindowngroup+=" $file"
+    done
+    spinavefiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
+  done
+}
 # echo "${spinavefiles[@]##*/}"
 # for spindowngroup in "${spinavefiles[@]}"; do # testing
 #   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/}
@@ -165,27 +182,29 @@ done
 ################################################################################
 # Spindown files grouped by daystring (days after control run)
 # Used for dynamical timescale stuff
-echo "Getting list of spindown files within days $spinstart to $spinend, grouped by run day."
-daystrings=()
-for file in $input/${fprefix}.d[0-9][0-9][0-9][0-9]-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
-  daystring=${file#$input/${fprefix}.d[0-9][0-9][0-9][0-9]-spindown$mode-} # trim leading pattern
-  daystring=${daystring%.nc}
-  day1=${daystring%%-*} day1=${day1#d}
-  day2=${daystring##*-} day2=${day2#d}
-  [ $day1 -ge $spinstart ] && [ $day2 -le $spinend ] && daystrings+=($daystring)
-done
-daystrings=($(echo "${daystrings[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
-spinclimatefiles=()
-for daystring in ${daystrings[@]}; do
-  spindowngroup="" # for particular days
-  for file in $input/${fprefix}.d[0-9][0-9][0-9][0-9]-spindown$mode-${daystring}.nc; do
-    spindowngroup+=" $file"
+function SpindownFiles2() {
+  echo "Getting list of spindown files within days $spin_start to $spin_end, grouped by run day."
+  daystrings=()
+  for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+    daystring=${file#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-} # trim leading pattern
+    daystring=${daystring%.nc}
+    day1=${daystring%%-*} day1=${day1#d}
+    day2=${daystring##*-} day2=${day2#d}
+    [ $day1 -ge $spin_start ] && [ $day2 -le $spin_end ] && daystrings+=($daystring)
   done
-  spinclimatefiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
-done
+  daystrings=($(echo "${daystrings[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
+  spinclimatefiles=()
+  for daystring in ${daystrings[@]}; do
+    spindowngroup="" # for particular days
+    for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-${daystring}.nc; do
+      spindowngroup+=" $file"
+    done
+    spinclimatefiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
+  done
+}
 # echo "${spinclimatefiles[@]##*/}"
 # for spindowngroup in "${spinclimatefiles[@]}"; do # testing
-#   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/${fprefix}.}
+#   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/${psummary}.}
 # done
 
 ################################################################################
@@ -199,12 +218,13 @@ done
 ################################################################################
 function Climate() {
   # Combine time-means of individual files saved during control run
+  ClimoFiles
   if [[ ${#climofiles[@]} -eq 0 ]]; then
-    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    echo "Error: No climate files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
   # Very simple again
-  echo "Getting temporal mean from days ${climofiles[@]##*/${fprefix}.}."
+  echo "Getting temporal mean from days ${climofiles[@]##*/${psummary}.}."
   commands=("${climofiles[@]/#/ -timmean }")
   cdo $flags -ensmean ${commands[@]} $fclimate
 }
@@ -214,12 +234,13 @@ function Climate() {
 ################################################################################
 function Daily() {
   # Combine time-means of individual files saved during control run
+  ClimoFiles
   if [[ ${#climofiles[@]} -eq 0 ]]; then
-    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    echo "Error: No climate files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
   # Very simple again
-  echo "Getting daily means from days ${climofiles[@]##*/${fprefix}.}."
+  echo "Getting daily means from days ${climofiles[@]##*/${psummary}.}."
   commands=("${climofiles[@]/#/ -daymean }")
   cdo $flags -mergetime ${commands[@]} $fdaily
 }
@@ -229,12 +250,13 @@ function Daily() {
 ################################################################################
 function Autocorr() {
   # Just get the autocorrelation from the time-mean
+  ClimoFiles
   if [[ ${#climofiles[@]} -eq 0 ]]; then
-    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    echo "Error: No climate files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
   # Get the single time-series file
-  echo "Getting time series of energy terms through days ${climofiles[@]##*/${fprefix}.}."
+  echo "Getting time series of energy terms through days ${climofiles[@]##*/${psummary}.}."
   commands=("${climofiles[@]/#/ -selname,$energy_params }")
   cdo $flags -mergetime ${commands[@]} tmp.nc # merge the means
   # Get the autocorrelation
@@ -259,12 +281,13 @@ function Autocorr() {
 # TODO: We actually want the 3d covariance, not 2d
 ################################################################################
 function Covar() {
+  ClimoFiles
   if [[ ${#climofiles[@]} -eq 0 ]]; then
-    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    echo "Error: No climate files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
   # Get the single time-series file
-  echo "Getting time series of energy terms through days ${climofiles[@]##*/${fprefix}.}."
+  echo "Getting time series of energy terms through days ${climofiles[@]##*/${psummary}.}."
   commands=("${climofiles[@]/#/ -selname,$energy_params }")
   cdo $flags -mergetime ${commands[@]} tmp.nc # merge the means
   # Now get the covariance matrix trace; note that fldcovar just gets the
@@ -279,17 +302,17 @@ function Covar() {
 
 ################################################################################
 # Time series of global energy terms
-# For this we use "all files", i.e. include spinup before climostart and any
-# days after climoend; use these files to monitor spinup progress
+# For this we use "all files", i.e. include spinup before climo_start and any
+# days after climo_end; use these files to monitor spinup progress
 ################################################################################
 function Energy() {
   # Verify files present
   if [[ ${#allfiles[@]} -eq 0 ]]; then
-    echo "Error: No files available between days ${climostart} and ${climoend}."
+    echo "Error: No files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
   # Very simple again
-  echo "Getting time series of energy terms through days ${allfiles[@]##*/${fprefix}.}."
+  echo "Getting time series of energy terms through days ${allfiles[@]##*/${psummary}.}."
   commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$energy_params }")
   cdo $flags -mergetime ${commands[@]} $fenergy # merge the means
 }
@@ -303,12 +326,12 @@ function Energy() {
 function Timeseries() {
   # Verify files present
   if [[ ${#allfiles[@]} -eq 0 ]]; then
-    echo "Error: No files available between days ${climostart} and ${climoend}."
+    echo "Error: No files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
   # Just pick a couple simple variables
   # Can be re-run no problem
-  echo "Getting time series of hemispheric means through days ${allfiles[@]##*/${fprefix}.}."
+  echo "Getting time series of hemispheric means through days ${allfiles[@]##*/${psummary}.}."
   for region in SH NH; do
     selregion=$(Regions $region)
     commands=("${allfiles[@]/#/ -fldmean -selname,$ts_params $selregion }")
@@ -326,16 +349,16 @@ function Timeseries() {
 #   of these files maybe. That way will be easier to plot them.
 ################################################################################
 function EOF2D() {
-  #-----------------------------------------------------------------------------
-  # Helper function that gets EOFs for single region and parameter
-  # * In the future may want to interpolate to some standard low-horizontal
-  #   resolution first. Consider this. Or don't, whatever.
+  ClimoFiles
   if [[ ${#climofiles[@]} -eq 0 ]]; then
-    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    echo "Error: No climate files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
 
   ##############################################################################
+  # Helper function that gets EOFs for single region and parameter
+  # In the future may want to interpolate to some standard low-horizontal
+  # resolution first. Consider this. Or don't, whatever.
   function EOF2Dhelper() {
     [ $# -ne 2 ] && echo "Error: Bad arguments." && return 1
     region=$1
@@ -344,6 +367,7 @@ function EOF2D() {
     tfilter="-daymean"   # consider using -selhour,0 or -daymean
     pfilter="-sellevidx" # filter pressure levels according to Thompson et al. methods
     selregion=$(Regions $region)
+    echo hi hi hi
     plevs="$(cdo showlevel -selname,t ${climofiles[0]} 2>/dev/null)" # plev list
     ilev=1 # initialize
     for plev in $plevs; do # check em out
@@ -364,7 +388,7 @@ function EOF2D() {
     # First create complete time series of energy during 'climatology' timesteps
     # Note the pressure-level filter will preserve level bounds, because CDO is cool
     # if [ ! -r $fseries ]; then # do this once for NH and SH
-    echo "Getting time series from files ${climofiles[@]##*/${fprefix}.}."
+    echo "Getting time series from files ${climofiles[@]##*/${psummary}.}."
     commands=("${climofiles[@]/#/ $selregion $pfilter $tfilter -selname,$param }") # don't interpolate; keep it pure
     cdo $flags -mergetime ${commands[@]} $fseries
     # else echo "Time series for parameter ${param} already created."
@@ -450,7 +474,11 @@ function EOF2D() {
     for param in KM KE; do # barotropic and baroclinic modes
       logfile=${log}2d${param}${region}
       echo "Getting ${param} EOFs and PCs for ${region}." | tee $logfile
-      EOF2Dhelper $region $param &>$logfile & # send to background, every time
+      if $debug; then # no background stuff!
+        EOF2Dhelper $region $param
+      else
+        EOF2Dhelper $region $param &>$logfile & # send to background, every time
+      fi
       processes+=($!) # save process ID
       logfiles+=($logfile)
     done
@@ -491,10 +519,11 @@ function EOF2D() {
 ################################################################################
 function EOFlevels() {
   # Initial stuff
+  ClimoFiles
   # levels=({5..10}00) # range of pressure levels in mb
   levels=(50 100 150 200 250 300 350 400 450 500 550 600 650 700 750 800 850 900 950 1000)
   if [[ ${#climofiles[@]} -eq 0 ]]; then
-    echo "Error: No climate files available between days ${climostart} and ${climoend}."
+    echo "Error: No climate files available between days ${climo_start} and ${climo_end}."
     exit 1
   fi
 
@@ -523,9 +552,10 @@ function EOFlevels() {
     # First create complete time series of wind during our 'climatology' timesteps (after spinup)
     # Just selects name, interpolates to single level, *then* interpolates in space
     if [ ! -r $fseries ]; then # do this once for NH and SH
-      echo "Getting time series from files ${climofiles[@]##*/${fprefix}.}."
+      echo "Getting time series from files ${climofiles[@]##*/${psummary}.}."
+      if [ ${#climofiles[@]} -gt 1 ]; then mergetime="-mergetime"; else unset $mergetime; fi
       commands=("${climofiles[@]/#/ $selregion -intlevel,$level $tfilter -selname,$param }")
-      cdo $flags -mergetime ${commands[@]} $fseries
+      cdo $flags $mergetime ${commands[@]} $fseries
     else echo "Time series for level $level already created."
     fi
 
@@ -630,7 +660,7 @@ function EOFlevels() {
 function SpinClimate() {
   # Verify files present
   if [[ ${#spinclimatefiles[@]} -eq 0 ]]; then
-    echo "Error: No spindown files available between days ${spinstart} and ${spinend}."
+    echo "Error: No spindown files available between days ${spin_start} and ${spin_end}."
     exit 1
   fi
   # First determine unique groups of spindown days
@@ -641,13 +671,13 @@ function SpinClimate() {
     # First run a simple check
     spindowngroup=($spindowngroup) # the space-separated list of files is now expanded into an array
     newcount=${#spindowngroup[@]}
-    members=(${spindowngroup[@]##*/${fprefix}.})
+    members=(${spindowngroup[@]##*/${psummary}.})
     members=(${members[@]%%-*})
     [ ! -z $count ] && [ $count != $newcount ] && \
       echo "Error: $newcount spindown runs in this group, but $count files in previous groups." && exit 1
     count=$newcount
     # Next get ensemble mean of files; timesteps will be adopted from the first input file
-    daystring=${spindowngroup[0]#$input/${fprefix}.d[0-9][0-9][0-9][0-9]-spindown$mode-}
+    daystring=${spindowngroup[0]#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-}
     daystring=${daystring%.nc}
     outfile=$input/spindown${daystring}.nc
     echo "Spindown runs in the ${daystring} group: ${members[@]}."
@@ -668,7 +698,7 @@ function SpinTimeseries() {
   # Initial stuff
   counter=0 # counter for waiting
   if [[ ${#spinavefiles[@]} -eq 0 ]]; then
-    echo "Error: No spindown files available between days ${spinstart} and ${spinend}."
+    echo "Error: No spindown files available between days ${spin_start} and ${spin_end}."
     exit 1
   fi
   echo "Creating records of individual spindown runs."
@@ -682,7 +712,7 @@ function SpinTimeseries() {
       # Initial stuff
       counter=$(($counter+1))
       spindowngroup=($spindowngroup) # the space-separated list of files is now expanded into an array
-      spindownday=${spindowngroup[0]#$input/${fprefix}.}
+      spindownday=${spindowngroup[0]#$input/${psummary}.}
       spindownday=${spindownday%%-*} # the spindown day
       echo "Files in ${spindownday} run: ${spindowngroup[@]##*spindown?-}."
       # Create spindown files
@@ -769,7 +799,7 @@ function Main() {
     Call Daily ${log}daily
   fi
   # NH/SH regional means, no averaging in pressure-space
-  if $timeseries; then
+  if $climo_timeseries; then
     echo "Time series."
     Call Timeseries ${log}timeseries
   fi
@@ -789,7 +819,7 @@ function Main() {
     Call Energy ${log}energy
   fi
   # Climate variability: single-level zonal wind EOF
-  if $eof; then
+  if $eof1d; then
     echo "EOFs of zonal wind."
     Call EOFlevels ${log}eofs
   fi
@@ -800,17 +830,17 @@ function Main() {
   fi
   # Spindown processing
   # Get the full cross-section
-  if $spinclimate; then
+  if $spin_climate; then
     echo "Processing the spindown${mode} data."
     Call SpinClimate ${log}spindown${mode}
   fi
   # Preserve each record but take area averages
-  if $spintimeseries; then
+  if $spin_timeseries; then
     echo "Processing the spindown$mode data."
     Call SpinTimeseries ${log}spindown$mode
   fi
   # Timescale
-  if $spintimescale; then
+  if $spin_timescale; then
     echo "Processing the spindown$mode data."
     Call Timescale ${log}spindown$mode
   fi
