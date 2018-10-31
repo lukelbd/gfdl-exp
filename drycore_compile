@@ -42,7 +42,7 @@ esac
 #------------------------------------------------------------------------------
 # Definitions
 src=$root/src                                  # path to directory containing model source code
-execdir=${HOSTNAME%%.*}                        # where code is compiled and executable is created
+execdir=./drycore-${HOSTNAME%%.*}                        # where code is compiled and executable is created
 pathnames=$src/path_names_new                  # change this to pick different blocks of code
 mkmf=$root/bin/mkmf                            # path to executable mkmf
 mkmftemplate=$root/bin/mkmf.template           # template of most basic settings
