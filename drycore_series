@@ -34,25 +34,26 @@
 #     corresponding roughly to Held-Suarez standard) the sweep will be renamed
 #     to 'base', and the directory will be named force_*base*_resolution.
 ################################################################################
-# Tasks to run
-dryrun=false # just print function calls
-testmode=0 # 0 is no test, 1 is run for a day or two, 2 is check initial output
-runmode=0  # 0 is control run, the rest are different spindown modes:
-  # 1 for radiation off, 2 for radiation off but surface on, 
-  # 3 for everything off (radiation, surface, and friction), 4 for friction off
-# Model run settings
-new=false # do not write to existing experiment directories?
-resume=false # do not overwrite existing dXXXX-dYYYY directories?
-
-# Parse input
+# Default settings
+# For runmode: 0 is control run, the rest are different spindown modes:
+# 1 for radiation off, 2 for radiation off but surface on, 
+# 3 for everything off (radiation, surface, and friction), 4 for friction off
+# For testmode: 0 is normal, 1 is quick test, 2 is spit out the
+# initial conditions (i.e. forcing environment)
+runmode=0
 testmode=0
+dryrun=false # just print function calls
+resume=false # do not overwrite existing dXXXX-dYYYY directories?
+new=false # do not write to existing experiment directories?
+# Parse input
 unset series
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    --test)  testmode=1 ;;
+    --test) testmode=1 ;;
     --init) testmode=2 ;;
     --1=*) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
     --2=*) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --mode=*) runmode=${1#*=} ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *) [ -n "$series" ] && echo "Error: More than one experiment series specified." && exit 1
        series="$1" ;;
@@ -70,7 +71,6 @@ reso="${reso%%_*}"
 
 # Next parameter sweeps and timing
 cores=8 # default core count
-rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
 case $testmode in 0)
   filename=4xdaily_inst # name for output files
   frequnits=hours       # hours
@@ -87,11 +87,12 @@ case $testmode in 0)
 # Run really fast test run
 ;; 1)
   filename=test
-  cores=1
+  cores=16
   extra="--no-move " # pass to process script; don't move/delete anything
-  rdir="${force}_base_t42l40s" # override previous directory
-  dt=600 days=1 secs=0 outfreq=1 frequnits=hours
-  tstart=0 tend=3 tspindown=3
+  # rdir="${force}_base_t42l40s" # override previous directory
+  # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
+  dt=600 days=10 secs=0 outfreq=1 frequnits=hours
+  tstart=0 tend=10 tspindown=3
   new=false resume=false
 # Initial conditions
 ;; 2)
@@ -105,6 +106,36 @@ case $testmode in 0)
 ;; esac
 
 #------------------------------------------------------------------------------#
+# Paths
+#------------------------------------------------------------------------------#
+# Storage information for runscript and post-processing script
+storage=$HOME
+scratch=$HOME # on Euclid, home is unmounted/not backed up; so disk I/O is quick
+f90dir=$HOME/gfdl-drycore # model code folder
+bindir=./drycore-${HOSTNAME%%.*} # compiled model code folder (should be in this folder)
+case ${HOSTNAME%%.*} in
+  # olbers)
+  #   scratch=''
+  # ;; gauss)
+  #   scratch=/birner-scratch/ldavis # need to use special scratch directory
+  euclid)
+    storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
+  ;; monde)
+    scratch=/mdata1/ldavis
+  ;; cheyenne*)
+    storage=/glade/u/home/davislu
+    scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
+    bindir=drycore-cheyenne
+  ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+[ ! -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
+# Copy over the appropriate executable file
+cp $bindir/fms.x ./ # location of executables
+[ $? -ne 0 ] && echo "Error: fms.x not found in \"$bindir\"." && exit 1
+cp $bindir/mppnccombine.x ./ # location of executables
+[ $? -ne 0 ] && echo "Error: mppnccombine.x not found in \"$bindir\"." && exit 1
+
+#------------------------------------------------------------------------------#
 # Helper function
 #------------------------------------------------------------------------------#
 # Call this function as Add param v<value> param v<value>
@@ -113,7 +144,7 @@ case $testmode in 0)
 #   series does not change that value), will not add to arrays
 # * Function accounts for situation when you pass an empty string parameter
 #   or negative number, and have weird strings like "v-" and "v''"
-function Add() {
+function ArrayAdd() {
   while [ $# -ne 0 ]; do
     if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
       [ "${2:0:1}" != v ] && echo "Error: Values must be input as v<value>." && exit 1
@@ -125,43 +156,11 @@ function Add() {
 }
 
 #------------------------------------------------------------------------------#
-# Paths
-#------------------------------------------------------------------------------#
-# Storage information for runscript and post-processing script
-storage=/home/ldavis
-scratch=/home/ldavis # on Euclid, home is unmounted/not backed up; so disk I/O is quick
-case ${HOSTNAME%%.*} in
-  olbers)
-    mpibin=/usr/local/mpich3/bin
-    ;;
-  gauss)
-    mpibin=/usr/local/mpich3-pgi/bin
-    scratch=/birner-scratch/ldavis # need to use special scratch directory
-    ;;
-  euclid)
-    mpibin=/usr/local/bin
-    storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
-    ;;
-  monde)
-    mpibin=/usr/lib64/mpich/bin
-    scratch=/mdata1/ldavis
-    ;;
-  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
-esac
-PATH="$mpibin:$PATH" # will *not* be exported to invoking shell; so this is nbd
-[ ! -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
-# Copy over the appropriate executable file
-execdir=${HOSTNAME%%.*}
-cp $execdir/fms.x ./ # location of executables
-[ $? -ne 0 ] && echo "Error: fms.x not found in \"$execdir\"." && exit 1
-cp $execdir/mppnccombine.x ./ # location of executables
-[ $? -ne 0 ] && echo "Error: mppnccombine.x not found in \"$execdir\"." && exit 1
-
-#------------------------------------------------------------------------------#
 # Run multiple experiments consecutively
 #------------------------------------------------------------------------------#
 # Setup
 echo
+echo "Forcing: $force, Sweep: $sweep, Resolution: $reso"
 exps=() # record completed experiments
 cwd=$(pwd)
 counter=0
@@ -340,12 +339,12 @@ for param1 in ${params1[@]}; do
       # Add parameters to lists
       #----------------------------------------------------------------------------#
       # Forcing settings
-      Add delh v$delh
-      Add strat_mode v\'$force\' strat_damp v\'$stratdamp\'
-      Add ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
+      ArrayAdd delh v$delh
+      ArrayAdd strat_mode v\'$force\' strat_damp v\'$stratdamp\'
+      ArrayAdd ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
       # Timing variables
       # These ones are not experiment dependent so far, and are *global*
-      Add dt_atmos v$dt days v$days seconds v$secs
+      ArrayAdd dt_atmos v$dt days v$days seconds v$secs
       # Set horizontal coordinates
       ntrunc=${reso%l*}
       ntrunc=${ntrunc#t}
@@ -359,7 +358,7 @@ for param1 in ${params1[@]}; do
       esac
       nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
       nlon=$(($nlat * 2)) # always twice the res
-      Add num_fourier v$ntrunc num_spherical v$nsphere lat_max v$nlat lon_max v$nlon
+      ArrayAdd num_fourier v$ntrunc num_spherical v$nsphere lat_max v$nlat lon_max v$nlon
       # Now vertical resolution options
       # Will raise error if string-specifier is unknown
       vert=${reso#*l}
@@ -370,10 +369,10 @@ for param1 in ${params1[@]}; do
         *s) coord=even_sigma; nlev=${vert%s}; levels=               ;; # ERA-Interim coordinates
         *) echo "Error: Unknown vertical coordinate identifier \"${vert}\"."; exit 1; ;;
       esac
-      Add num_levels v$nlev vert_coord_option v\'$coord\'
+      ArrayAdd num_levels v$nlev vert_coord_option v\'$coord\'
 
       #----------------------------------------------------------------------------#
-      # Apply modifications to namelist
+      # Add 'params' keys with 'values' values to namelist
       #----------------------------------------------------------------------------#
       # Message
       echo "Updating namelist with:"
@@ -384,10 +383,11 @@ for param1 in ${params1[@]}; do
       printf "$message" | column -t
       # Copy over the default namelist
       nml=$expdir/input.nml
-      nml_default=./input_default.nml
+      nml_default=$f90dir/input_default.nml
+      echo "Copy $nml_default to $nml"
       cp $nml_default $nml # move over defaut
       # Add forcing namelist
-      nml_forcing=forcing_default.nml
+      nml_forcing=$f90dir/forcing_default.nml
       [ ! -r "$nml_forcing" ] && echo "Error: File \"$nml_forcing\" not found." && exit 1
       cat $nml_forcing >>$nml # append that shit
       # Add coordinate namelist, potentially
@@ -400,12 +400,14 @@ for param1 in ${params1[@]}; do
       # timing variables. For others, just change in the namelist file directly.
       [ ${#params[@]} -ne ${#values[@]} ] && echo "Error: One of the batch script namelist params is unset." && exit 1
       for i in $(seq 0 $((${#params[@]}-1))); do
+        # echo param $param, value $value, namelist $nml
         param=${params[$i]}
         value=${values[$i]}
         [ -z "$param" ] && continue # e.g. stratosphere timescale should be empty
         ! grep '^[ \t]*\b'${param}'\b' $nml &>/dev/null && \
           echo "Error: Param \"${param}\" not found in namelist." && exit 1
         space='\([ \t]*\)' # space atom; more readable to set it as a variable
+        sed -i 's/^'"${space}${param}${space}"'='"${space}"'.*$/\1'${param}'\2=\3'${value}',/g' $nml
         sed -i 's/^'"${space}${param}${space}"'='"${space}"'.*$/\1'${param}'\2=\3'${value}',/g' $nml
       done
       # Remove comments to be safe
@@ -432,7 +434,7 @@ for param1 in ${params1[@]}; do
       [ ! -z "$talldata" ]  && flags+="--days-alldata=$talldata " # keep XYZ data
       [ ! -z "$tnodata" ]   && flags+="--days-nodata=$tnodata " # record zero data
       [ ! -z "$tspindown" ] && flags+="--days-spindown=$tspindown " # record zero data
-      # Run experiment
+      # Run experiment (or just echo command for dryrun)
       $dryrun && cmd="echo ./drycore_run" || cmd="./drycore_run"
       $cmd $expdir $flags --mode=$runmode --start=$tstart --end=$tend --cores=$cores --extra="$extra" # could be empty string
       [ $? -ne 0 ] && echo "Warning: $exp integration failed." && echo && echo && echo && continue # keyboard interruption does not trigger this

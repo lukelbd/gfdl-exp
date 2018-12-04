@@ -10,33 +10,27 @@
 # * 8  cores: 10-day  Control  run, T42 64lats was 140  seconds
 # * 12 cores: 10-day  Spindown run, T39 60lats was 111  seconds
 ################################################################################
-# First a couple functions for parsing namelist options
-################################################################################
-function Parse() { # will just print out result; also, trims string quotes, comments, whitespace
-  cat input.nml | sed 's/!.*//g' | grep "$1" | cut -d= -f2 | tr -d "\t ,'\""
-}
-function Replace() { # first argument is param name, second argument is value
-  while [ $# -gt 0 ]; do
-    ! grep '^[ \t]*\b'${1}'\b' input.nml &>/dev/null && \
-      echo "Error: Param \"${1}\" not found in namelist." && exit 1
-    space='\([ \t]*\)' # space atom; more readable to set it as a variable
-    echo "Replacing param \"${1}\" with \"${2}\"."
-    sed -i 's/^'"${space}${1}${space}"'='"${space}"'.*$/\1'${1}'\2=\3'${2}',/g' input.nml
-    shift 2
-    [ $? -ne 0 ] && echo "Error: Must pass even number of params to Replace function."
-  done
-}
-################################################################################
-# Next 
+# Initial stuff 
 ################################################################################
 ulimit -s unlimited # set max open files
 cwd=$(pwd)
+# Compatibility with MPT custom parallel manager on Cheyenne, if you use mpirun
+export MPI_SHEPHERD=true
+# Check that required scripts are available
+fms=$cwd/fms.x       # location of executables
+process=$cwd/process # the script for on-the-fly processing
+case $HOSTNAME in
+  cheyenne*) run=mpiexec_mpt ;; # or mpirun
+  *)         run=mpirun ;;
+esac
+run=mpirun # actually mpiexec_mpt failed immediately
+[ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
+[ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
 # Declare defaults
 cores=8            # number of cores for parallel
 mode=0             # default is to run the control
 new=false          # do not write to existing experiment directory?
 resume=false       # do not overwrite existing run block?
-days=$(Parse days) # number of days in each block
 # Parse input flags
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
@@ -64,18 +58,31 @@ done
 [[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared." && exit 1
 echo "Keeping full resolution: days ${talldata[@]}"
 
-# Check that required scripts are available
-fms=$cwd/fms.x       # location of executables
-process=$cwd/process # the script for on-the-fly processing
-[ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
-[ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
-
 # Optionally exit from script if directory already exists
 $new && [ -d $expdir ] && echo "Error: Working directory already exists. Continuing..." && exit 1
 if [ ! -d $expdir ]; then
   mkdir $expdir # make directory
   [ $? -ne 0 ] && echo "Error: Could not create experiment directory \"$expdir\"." && exit 1
 fi
+
+# Helper functions
+function Parse() {
+  # Get namelist value for the *global*, experiment-series namelist
+  cat $expdir/input.nml | sed 's/!.*//g' | grep "$1" | cut -d= -f2 | tr -d "\t ,'\""
+}
+function Replace() { # first argument is param name, second argument is value
+  # Replace namelist value for a *local* spindown experiment
+  while [ $# -gt 0 ]; do
+    ! grep '^[ \t]*\b'${1}'\b' ./input.nml &>/dev/null && \
+      echo "Error: Param \"${1}\" not found in namelist." && exit 1
+    space='\([ \t]*\)' # space atom; more readable to set it as a variable
+    echo "Replacing param \"${1}\" with \"${2}\"."
+    sed -i 's/^'"${space}${1}${space}"'='"${space}"'.*$/\1'${1}'\2=\3'${2}',/g' ./input.nml
+    shift 2
+    [ $? -ne 0 ] && echo "Error: Must pass even number of params to Replace function."
+  done
+}
+days=$(Parse days) # number of days in each block
 
 ################################################################################
 # Helper functions for model runs
@@ -121,14 +128,14 @@ function Setup() {
   # Copy existing namelist file over
   # For shutdown experiments, can edit on the fly to turn off
   # radiation, et cetera, but this is starting point
-  [ ! -r "../input.nml" ]  && echo "Error: input.nml file not found."  && exit 1
-  [ ! -r "../diag_table" ] && echo "Error: diag_table file not found." && exit 1
-  cp ../input.nml  ./
-  cp ../diag_table ./
+  [ ! -r "$expdir/input.nml" ]  && echo "Error: input.nml file not found."  && exit 1
+  [ ! -r "$expdir/diag_table" ] && echo "Error: diag_table file not found." && exit 1
+  cp $expdir/input.nml  ./
+  cp $expdir/diag_table ./
   topo=$(Parse "topography_option") # use helper function
   if [ "$topo" == "input" ]; then
-    [ ! -r ../topography.data.nc ] && echo "Error: Topography file not available." && exit 1
-    cp ../topography.data.nc ./
+    [ ! -r $expdir/topography.data.nc ] && echo "Error: Topography file not available." && exit 1
+    cp $expdir/topography.data.nc ./
   fi
   #----------------------------------------------------------------------------#
   # Change namelist properties
@@ -159,13 +166,13 @@ function Run() {
   # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
   # Note mpirun must be on path
   ! which mpirun &>/dev/null && echo "Error: mpirun not found in \$PATH." && exit 1
-  mpirun -np $cores ./fms.x &>log.model # need ./fms.x, not fms
+  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
   # Check that model ran successfully
   # FMS prints to standard output 'EXIT CODE: 1' but doesn't actually set
   # the exit code/mpirun doesn't pass that exit code, which is fucking dumb.
   # Instead parse the logfile
   grep 'EXIT CODE: [1-9]' log.model &>/dev/null && \
-    echo "Error: Bad exit code from model run step..." && exit 1
+    echo "Error: Bad exit code from model run step." && exit 1
   # Wait for previous processing step, if set
   # If unset, means we are just now starting the model runs
   if [ ! -z $pp ]; then # post-processing is active
@@ -173,7 +180,7 @@ function Run() {
     if [ $estatus != 0 ]; then
       echo "Error: Exit status $estatus from post-processing previous block..."
       case $estatus in
-        1) echo "Something failed during model integration. Check log.model." ;;
+        1) echo "NetCDF files missing. Check log.model." ;;
         2) echo "Something failed during model interpolation. Check log.interp." ;;
         3) echo "Something failed while getting basic terms. Check log.basic." ;;
         4) echo "Something failed while getting Lorenz cycle terms. Check log.lorenz." ;;
@@ -237,7 +244,7 @@ estatus=0
 case $mode in
   0) # CHECK THAT TIMING VARIABLES ARE DECLARED
   # PREPARE FOR THE LOOP
-  echo "Running control experiment from day $tstart to day $tend."
+  echo "Running control experiment from day $tstart to day $tend, restart every $days days."
   coldstart=true # assume cold start by default
   origin=$(date +%s) # start time
   pday=$(($tstart - $days)) # only time when we do minus days
@@ -292,7 +299,7 @@ case $mode in
   ;; *) # CHECK THAT TIMING VARIABLES ARE DECLARED
   [ -z $tspindown ] && echo "Error: Must declare starting times for spindown experiments." && exit 1
   # PREPARE FOR THE LOOP
-  echo "Running spindown experiment $mode from days ${tspindown[@]} for $tend days."
+  echo "Running spindown experiment $mode from days ${tspindown[@]} for $tend days, restart every $days days."
   origin=$(date +%s)
   # ITERATE THROUGH STARTING DAYS
   for eday in "${tspindown[@]}"; do

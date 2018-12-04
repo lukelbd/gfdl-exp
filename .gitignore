@@ -7,6 +7,11 @@
 ########################
 .vim/plugged
 
+# Batch scripts #
+#################
+*.pbs
+*.sbatch
+
 # VIM extras #
 ##############
 .session.vim
