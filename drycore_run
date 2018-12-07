@@ -14,23 +14,21 @@
 ################################################################################
 ulimit -s unlimited # set max open files
 cwd=$(pwd)
-# Compatibility with MPT custom parallel manager on Cheyenne, if you use mpirun
-export MPI_SHEPHERD=true
-# Check that required scripts are available
-fms=$cwd/fms.x       # location of executables
+cores=8      # number of cores for parallel
+mode=0       # default is to run the control
+new=false    # do not write to existing experiment directory?
+resume=false # do not overwrite existing run block?
+all=false  # keep xyz data for all days?
+none=false # throw out all data for all days (i.e. just keep restarts)?
+# Executables
+# export MPI_SHEPHERD=true # see: https://www2.cisl.ucar.edu/sites/default/files/intro_to_hpc.pdf
+# when mpiexec_mpt used, MPI_SHEPHERD required, but this failed for me
+module load impi &>/dev/null # absolutely necessary!
+run=mpirun # parallel run
+fms=$cwd/fms.x # location of executables
 process=$cwd/process # the script for on-the-fly processing
-case $HOSTNAME in
-  cheyenne*) run=mpiexec_mpt ;; # or mpirun
-  *)         run=mpirun ;;
-esac
-run=mpirun # actually mpiexec_mpt failed immediately
 [ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
 [ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
-# Declare defaults
-cores=8            # number of cores for parallel
-mode=0             # default is to run the control
-new=false          # do not write to existing experiment directory?
-resume=false       # do not overwrite existing run block?
 # Parse input flags
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
@@ -41,22 +39,21 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     --start=*)    tstart=${1#*=}    ;; # starting day
     --end=*)      tend=${1#*=}      ;; # ending day
     --mode=*)     mode=${1#*=}      ;; # 0 is control, 1 is spindown, 2...
-    --extra=*)    extra="${1#*=}"   ;; # flags for processing script, separated by spaces
-    --restart=*)  roverride=${1#*=} ;; # manual override restart directory
-    --days-spindown=*) tspindown=($(echo ${1#*=} | tr ',' ' ')) ;; # initial times from control run for spindown run
-    --days-alldata=*)  talldata=($(echo ${1#*=}  | tr ',' ' ')) ;; # initial times from control run for spindown run
-    --days-nodata=*)   tnodata=($(echo ${1#*=}   | tr ',' ' ')) ;; # initial times from control run for spindown run
+    --process=*)  pflags_in="${1#*=}"   ;; # flags for processing script, separated by spaces
+    --restart=*)  rdir_override=${1#*=} ;; # manual override restart directory
+    --days-spindown=*) t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --days-xyzdata=*)  t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
+    --days-nodata=*)   t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *)  [ -n "$expdir" ] && echo "Error: More than one experiment directory specified." && exit 1
       expdir="$1" ;;
   esac; shift # shift by at least one
 done
-# echo Init: ${tspindown[@]}
-# echo Blank: ${tnodata[@]}
-# echo Keep: ${talldata[@]}
-[ -z $expdir ] && echo "Error: You must declare the experiment directory." && exit 1
-[[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared." && exit 1
-echo "Keeping full resolution: days ${talldata[@]}"
+[ -z $expdir ]               && echo "Error: You must declare the experiment directory."    && exit 1
+[[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared."         && exit 1
+[ ${#t_xyzdata[@]} -gt 0 ]   && echo "Preserving full resolution for days: ${t_xyzdata[@]}."
+[ ${#t_nodata[@]} -gt 0 ]    && echo "Removing all data for days: ${t_nodata[@]}."
+[[ $mode -ne 0 && ${#t_spindown[@]} -gt 0 ]] && echo "Starting spindown for days: ${t_spindown[@]}"
 
 # Optionally exit from script if directory already exists
 $new && [ -d $expdir ] && echo "Error: Working directory already exists. Continuing..." && exit 1
@@ -66,6 +63,12 @@ if [ ! -d $expdir ]; then
 fi
 
 # Helper functions
+function In() {
+  # Array membership
+  [[ " ${@:2} " =~ " ${1} " ]]
+  return $?
+}
+
 function Parse() {
   # Get namelist value for the *global*, experiment-series namelist
   cat $expdir/input.nml | sed 's/!.*//g' | grep "$1" | cut -d= -f2 | tr -d "\t ,'\""
@@ -206,8 +209,9 @@ function Run() {
   rm fms.x # remove executable, because takes up space
   # Process new data, and remove old data
   # Record the PID when done
-  echo "Calling processing script with flags: $(echo $pflags $extra | xargs)"
-  $process $pflags $extra &>log.process & # processing
+  echo "Calling processing script with flags: $(echo $pflags $pflags_in | xargs)"
+  # $process $pflags $pflags_in &>log.process & # processing
+  $process $pflags $pflags_in &>log.process # no background, maybe screws up scheduling in cheyenne or something?
   pp=$! # record PID
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
   # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
@@ -244,7 +248,7 @@ estatus=0
 case $mode in
   0) # CHECK THAT TIMING VARIABLES ARE DECLARED
   # PREPARE FOR THE LOOP
-  echo "Running control experiment from day $tstart to day $tend, restart every $days days."
+  echo "Running control experiment from day $tstart to day $tend on $cores cores, restart every $days days."
   coldstart=true # assume cold start by default
   origin=$(date +%s) # start time
   pday=$(($tstart - $days)) # only time when we do minus days
@@ -258,19 +262,19 @@ case $mode in
     # OPTIONALLY USE THE END OF OTHER CONTROL RUNS TO REDUCE SPINUP TIME
     rdir=$expdir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
     cdir=$expdir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
-    if [ ! -z $roverride ]; then coldstart=false
-      if [[ ! $roverride =~ d.*-d.* ]]; then
-        echo "Override: Using final day from \"$roverride\" for restart files."
-        roverride=($roverride/d*-d*); rdir="${roverride[-1]}" # pick last one; should be sorted
+    if [ ! -z $rdir_override ]; then coldstart=false
+      if [[ ! $rdir_override =~ d.*-d.* ]]; then
+        echo "Override: Using final day from \"$rdir_override\" for restart files."
+        rdir_override=($rdir_override/d*-d*); rdir="${rdir_override[-1]}" # pick last one; should be sorted
       else
-        echo "Override: Using restart files from \"$roverride\"."
-        rdir="$roverride" # use specific day sequence
-      fi; unset roverride # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
+        echo "Override: Using restart files from \"$rdir_override\"."
+        rdir="$rdir_override" # use specific day sequence
+      fi; unset rdir_override # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
       [ ! -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
     fi
     unset pflags
-    [[ " ${tnodata[@]} "   =~ " $cday " ]] && pflags+=" --quit"
-    [[ " ${talldata[@]} " =~ " $cday " ]]  && pflags+=" --keep"
+    In $cday ${t_nodata[@]} && pflags+=" --quit"
+    In $cday ${t_xyznodata[@]} && pflags+=" --keep-xyz"
     Setup $cdir # sets up working directory, cd into it
     if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
@@ -297,12 +301,12 @@ case $mode in
 # User must specify which namelist params are getting abruptly changed.
 ##############################################################################
   ;; *) # CHECK THAT TIMING VARIABLES ARE DECLARED
-  [ -z $tspindown ] && echo "Error: Must declare starting times for spindown experiments." && exit 1
+  [ -z $t_spindown ] && echo "Error: Must declare starting times for spindown experiments." && exit 1
   # PREPARE FOR THE LOOP
-  echo "Running spindown experiment $mode from days ${tspindown[@]} for $tend days, restart every $days days."
+  echo "Running spindown experiment $mode from days ${t_spindown[@]} for $tend days, restart every $days days."
   origin=$(date +%s)
   # ITERATE THROUGH STARTING DAYS
-  for eday in "${tspindown[@]}"; do
+  for eday in "${t_spindown[@]}"; do
     cday=0 # current day relative to start of equilibrium
     nday=$(($cday + $days)) # next day, relative to start
     prefix=$expdir/d$(printf "%04d" $eday) # for successive spindown runs
@@ -324,8 +328,8 @@ case $mode in
         rdir=$prefix-spindown$mode-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
       # RUN THE MODEL and COMBINE OUTPUT
       unset pflags
-      [[ " ${tnodata[@]} "   =~ " $cday " ]] && pflags+=" -q"
-      [[ " ${talldata[@]} " =~ " $cday " ]] && pflags+=" -k"
+      In $cday ${t_nodata[@]} && pflags+=" --quit"
+      In $cday ${t_xyznodata[@]} && pflags+=" --keep-xyz"
       Setup $cdir # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         Restart $rdir # add restart files

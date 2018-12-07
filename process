@@ -24,23 +24,24 @@ function nclcheck() { # input log file as argument
 }
 
 # Make sure modules loaded
+module load nco &>/dev/null
 module load ncl &>/dev/null
 module load cdo/1.9.4 &>/dev/null
 
 # Parse input flags
-nomove=false      # keep data in original folder, instead of moving to ../netcdf? useful for testing
-keepxyz=false     # keep original "full" results?
-resume=false      # process old "full" files?
-cdointerp=false   # slower than NCO
-onlycombine=false # just run mppnccombine
+debug=false     # keep data in original folder, instead of moving to ../netcdf? useful for testing
+keepxyz=false   # keep original "full" results?
+resume=false    # process old "full" files?
+cdointerp=false # slower than NCO
+combine=false   # just run mppnccombine
 while [ $# -gt 0 ]; do
   case $1 in
     -q|--quit) echo "Skipping processing." && exit 0 ;;
-    -k|--keep)         keepxyz=true     ;; # whether to keep longitudinal data
-    -r|--resume)       resume=true      ;; # process old results
-    -m|--no-move)      nomove=true      ;; # if true, keep all intermediate files
-    -i|--interp-cdo)   cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
-    -c|--combine-only) onlycombine=true ;; # only combine data
+    -d|--debug)      debug=true      ;; # if true, keep all intermediate files
+    -r|--resume)     resume=true      ;; # process old results
+    -k|--keep-xyz)   keepxyz=true     ;; # whether to keep longitudinal data
+    -i|--interp-cdo) cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
+    -c|--combine)     combine=true ;; # only combine data
     *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
   esac
   shift # shift by one
@@ -72,7 +73,7 @@ lorenz=$bin/process_energy.ncl    # eddy and mean Lorenz energy cycle terms with
 if $resume; then
   # Will use existing _full.nc XYZ resolution files for getting the YZ files
   echo "Using previous model results for getting XY files."
-  if $nomove; then
+  if $debug; then
     ncfiles=(*_full.nc)
   else
     ncfiles=(../netcdf/*_full.${PWD##*/}.nc)
@@ -102,7 +103,7 @@ else
   [ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
 fi
 # Optional exit, if only wanted to combine data
-if $onlycombine; then
+if $combine; then
   exit 0
 fi
 
@@ -117,7 +118,7 @@ fi
 # * [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
 for ncfile in ${ncfiles[@]}; do
   # Ouput file names
-  if $nomove; then # special names, and keep in same folder
+  if $debug; then # special names, and keep in same folder
     xyfile="${ncfile%%.*}_summary.nc" # longitude-averaged data
     xyzfile="${ncfile%%.*}_full.nc" # original data
   else
@@ -144,7 +145,7 @@ for ncfile in ${ncfiles[@]}; do
       echo "Interpolating with CDO..."
       $interpcdo $ncfile $interpfile &>log.interp # that simple babe
       [ $? != 0 ] && echo "Error: Something failed during CDO interpolation." && exit $?
-      ! $nomove && rm interp?.nc
+      ! $debug && rm interp?.nc
     # b) Use NCL vint2hp_ecmwf for interpolation
     else
       echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
@@ -159,7 +160,7 @@ for ncfile in ${ncfiles[@]}; do
       -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
       -a long_name,lat,o,c,"latitude" -a units,lat,o,c,"degrees_north" \
       -a long_name,lon,o,c,"longitude" -a units,lon,o,c,"degrees_east" $interpfile
-    $nomove && ncfile=$interpfile || mv $interpfile $ncfile # move old file on top of new file
+    $debug && ncfile=$interpfile || mv $interpfile $ncfile # move old file on top of new file
     echo "  * Time for interpolation: $(($(date +%s) - $t))s."
   fi
   # ##############################################################################
@@ -222,9 +223,9 @@ for ncfile in ${ncfiles[@]}; do
   ncks -O $xyfile $xyfile # clever hack; just *alphabetizes* the variables in file, and very fast
   echo "  * Time for merging into one file: $(($(date +%s) - $t))s."
   # Then remove the temporary files
-  ! $nomove && rm basic?.nc energy??.nc
+  ! $debug && rm basic?.nc energy??.nc
   if ! $resume; then
-    if $nomove || $keepxyz; then
+    if $debug || $keepxyz; then
       # Keep the old file
       # Also get divergence, vorticity, streamfunction, and velocity potential
       t=$(date +%s)
@@ -239,14 +240,14 @@ for ncfile in ${ncfiles[@]}; do
         mv $ncfile $xyzfile
       else
         cdo -O -s -merge $ncfile dv1.nc dv2.nc $xyzfile
-        ! $nomove && rm $ncfile
+        ! $debug && rm $ncfile
       fi
-      ! $nomove && rm dv?.nc # remove any that may exist
+      ! $debug && rm dv?.nc # remove any that may exist
       echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
     else
       # Delete the old file
       echo "Removing XYZ file..."
-      ! $nomove && rm $ncfile # simple
+      ! $debug && rm $ncfile # simple
     fi
   fi
 done

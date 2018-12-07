@@ -5,39 +5,55 @@
 # to logarithmically sweep space. Existing directories have been moved to their
 # closest values in this new spacing. White lie, but probably insignificant differences.
 ################################################################################
-# Use this to run parameter sweep for the given input sereis and list(s)
-# of parameters.
-# Usage:
-#    drycore_batch "force_sweep_resolution" [flags] --1=[rvalue1:]value1,[rvalue2:]value2,... --2=...
-# Forcing scheme specification:
-#    hs,pk,da - Held-Suarez 1994, Polvani-Kushner 2004, or Davis custom parameterization
-# Parameter sweep specification:
-#    troprad[123]     - change tropospheric damping; number is boundary layer option
-#    diag[123]        - change both friction and tropospheric damping
-#    fric             - change just friction
-#    stratrad[XX][cl] - change just stratospheric damping, XX is the depth of
-#                       transition layer and the suffix controls upper stratosphere option
-# Resolution specification: t[XX]l[YY][spe]
-#   * First number is truncation number.
-#   * Second number is level count.
-#   * Suffix controls level spacing option: [s]imple/even [s]igma, [p]olvani
-#     kushner spacing, or [e]ra-interim spacing.
-# Parameter specification with --1, --2:
-#   * Which parameter(s) are being changed depends on the experiment series. Most
-#     just change 1 as diagonal parameter spaces are a huge PITA.
-#   * To start the run from the end of a *previous* run in the same experiment
-#     series, use restart_parameter:current_parameter; e.g. call this script
-#     with --1=10,20,40,40:100,100:200,200:400
-#   * The final directory name for experiments will be
-#         force_sweep_resolution_p[XXX]p[YYY]...
-#     for each parameter. If the parameter has the *base* value (i.e.,
-#     corresponding roughly to Held-Suarez standard) the sweep will be renamed
-#     to 'base', and the directory will be named force_*base*_resolution.
+doc="Use this to run a parameter sweep for the given input sereis and list(s) of parameters.
+
+Usage:
+     drycore_batch \"force_sweep_resolution\" [flags] --1=[rvalue1:]value1,[rvalue2:]value2,... --2=...
+
+Force specification:
+     hs,pk,da - Held-Suarez 1994, Polvani-Kushner 2004, or Davis custom parameterization
+
+Sweep specifications:
+     base              just run forcing scheme with default settings, once
+     troprad[123]      change tropospheric damping; number is boundary layer option
+     fric              change friction
+     diag[123]         change both friction and tropospheric damping
+     stratrad[XX][cl]  change stratospheric damping, XX is the depth of
+                       transition layer and the suffix controls upper stratosphere option
+
+Resolution specification: t[XX]l[YY][spe]
+    * First number is truncation number.
+    * Second number is level count.
+    * Suffix controls level spacing option: [s]imple/even [s]igma, [p]olvani
+      kushner spacing, or [e]ra-interim spacing.
+
+Parameter specification flags: Use --1, --2:
+    * Which parameter(s) are being changed depends on the experiment series. Most
+      just change 1 as diagonal parameter spaces are a huge PITA.
+    * To start the run from the end of a *previous* run in the same experiment
+      series, use restart_parameter:current_parameter; e.g. call this script
+      with --1=10,20,40,40:100,100:200,200:400
+    * The final directory name for experiments will be
+          force_sweep_resolution_p[XXX]p[YYY]...
+      for each parameter. If the parameter has the *base* value (i.e.,
+      corresponding roughly to Held-Suarez standard) the sweep will be renamed
+      to 'base', and the directory will be named force_*base*_resolution.
+
+Other flags:
+    --test  Run quick test, just a few days, maybe 3 restarts.
+    --init  Run model for 1 second, save netcdf file with forcing scheme data.
+    --mode  The experiment mode, where:
+        * 0 is control run
+        * 1 for radiation off spindown
+        * 2 for radiation off but surface on spindown
+        * 3 for everything off (radiation, surface, and friction) spindown
+        * 4 for friction off spindown
+
+To customize other things, make direct edits to this script.
+"
 ################################################################################
 # Default settings
-# For runmode: 0 is control run, the rest are different spindown modes:
-# 1 for radiation off, 2 for radiation off but surface on, 
-# 3 for everything off (radiation, surface, and friction), 4 for friction off
+# For runmode:
 # For testmode: 0 is normal, 1 is quick test, 2 is spit out the
 # initial conditions (i.e. forcing environment)
 runmode=0
@@ -46,20 +62,28 @@ dryrun=false # just print function calls
 resume=false # do not overwrite existing dXXXX-dYYYY directories?
 new=false # do not write to existing experiment directories?
 # Parse input
-unset series
+unset series flags
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    --test) testmode=1 ;;
-    --init) testmode=2 ;;
-    --1=*) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --2=*) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --mode=*) runmode=${1#*=} ;;
+    --help|-h) echo "$doc" && exit 0 ;;
+    --test|-t) testmode=1 ;;
+    --init|-i) testmode=2 ;;
+    --new|-n)  new=true ;; # no overwriting existing directories?
+    --resume|-r) resume=true ;; # no override
+    --dryrun|-d) dryrun=true ;;
+    --1=*|-1=) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --2=*|-2=) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --mode=*|-m=) runmode=${1#*=} ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *) [ -n "$series" ] && echo "Error: More than one experiment series specified." && exit 1
        series="$1" ;;
   esac; shift # shift by at least one
 done
-[ -z "$series" ] && echo "Error: Must input experiment name." && exit 1
+# [ -z "$series" ] && echo "Error: Must input experiment name." && exit 1
+if [ -z "$series" ]; then
+  echo "Warning: No experiment name specified. Running default experiment hs_base_t42l40s."
+  series='hs_base_t42l40s'
+fi
 
 # Parse experiment series
 force="${series%%_*}"
@@ -70,9 +94,9 @@ reso="${reso#*_}"
 reso="${reso%%_*}"
 
 # Next parameter sweeps and timing
-cores=8 # default core count
 case $testmode in 0)
   filename=4xdaily_inst # name for output files
+  cores=8
   frequnits=hours       # hours
   outfreq=6             # every 6
   dt=600    # for other experiments
@@ -80,28 +104,30 @@ case $testmode in 0)
   secs=0    # normally is zero
   tstart=0  # first day of integration; set to 0 for new run.
   tend=1200 # for new experiments just do 1200 day integrations, first 200 are spinup
-  talldata=1000,1100 # when to retain longitude info? try just a couple 100 days
+  txyzdata=1000,1100 # when to retain longitude info? try just a couple 100 days
   # tnodata=0,100 # when to throw out all data, even y-z cross-sections? good idea to keep it, so we can verify spinup was complete
   # tspindown=1000
   # tspindown="$(seq 1000 100 5900 | xargs | tr ' ' ',')" # for spindown initiation
 # Run really fast test run
 ;; 1)
-  filename=test
-  cores=16
-  extra="--no-move " # pass to process script; don't move/delete anything
   # rdir="${force}_base_t42l40s" # override previous directory
   # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
-  dt=600 days=10 secs=0 outfreq=1 frequnits=hours
-  tstart=0 tend=10 tspindown=3
+  filename=test
+  cores=8
+  dt=600 days=5 secs=0 outfreq=1 frequnits=hours
+  tstart=0 tend=15
   new=false resume=false
-# Initial conditions
+  process="--debug " # don't move/delete anything; also implies flags="--keep-xyz "
+  tspindown=3
+# Initial conditions, for sanity checks
 ;; 2)
   filename=init
-  extra="--combine-only --no-move " # passed to process script; don't post-process anything
   cores=1 # easier for debugging, otherwise print statements executed simultaneously
   dt=1 days=0 secs=1 outfreq=1 frequnits=seconds
-  tstart=0 tend=0 tspindown=0
+  tstart=0 tend=0
   new=false resume=false
+  process="--combine-only --debug " # don't post-process anything
+  tspindown=0
 ;; *) echo "Error: Unknown testmode \"$testmode\"." && exit 1
 ;; esac
 
@@ -144,7 +170,13 @@ cp $bindir/mppnccombine.x ./ # location of executables
 #   series does not change that value), will not add to arrays
 # * Function accounts for situation when you pass an empty string parameter
 #   or negative number, and have weird strings like "v-" and "v''"
+function In() {
+  # Array membership
+  [[ " ${@:2} " =~ " ${1} " ]]
+  return $?
+}
 function ArrayAdd() {
+  # Add to arrays
   while [ $# -ne 0 ]; do
     if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
       [ "${2:0:1}" != v ] && echo "Error: Values must be input as v<value>." && exit 1
@@ -217,25 +249,27 @@ for param1 in ${params1[@]}; do
     if [ -n "$rparam1" ] && [ -n "$rparam2" ]; then
       echo "Error: Cannot do 'diagonal' continuation experiments." && exit 1
     fi
-    for p1 in $rparam1 $param1; do for p2 in $rparam2 $param2; do
-      unset c
-      name=$sweep
-      [ -n "$exp" ] && c=c rdir=${exp} && [[ ! $rdir =~ base ]] && rdir=${rdir}c
-      case $sweep in
-        *troprad[0-9]-fixedmean*) [[ $p1 == 40 ]] && name=base-fixedmean p1= ;; # no 'base' because background damping always huge
-        *troprad[0-9]*) [[ $p1 == 40 ]] && name=base p1= ;; # base is 40 day zonal-mean or anomaly damping
-        *tgrad*)        [[ $p1 == 60 ]] && name=base p1= ;; # base is 60K contrast
-        *fric*)         [[ $p1 == 1  ]] && name=base p1= ;;
-        *stratrad*)     [[ $p1 == 40 ]] && name=base p1= ;;
-        *diag[0-9]*)    [[ $p1 == 40 && $p2 == 1 ]] && name=base p1= p2= ;;
-      esac
-      [ "$p1" == na ] && unset p1
-      [ "$p2" == na ] && unset p2
-      [ -n "$p1" ] && p1="_p$(printf "%08.3f" $p1)"
-      [ -n "$p2" ] && p2="_p$(printf "%08.3f" $p2)"
-      exp=${force}_${name}_${reso}${p1}${p2}${c}
-    done; done
-    if [[ " ${exps[@]} " =~ " $exp " ]]; then
+    for p1 in $rparam1 $param1; do
+      for p2 in $rparam2 $param2; do
+        unset c
+        name=$sweep
+        [ -n "$exp" ] && c=c rdir=${exp} && [[ ! $rdir =~ base ]] && rdir=${rdir}c
+        case $sweep in
+          *troprad[0-9]-fixedmean*) [[ $p1 == 40 ]] && name=base-fixedmean p1= ;; # no 'base' because background damping always huge
+          *troprad[0-9]*) [[ $p1 == 40 ]] && name=base p1= ;; # base is 40 day zonal-mean or anomaly damping
+          *tgrad*)        [[ $p1 == 60 ]] && name=base p1= ;; # base is 60K contrast
+          *fric*)         [[ $p1 == 1  ]] && name=base p1= ;;
+          *stratrad*)     [[ $p1 == 40 ]] && name=base p1= ;;
+          *diag[0-9]*)    [[ $p1 == 40 && $p2 == 1 ]] && name=base p1= p2= ;;
+        esac
+        [ "$p1" == na ] && unset p1
+        [ "$p2" == na ] && unset p2
+        [ -n "$p1" ] && p1="_p$(printf "%08.3f" $p1)"
+        [ -n "$p2" ] && p2="_p$(printf "%08.3f" $p2)"
+        exp=${force}_${name}_${reso}${p1}${p2}${c}
+      done
+    done
+    if In $exp ${exps[@]}; then
       echo "Already processed ${exp} in this loop."
       continue
     else
@@ -417,7 +451,7 @@ for param1 in ${params1[@]}; do
       # Set up diag table
       #------------------------------------------------------------------------#
       diag="$expdir/diag_table"
-      [ $testmode -eq 2 ] && diag_default=./diag_table_init || diag_default=./diag_table_default
+      [ $testmode -eq 2 ] && diag_default=$f90dir/diag_table_init || diag_default=$f90dir/diag_table_default
       cp $diag_default $diag
       sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' $diag
       sed -i 's/#.*$//g;/^[ \t]*$/d' $diag # remove comments, empty lines, for clarity
@@ -426,17 +460,17 @@ for param1 in ${params1[@]}; do
       # Run model
       #------------------------------------------------------------------------#
       # Flags
-      unset flags
-      $resume && flags+="--resume "       # do not overwrite existing dXXXX-dYYYY days?
-      $new    && flags+="--new " # do not write to existing experiment folders?
+      unset flags_exp
+      $new    && flags_exp+="--new "    # do not write to existing experiment folders?
+      $resume && flags_exp+="--resume " # do not overwrite existing dXXXX-dYYYY days?
       [ ! -z "$rdir" ] && [ $runmode -eq 0 ] && echo "Warning: Using \"${rdir}\" for restart files." \
-                            && flags+="--restart=$scratch/$rdir/$rdays " # override with this restart directory
-      [ ! -z "$talldata" ]  && flags+="--days-alldata=$talldata " # keep XYZ data
-      [ ! -z "$tnodata" ]   && flags+="--days-nodata=$tnodata " # record zero data
-      [ ! -z "$tspindown" ] && flags+="--days-spindown=$tspindown " # record zero data
+                            && flags_exp+="--restart=$scratch/$rdir/$rdays " # override with this restart directory
+      [ ! -z "$txyzdata" ]  && flags_exp+="--days-xyzdata=$txyzdata " # keep XYZ data
+      [ ! -z "$tnodata" ]   && flags_exp+="--days-nodata=$tnodata " # record zero data
+      [ ! -z "$tspindown" ] && flags_exp+="--days-spindown=$tspindown " # record zero data
       # Run experiment (or just echo command for dryrun)
       $dryrun && cmd="echo ./drycore_run" || cmd="./drycore_run"
-      $cmd $expdir $flags --mode=$runmode --start=$tstart --end=$tend --cores=$cores --extra="$extra" # could be empty string
+      $cmd $expdir $flags $flags_exp --mode=$runmode --start=$tstart --end=$tend --cores=$cores --process="$process" # could be empty string
       [ $? -ne 0 ] && echo "Warning: $exp integration failed." && echo && echo && echo && continue # keyboard interruption does not trigger this
       # Move initialization files
       if [ $testmode -eq 2 ]; then

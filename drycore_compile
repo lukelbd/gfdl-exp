@@ -63,6 +63,7 @@ case ${HOSTNAME%%.*} in
     # Cheyenne uses a compiler wrapper mpif90 that handles all mpi flags
     flags_float=''
     flags_fort='-lnetcdff -lnetcdf' # do not need much
+    flags_ld=''
     flags_ld='-qopenmp'
     # Load modules? Or just run with correct modules installed already.
     # module load intel
