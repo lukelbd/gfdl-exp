@@ -20,6 +20,7 @@
 #   -c = list of 'cpp #define's passed to source files, as -D flags (what?)
 #   -a = abspath, attaches 'abspath' (here, $src) to the FRONT of RELATIVE paths to the source file
 # args (all the later stuff) = list of directories/files to be searched for targets and dependencies
+
 #------------------------------------------------------------------------------
 # Initial stuff
 #------------------------------------------------------------------------------
@@ -31,12 +32,14 @@ flags_float='-Ktrap=fp'             # add =flag1,flag2,... for options; controls
 flags_fort='-lnetcdff -lnetcdf'     # for mppnccombine
 flags_ld='-Mmpi=mpich'              # special 'pgflags', adds flags -L$MPILIB -lfmpich -lmpich; http://www.dartmouth.edu/~rc/HPC/man/pgf90.html
 cppdefs='-Duse_libMPI -Duse_netCDF' # not sure what this does
+
 # Use Intel MPI or openmpi instead of default mpt
 # See: https://www2.cisl.ucar.edu/resources/computational-systems/cheyenne/running-jobs/intel-mpi-and-open-mpi
 # This actually worked! Really necessary!
 module load intel &>/dev/null
 module load netcdf &>/dev/null
 module load impi &>/dev/null
+
 # Host-specific settings
 case ${HOSTNAME%%.*} in
   # olbers) # netcdf-c lib is separate from netcdf-fortran lib
@@ -81,6 +84,7 @@ case ${HOSTNAME%%.*} in
     cpp=pgcc
   ;; *) echo "Error: Unknown host, must configure library and binary locations before running." && exit 1 ;;
 esac
+
 # Flags
 flags_links="${links[@]/#/-L}"                 # search these paths for library files
 flags_include="${include[@]/#/-I}"             # include flags
@@ -109,6 +113,7 @@ $cpp -O -o $execdir/mppnccombine.x $flags_include $flags_links $flags_fort $mppn
 
 #------------------------------------------------------------------------------#
 # Build makefile template (assumes pgi bin is on $PATH)
+#------------------------------------------------------------------------------#
 cd $execdir # move to source directory
 cat > mkmf.template << DELIM
 CC = $cpp
@@ -123,6 +128,7 @@ cat $mkmftemplate >> mkmf.template # appends provided template to custom defs
 
 #------------------------------------------------------------------------------#
 # Create makefile
+#------------------------------------------------------------------------------#
 echo "Generating Makefile..."
 cat mkmf.template
 $mkmf -p fms.x -t mkmf.template -c "$cppdefs" -a $src $pathnames \
@@ -130,6 +136,7 @@ $mkmf -p fms.x -t mkmf.template -c "$cppdefs" -a $src $pathnames \
 
 #------------------------------------------------------------------------------#
 # Compile source
+#------------------------------------------------------------------------------#
 echo "Compiling source code..."
 make -f Makefile
 echo "This script took $(($(date +%s) - $time)) seconds."
