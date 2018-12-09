@@ -7,7 +7,7 @@ Some benchmarks for running the dry core model on various machines are provided 
 
 ## Cheyenne
 | Model time(s) | Process time(s) | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                                                                                          |
-| ---           | ---             | 42         | ---           | ---   | ---         | ---         | ---
+| ---           | ---             | 42         | ---           | ---   | ---         | ---         | --- |
 | 29s, 26s      | 294s, 184s      | "          | 5, 24         | 1     | 16, 8       |             | No background processing, combine takes about 13s
 | 28s           | 183s            | "          | "             | "     | "           | 109         | No difference with extra memory
 | 15s           | 24s             | "          | ", 4          | "     | "           | "           | Much better performace fewer days
