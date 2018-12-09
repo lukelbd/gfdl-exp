@@ -210,8 +210,8 @@ function Run() {
   # Process new data, and remove old data
   # Record the PID when done
   echo "Calling processing script with flags: $(echo $pflags $pflags_in | xargs)"
-  # $process $pflags $pflags_in &>log.process & # processing
-  $process $pflags $pflags_in &>log.process # no background, maybe screws up scheduling in cheyenne or something?
+  $process $pflags $pflags_in &>log.process & # processing
+  # $process -np=$cores $pflags $pflags_in &>log.process # no background, maybe screws up scheduling in cheyenne or something?
   pp=$! # record PID
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
   # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs

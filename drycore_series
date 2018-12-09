@@ -56,6 +56,7 @@ To customize other things, make direct edits to this script.
 # For runmode:
 # For testmode: 0 is normal, 1 is quick test, 2 is spit out the
 # initial conditions (i.e. forcing environment)
+cores=8
 runmode=0
 testmode=0
 dryrun=false # just print function calls
@@ -71,6 +72,7 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     --new|-n)  new=true ;; # no overwriting existing directories?
     --resume|-r) resume=true ;; # no override
     --dryrun|-d) dryrun=true ;;
+    --cores=*|-c=*) cores=${1#*=} ;;
     --1=*|-1=) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
     --2=*|-2=) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
     --mode=*|-m=) runmode=${1#*=} ;;
@@ -94,14 +96,13 @@ reso="${reso#*_}"
 reso="${reso%%_*}"
 
 # Next parameter sweeps and timing
+secs=0 # normally is zero
 case $testmode in 0)
   filename=4xdaily_inst # name for output files
-  cores=8
-  frequnits=hours       # hours
-  outfreq=6             # every 6
+  frequnits=hours # hours
+  outfreq=6       # every 6
   dt=600    # for other experiments
   days=100  # make resolution dependent?
-  secs=0    # normally is zero
   tstart=0  # first day of integration; set to 0 for new run.
   tend=1200 # for new experiments just do 1200 day integrations, first 200 are spinup
   txyzdata=1000,1100 # when to retain longitude info? try just a couple 100 days
@@ -112,10 +113,12 @@ case $testmode in 0)
 ;; 1)
   # rdir="${force}_base_t42l40s" # override previous directory
   # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
+  days=5
+  nrestart=3
   filename=test
-  cores=8
-  dt=600 days=5 secs=0 outfreq=1 frequnits=hours
-  tstart=0 tend=15
+  dt=600
+  outfreq=6 frequnits=hours
+  tstart=0 tend=$(($days * $nrestart))
   new=false resume=false
   process="--debug " # don't move/delete anything; also implies flags="--keep-xyz "
   tspindown=3
@@ -123,7 +126,9 @@ case $testmode in 0)
 ;; 2)
   filename=init
   cores=1 # easier for debugging, otherwise print statements executed simultaneously
-  dt=1 days=0 secs=1 outfreq=1 frequnits=seconds
+  dt=1
+  days=0 secs=1
+  outfreq=1 frequnits=seconds
   tstart=0 tend=0
   new=false resume=false
   process="--combine-only --debug " # don't post-process anything
@@ -397,10 +402,9 @@ for param1 in ${params1[@]}; do
       # Will raise error if string-specifier is unknown
       vert=${reso#*l}
       case $vert in
-        *e) coord=input;      nlev=60;        levels=levels_era.nml ;;
-        *j) coord=input;      nlev=40;        levels=levels_jer.nml ;;
-        *p) coord=pk_sigma;   nlev=${vert%p}; levels=               ;;
-        *s) coord=even_sigma; nlev=${vert%s}; levels=               ;; # ERA-Interim coordinates
+        *e) coord=input;      nlev=60;        levels=$f90dir/levels_era.nml ;; # ERA-Interim coordinates
+        *p) coord=pk_sigma;   nlev=${vert%p}; levels= ;;
+        *s) coord=even_sigma; nlev=${vert%s}; levels= ;;
         *) echo "Error: Unknown vertical coordinate identifier \"${vert}\"."; exit 1; ;;
       esac
       ArrayAdd num_levels v$nlev vert_coord_option v\'$coord\'
@@ -417,7 +421,7 @@ for param1 in ${params1[@]}; do
       printf "$message" | column -t
       # Copy over the default namelist
       nml=$expdir/input.nml
-      nml_default=$f90dir/input_default.nml
+      nml_default=$f90dir/drycore_default.nml
       echo "Copy $nml_default to $nml"
       cp $nml_default $nml # move over defaut
       # Add forcing namelist

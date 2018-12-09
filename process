@@ -24,11 +24,13 @@ function nclcheck() { # input log file as argument
 }
 
 # Make sure modules loaded
+module load impi &>/dev/null # to parallelize the combine process, need mpirun!
 module load nco &>/dev/null
 module load ncl &>/dev/null
 module load cdo/1.9.4 &>/dev/null
 
 # Parse input flags
+cores=8 # default cores for mppnccombine
 debug=false     # keep data in original folder, instead of moving to ../netcdf? useful for testing
 keepxyz=false   # keep original "full" results?
 resume=false    # process old "full" files?
@@ -37,11 +39,12 @@ combine=false   # just run mppnccombine
 while [ $# -gt 0 ]; do
   case $1 in
     -q|--quit) echo "Skipping processing." && exit 0 ;;
-    -d|--debug)      debug=true      ;; # if true, keep all intermediate files
-    -r|--resume)     resume=true      ;; # process old results
+    -d|--debug)      debug=true      ;;  # if true, keep all intermediate files
+    -r|--resume)     resume=true      ;; # process old results sitting in the directory
     -k|--keep-xyz)   keepxyz=true     ;; # whether to keep longitudinal data
     -i|--interp-cdo) cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
-    -c|--combine)     combine=true ;; # only combine data
+    -c|--combine)    combine=true ;;     # only combine data
+    -np=*)           cores="${1#*=}" ;;  # number of cores
     *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
   esac
   shift # shift by one
@@ -50,6 +53,7 @@ done
 # Global vars
 t0=$(date +%s)                    # starting time
 bin=${0%/*}                       # same location as this file; trim filename from right
+run=mpirun                        # for running mppnccombine on Cheyenne; parallelization really necessary
 interpcdo=$bin/process_interp     # interpolate with CDO
 interpncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
 mppnccombine=$bin/mppnccombine.x  # combine; needs to have been compiled here
@@ -94,6 +98,7 @@ else
     for ncfile in *.nc.0000; do # for each output filename
       files=(${ncfile%%.*}.nc*) # put into array
       echo "Combining files: ${files[@]} into ${ncfile%%.*}.nc"
+      # $run -np $cores $mppnccombine -r ${ncfile%%.*}.nc ${files[@]}
       $mppnccombine -r ${ncfile%%.*}.nc ${files[@]}
     done # -r flag says to remove the decomposed .0000 files after they are combined; arg 1 is output, arg 2-N is input
     ncfiles=(*.nc) # each output file
