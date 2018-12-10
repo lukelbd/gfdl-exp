@@ -67,15 +67,15 @@ unset series flags
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
     --help|-h) echo "$doc" && exit 0 ;;
-    --test|-t) testmode=1 ;;
-    --init|-i) testmode=2 ;;
-    --new|-n)  new=true ;; # no overwriting existing directories?
-    --resume|-r) resume=true ;; # no override
-    --dryrun|-d) dryrun=true ;;
-    --cores=*|-c=*) cores=${1#*=} ;;
-    --1=*|-1=) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --2=*|-2=) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --mode=*|-m=) runmode=${1#*=} ;;
+    --new|-n)        new=true ;;
+    --test|-t)       testmode=1 ;;
+    --init|-i)       testmode=2 ;;
+    --resume|-r)     resume=true ;; # no override
+    --dryrun|-d)     dryrun=true ;;
+    --cores=*|-c=*)  cores=${1#*=} ;;
+    --1=*|-1=)       params1=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --2=*|-2=)       params2=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --mode=*|-m=)    runmode=${1#*=} ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *) [ -n "$series" ] && echo "Error: More than one experiment series specified." && exit 1
        series="$1" ;;
@@ -175,12 +175,12 @@ cp $bindir/mppnccombine.x ./ # location of executables
 #   series does not change that value), will not add to arrays
 # * Function accounts for situation when you pass an empty string parameter
 #   or negative number, and have weird strings like "v-" and "v''"
-function In() {
+array_in() {
   # Array membership
   [[ " ${@:2} " =~ " ${1} " ]]
   return $?
 }
-function ArrayAdd() {
+array_add() {
   # Add to arrays
   while [ $# -ne 0 ]; do
     if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
@@ -274,7 +274,7 @@ for param1 in ${params1[@]}; do
         exp=${force}_${name}_${reso}${p1}${p2}${c}
       done
     done
-    if In $exp ${exps[@]}; then
+    if array_in $exp ${exps[@]}; then
       echo "Already processed ${exp} in this loop."
       continue
     else
@@ -289,6 +289,8 @@ for param1 in ${params1[@]}; do
     esac
     [ ! -d "$expdir" ] && mkdir "$expdir"
 
+    # Optionally experiment with different timesteps by iteratively going from
+    # coarse to fine timesteps, finding when model is stable
     for dt in ${dts[@]}; do
       #----------------------------------------------------------------------------#
       # Determine namelist changes
@@ -378,12 +380,12 @@ for param1 in ${params1[@]}; do
       # Add parameters to lists
       #----------------------------------------------------------------------------#
       # Forcing settings
-      ArrayAdd delh v$delh
-      ArrayAdd strat_mode v\'$force\' strat_damp v\'$stratdamp\'
-      ArrayAdd ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
+      array_add delh v$delh
+      array_add strat_mode v\'$force\' strat_damp v\'$stratdamp\'
+      array_add ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
       # Timing variables
       # These ones are not experiment dependent so far, and are *global*
-      ArrayAdd dt_atmos v$dt days v$days seconds v$secs
+      array_add dt_atmos v$dt days v$days seconds v$secs
       # Set horizontal coordinates
       ntrunc=${reso%l*}
       ntrunc=${ntrunc#t}
@@ -397,7 +399,7 @@ for param1 in ${params1[@]}; do
       esac
       nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
       nlon=$(($nlat * 2)) # always twice the res
-      ArrayAdd num_fourier v$ntrunc num_spherical v$nsphere lat_max v$nlat lon_max v$nlon
+      array_add num_fourier v$ntrunc num_spherical v$nsphere lat_max v$nlat lon_max v$nlon
       # Now vertical resolution options
       # Will raise error if string-specifier is unknown
       vert=${reso#*l}
@@ -407,7 +409,7 @@ for param1 in ${params1[@]}; do
         *s) coord=even_sigma; nlev=${vert%s}; levels= ;;
         *) echo "Error: Unknown vertical coordinate identifier \"${vert}\"."; exit 1; ;;
       esac
-      ArrayAdd num_levels v$nlev vert_coord_option v\'$coord\'
+      array_add num_levels v$nlev vert_coord_option v\'$coord\'
 
       #----------------------------------------------------------------------------#
       # Add 'params' keys with 'values' values to namelist

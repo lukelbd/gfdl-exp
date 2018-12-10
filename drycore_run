@@ -20,15 +20,19 @@ new=false    # do not write to existing experiment directory?
 resume=false # do not overwrite existing run block?
 all=false  # keep xyz data for all days?
 none=false # throw out all data for all days (i.e. just keep restarts)?
+
 # Executables
 # export MPI_SHEPHERD=true # see: https://www2.cisl.ucar.edu/sites/default/files/intro_to_hpc.pdf
 # when mpiexec_mpt used, MPI_SHEPHERD required, but this failed for me
 module load impi &>/dev/null # absolutely necessary!
-run=mpirun # parallel run
+run=mpirun # for running in parallel
 fms=$cwd/fms.x # location of executables
-process=$cwd/process # the script for on-the-fly processing
+process=$cwd/process_serial   # the script for on-the-fly processing
+# process=$cwd/process_parallel # as above, but this one *processes the parallel-output nc files directly before mering*
 [ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
 [ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
+! which $run &>/dev/null && echo "Error: $run not found in \$PATH." && exit 1
+
 # Parse input flags
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
@@ -39,7 +43,7 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     --start=*)    tstart=${1#*=}    ;; # starting day
     --end=*)      tend=${1#*=}      ;; # ending day
     --mode=*)     mode=${1#*=}      ;; # 0 is control, 1 is spindown, 2...
-    --process=*)  pflags_in="${1#*=}"   ;; # flags for processing script, separated by spaces
+    --process=*)  pflags="${1#*=}"   ;; # flags for processing script, separated by spaces
     --restart=*)  rdir_override=${1#*=} ;; # manual override restart directory
     --days-spindown=*) t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
     --days-xyzdata=*)  t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
@@ -62,19 +66,17 @@ if [ ! -d $expdir ]; then
   [ $? -ne 0 ] && echo "Error: Could not create experiment directory \"$expdir\"." && exit 1
 fi
 
-# Helper functions
-function In() {
-  # Array membership
+# Array membership
+array_in() {
   [[ " ${@:2} " =~ " ${1} " ]]
   return $?
 }
-
-function Parse() {
-  # Get namelist value for the *global*, experiment-series namelist
+# Get namelist value for the *global*, experiment-series namelist
+nml_parse() {
   cat $expdir/input.nml | sed 's/!.*//g' | grep "$1" | cut -d= -f2 | tr -d "\t ,'\""
 }
-function Replace() { # first argument is param name, second argument is value
-  # Replace namelist value for a *local* spindown experiment
+# Replace namelist value for a *local* spindown experiment
+nml_replace() { # first argument is param name, second argument is value
   while [ $# -gt 0 ]; do
     ! grep '^[ \t]*\b'${1}'\b' ./input.nml &>/dev/null && \
       echo "Error: Param \"${1}\" not found in namelist." && exit 1
@@ -82,10 +84,10 @@ function Replace() { # first argument is param name, second argument is value
     echo "Replacing param \"${1}\" with \"${2}\"."
     sed -i 's/^'"${space}${1}${space}"'='"${space}"'.*$/\1'${1}'\2=\3'${2}',/g' ./input.nml
     shift 2
-    [ $? -ne 0 ] && echo "Error: Must pass even number of params to Replace function."
+    [ $? -ne 0 ] && echo "Error: Must pass even number of params to nml_replace function."
   done
 }
-days=$(Parse days) # number of days in each block
+days=$(nml_parse days) # number of days in each block
 
 ################################################################################
 # Helper functions for model runs
@@ -93,12 +95,10 @@ days=$(Parse days) # number of days in each block
 # Set up input files for model executable to read
 # Takes two arguments: 1) the working directory, and 2) the iteration mode
 ################################################################################
-function Setup() {
-  #----------------------------------------------------------------------------#
+dir_setup() {
   # Set up working directory, and move there
-  # Action depends on settings
   wdir="$1" # where to move files
-  [ $# -ne 1 ] && echo "Error: Setup() functions requires exactly 1 argument." && exit 1
+  [ $# -ne 1 ] && echo "Error: dir_setup() functions requires exactly 1 argument." && exit 1
   if [ ! -d $wdir ]; then
     # Resume run here
     resume=false
@@ -119,7 +119,7 @@ function Setup() {
     echo "Working directory ${wdir##*/} already exists. Deleting..."
     rm -r $wdir
   fi
-  #----------------------------------------------------------------------------#
+
   # Make directory and move stuff over
   mkdir $wdir
   [ $? -ne 0 ] && echo "Error: Failed to create working directory \"$wdir\"." && return 1
@@ -128,6 +128,7 @@ function Setup() {
   mkdir RESTART # model spits out stuff here, can be accepted as input to new iteration
   mkdir INPUT   # model reads from this
   touch field_table # just put empty file, if want no tracers
+
   # Copy existing namelist file over
   # For shutdown experiments, can edit on the fly to turn off
   # radiation, et cetera, but this is starting point
@@ -135,18 +136,18 @@ function Setup() {
   [ ! -r "$expdir/diag_table" ] && echo "Error: diag_table file not found." && exit 1
   cp $expdir/input.nml  ./
   cp $expdir/diag_table ./
-  topo=$(Parse "topography_option") # use helper function
+  topo=$(nml_parse "topography_option") # use helper function
   if [ "$topo" == "input" ]; then
     [ ! -r $expdir/topography.data.nc ] && echo "Error: Topography file not available." && exit 1
     cp $expdir/topography.data.nc ./
   fi
-  #----------------------------------------------------------------------------#
+
   # Change namelist properties
   if [ $mode -gt 0 ]; then case $mode in   # determine spindown type
-    1) Replace k_trop 0 k_bl 0 ;;          # turn off all thermal damping
-    2) Replace k_trop 0 ;;                 # turn off damping except in boundary layer
-    3) Replace k_trop 0 k_bl 0 k_fric 0 ;; # turn off all damping
-    4) Replace k_fric 0 ;;                 # turn off friction
+    1) nml_replace k_trop 0 k_bl 0 ;;          # turn off all thermal damping
+    2) nml_replace k_trop 0 ;;                 # turn off damping except in boundary layer
+    3) nml_replace k_trop 0 k_bl 0 k_fric 0 ;; # turn off all damping
+    4) nml_replace k_fric 0 ;;                 # turn off friction
     *) echo "Error: Unknown experiment identifier \"$mode\"."; exit 1 ;;
   esac; fi
   # Parent script will test return code; ensure zero here
@@ -158,26 +159,26 @@ function Setup() {
 # applying post-processing to a previous model step in the background, and organizing
 # all the NetCDF files
 ################################################################################
-function Run() {
+driver() {
+  # Run model in parallel
+  # Previously we set processor affinities
   local rdir=$1 # the restart direcotry
-  [ $# -ne 1 ] && echo "Error: Run() function takes exactly 1 argument." && exit 1
+  [ $# -ne 1 ] && echo "Error: driver() function takes exactly 1 argument." && exit 1
   t0=$(date +%s)
   echo "Running model..."
-  # Use MPIRUN to run model in parallel, and select other cores for running processing
-  # step in parallel (choosing cores explicitly seemed to be faster)
+  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
   # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
-  # Note mpirun must be on path
-  ! which mpirun &>/dev/null && echo "Error: mpirun not found in \$PATH." && exit 1
-  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
+
   # Check that model ran successfully
   # FMS prints to standard output 'EXIT CODE: 1' but doesn't actually set
   # the exit code/mpirun doesn't pass that exit code, which is fucking dumb.
   # Instead parse the logfile
   grep 'EXIT CODE: [1-9]' log.model &>/dev/null && \
     echo "Error: Bad exit code from model run step." && exit 1
+
   # Wait for previous processing step, if set
-  # If unset, means we are just now starting the model runs
+  # If unset, means we are just now starting the model run
   if [ ! -z $pp ]; then # post-processing is active
     wait $pp; estatus=$? # wait command will always exit with exit status of supplied process ID
     if [ $estatus != 0 ]; then
@@ -192,7 +193,9 @@ function Run() {
       exit 1
     fi
   fi
-  # Echo timing information
+
+  # Echo timing information from previous run
+  # Processing was run in parallel, remember
   if [ -r $rdir/log.process ]; then
     tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
     tprocess=$(tail -1 $rdir/log.process | sed 's/[^0-9]*//g' )
@@ -202,18 +205,19 @@ function Run() {
     fi
   fi
   echo "Time for integration: $(($(date +%s) - $t0))s."
+
   # Remove some files
   # [ -r INPUT/topography.data.nc ] && rm INPUT/topography.data.nc # remove topography
   [ -d INPUT ] && rm -r INPUT # remove everything
   [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
   rm fms.x # remove executable, because takes up space
+
   # Process new data, and remove old data
-  # Record the PID when done
-  echo "Calling processing script with flags: $(echo $pflags $pflags_in | xargs)"
-  $process $pflags $pflags_in &>log.process & # processing
-  # $process -np=$cores $pflags $pflags_in &>log.process # no background, maybe screws up scheduling in cheyenne or something?
+  # Previously we set processor affinities, but didn't help much
+  echo "Calling processing script with flags: $(echo $pflags_i $pflags | xargs)"
+  $process $pflags_i $pflags &>log.process #&
   pp=$! # record PID
-  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
+  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $!
   # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
 }
 
@@ -222,16 +226,16 @@ function Run() {
 # fms can read them and continue iteration from a previous state.
 ################################################################################
 # Take one argument: directory where restart files exist
-function Restart() {
+copy_restart() {
   # Copy over relevant restart files for exp type; if missing, raise error
+  # resfiles="atmos_model.res atmos_tracers.res.nc fv_rst.res.nc fv_srf_wnd.res.nc" # fv type
+  # resfiles="atmos_model.res atmos_tracers.res.nc bgrid_prog_var.res.nc" # brid type
   local rdir=$1 # the restart direcotry
-  [ $# -ne 1 ] && echo "Error: Restart() function takes exactly 1 argument." && exit 1
+  [ $# -ne 1 ] && echo "Error: copy_restart() function takes exactly 1 argument." && exit 1
   if [ ! -d "$rdir" ] || [ ! -d "$rdir/RESTART" ] || [ -z "$(ls $rdir/RESTART/* 2>/dev/null)" ]; then
     echo "Error: Restart directory $rdir/RESTART does not exist, or is empty." && exit 1
   fi
   resfiles="atmos_model.res atmosphere.res.nc spectral_dynamics.res.nc"
-  # resfiles="atmos_model.res atmos_tracers.res.nc fv_rst.res.nc fv_srf_wnd.res.nc" # fv type
-  # resfiles="atmos_model.res atmos_tracers.res.nc bgrid_prog_var.res.nc" # brid type
   echo "Moving restart files from ${rdir##*/}/RESTART to ${PWD##*/}/INPUT..."
   for file in $resfiles; do
     [ ! -r $rdir/RESTART/$file ] && echo "Error: Missing restart file ${rdir##*/}/RESTART/${file}." && exit 1
@@ -272,17 +276,17 @@ case $mode in
       fi; unset rdir_override # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
       [ ! -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
     fi
-    unset pflags
-    In $cday ${t_nodata[@]} && pflags+=" --quit"
-    In $cday ${t_xyznodata[@]} && pflags+=" --keep-xyz"
-    Setup $cdir # sets up working directory, cd into it
+    unset pflags_i
+    array_in $cday ${t_nodata[@]} && pflags_i+=" --quit"
+    array_in $cday ${t_xyznodata[@]} && pflags_i+=" --keep-xyz"
+    dir_setup $cdir # sets up working directory, cd into it
     if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
-        Restart $rdir # put files into RESTART directory
+        copy_restart $rdir # put files into RESTART directory
       else
         echo "Cold start."
       fi
-      Run $rdir # run model
+      driver $rdir # run model
     fi
     # EXIT FOR INITIAL CONDITION EXPERIMENT
     [ $days -eq 0 ] && break
@@ -327,13 +331,13 @@ case $mode in
       [ $cday -eq 0 ] && rdir=$fstart || \
         rdir=$prefix-spindown$mode-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
       # RUN THE MODEL and COMBINE OUTPUT
-      unset pflags
-      In $cday ${t_nodata[@]} && pflags+=" --quit"
-      In $cday ${t_xyznodata[@]} && pflags+=" --keep-xyz"
-      Setup $cdir # sets up working directory, cd into it
+      unset pflags_i
+      array_in $cday ${t_nodata[@]} && pflags_i+=" --quit"
+      array_in $cday ${t_xyznodata[@]} && pflags_i+=" --keep-xyz"
+      dir_setup $cdir # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
-        Restart $rdir # add restart files
-        Run $rdir # run model
+        copy_restart $rdir # add restart files
+        driver $rdir # run model
       fi
       # STEP THINGS FORWARD, FOR NEXT ITERATION
       pday=$cday # previous day

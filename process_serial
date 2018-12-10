@@ -17,7 +17,7 @@
 # Function for checking NCL scripts success
 # Script sometimes fails to spawn child process for displaying time information; ignore these errors
 # Also Execute.c is always shown as error alongside specific function error, so ignore that one
-function nclcheck() { # input log file as argument
+nclcheck() { # input log file as argument
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
   return $? # return exit code; good status means we found error, bad status means we found nothing
     # ignore ^warning: because these will also happen if we have a systemfunc error possibly
@@ -58,12 +58,12 @@ interpcdo=$bin/process_interp     # interpolate with CDO
 interpncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
 mppnccombine=$bin/mppnccombine.x  # combine; needs to have been compiled here
 params=$bin/process_params.ncl    # params with NCL
-basics=$bin/process_basic         # zonal means and flux terms with CDO
+fluxes=$bin/process_fluxes        # zonal means and flux terms with CDO
 lorenz=$bin/process_energy.ncl    # eddy and mean Lorenz energy cycle terms with NCL
 # lorenz=$bin/process_lorenz      # Lorenz energy cycle terms with CDO
 # energy=$bin/process_energy      # Lorenz energy cycle terms with CDO
 # Double check some stuff
-[ ! -x $basics ]        && echo "Error: The script \"$basics\" is missing."                       && exit 127
+[ ! -x $fluxes ]        && echo "Error: The script \"$fluxes\" is missing."                       && exit 127
 [ ! -x $lorenz ]        && echo "Error: The script \"$lorenz\" is missing."                       && exit 127
 [ ! -r $interpncl ]     && echo "Error: The script \"$interpncl\" is missing."                    && exit 127
 [ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable \"$mppnccombine\" is missing." && exit 127
@@ -183,7 +183,7 @@ for ncfile in ${ncfiles[@]}; do
   # First the CDO commands
   # t=$(date +%s)
   echo "Getting CDO 2D parameters..."
-  $basics $ncfile &>log.basic &
+  $fluxes $ncfile .nc &>log.basic &
   pbasics=$!
   # [ $? != 0 ] && echo "Error: Something failed while getting basic terms." && exit 3
   # echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
@@ -194,7 +194,7 @@ for ncfile in ${ncfiles[@]}; do
   # terms rely on NCL having set poleward==positive in each hemisphere
   # t=$(date +%s)
   echo "Getting NCL 2D parameters..."
-  ncl -n -Q "filename=\"$ncfile\"" $lorenz &>log.lorenz &
+  ncl -n -Q "filename=\"$ncfile\"" "suffix=\".nc\"" $lorenz &>log.lorenz &
   plorenz=$!
   # if nclcheck log.lorenz; then
   #   echo "Error: Something failed getting extra parameters with NCL." && exit 4

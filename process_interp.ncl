@@ -22,14 +22,13 @@ end
 ; First read the file
 print("Reading initial file and interpolating...")
 q = integertochar(34) ; a double quote; only way to put inside string! yuck.
+demo =  "ncl 'filename=" + q + "foobar" + q + "' or " + q + "filename=\" + q + "foobar\" + q + q + "."
 if .not. isvar("filename") then 
-  print("fatal:File name must be passed as variable 'filename' as follows: ncl 'filename=" \
-    + q + "foobar" + q + "' or " + q + "filename=\" + q + "foobar\" + q + q + ".")
+  print("fatal:File name must be passed as variable 'filename' as follows: " + demo)
   exit ; almost impossible to put double-quote in string
 end if
 if .not. isvar("outfile") then 
-  print("fatal:Output file must be passed as variable 'outfile' as follows: ncl 'outfile=" \
-    + q + "foobar" + q + "' or " + q + "outfile=\" + q + "foobar\" + q + q + ".")
+  print("fatal:Output file must be passed as variable 'outfile' as follows: " + demo)
   exit ; almost impossible to put double-quote in string
 end if
 f = addfile(filename,"r") ; read data from here, write later
@@ -91,7 +90,7 @@ pouti_edges := pouti_edges(plev|:,bnds|:)
 print("Interpolating variables in "+q+filename+q+"...")
 varnames = getfilevarnames(f)
 dimnames = getvardims(f) ; will work on file handle passed to it
-setfileoption("nc","Format","LargeFile") 
+setfileoption("nc", "Format", "LargeFile") 
   ; see: http://www.ncl.ucar.edu/FAQ/#file_io_004
   ; recommended for files >2GB, and my output file may be that big
 o = addfile(outfile,"c")

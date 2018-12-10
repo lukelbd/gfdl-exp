@@ -50,17 +50,25 @@ cp  = 1004.   ; J kg-1 K-1
 if (.not. notime) then time = toint(systemfunc("date +%s")) else time = 0 end if
 origtime = time
 print("Reading initial file...")
+q = integertochar(34) ; a double quote; only way to put inside string! yuck.
+demo = "ncl 'filename=" + q + "foobar" + q + "' or " + q + "filename=\" + q + "foobar\" + q + q + "."
 if (.not. isvar("filename")) then 
+    print("fatal:File name must be passed as variable 'filename' as follows: " + demo)
+    exit ; almost impossible to put double-quote in string
+end if
+if (.not. isvar("suffix")) then 
     q = integertochar(34) ; a double quote; only way to put inside string! yuck.
-    print("fatal:File name must be passed as variable 'filename' as follows: ncl 'filename=" \
-      + q + "foobar" + q + "' or " + q + "filename=\" + q + "foobar\" + q + q + ".")
+    print("fatal:Ouput file suffix must be passed as variable 'suffix' as follows: " + demo)
     exit ; almost impossible to put double-quote in string
 end if
 f = addfile(filename,"r") ; just read data from here
 plev_bnds = f->plev_bnds ; save this little guy
-ud = (f->udamp1 + f->udamp2) ; this if a *force* term; units are acceleration
-vd = (f->vdamp1 + f->vdamp2) ; same as above
-q  = (f->ndamp1 + f->ndamp2)*cp ; heat capacity times rate of change
+; ud = (f->udamp1 + f->udamp2) ; this if a *force* term; units are acceleration
+; vd = (f->vdamp1 + f->vdamp2) ; same as above
+; q  = (f->ndamp1 + f->ndamp2)*cp ; heat capacity times rate of change
+ud = f->udamp ; this if a *force* term; units are acceleration
+vd = f->vdamp ; same as above
+q  = f->ndamp ; heat capacity times rate of change
 w = f->omega ; the vertical velocity
 t = f->t
 u = f->u
@@ -127,7 +135,7 @@ message("  * Time for getting NCL preliminary parameters")
 ; ; ehf := dim_avg_n((t-tbar)*(v-vbar),dimlon)
 ; ehf := dim_avg_n((t-conform(v,dim_avg_n(v,dimlon),(/0,1,2/))) \
 ;                * (v-conform(v,dim_avg_n(v,dimlon),(/0,1,2/))),dimlon)
-; out = addfile("ehftest.nc","c")
+; out = addfile("ehftest" + suffix, "c")
 ; out->ehf = ehf
 ; delete(out)
 ; message("  * Time for getting flux term")
@@ -150,7 +158,7 @@ message("  * Time for getting NCL preliminary parameters")
 ;   ; * arg4 is "not currently implemented"; ignore
 ;   ; * arg5 is the derivative dimension
 ; ; Write static stability to file
-; f = addfile("energy01.nc","c")
+; f = addfile("energy01" + suffix, "c")
 ; copy_VarCoords(avevar,s)
 ; s@long_name = "static stability"
 ; s@units     = "K/Pa"       ; or "K-m-s2/kg"
@@ -158,7 +166,7 @@ message("  * Time for getting NCL preliminary parameters")
 ; f->s = s
 ; delete(f)
 ; ; Write potential temperature to file
-; f = addfile("energy02.nc","c")
+; f = addfile("energy02" + suffix, "c")
 ; copy_VarCoords(avevar,pt)
 ; pt@long_name = "potential temperature"
 ; pt@units     = "K"       ; or "K-m-s2/kg"
@@ -200,7 +208,7 @@ CKEKM = (dim_avg_n(ustar*vstar,dimlon)*conform_dims(avedims,clat,dimlat) \
   + dim_avg_n(vstar*wstar,dimlon)*center_finite_diff_n(vbar(:,:,:,0),p,False,0,dimlev) \
   - vbar(:,:,:,0)*dim_avg_n(ustar^2,dimlon)*conform_dims(avedims,tlat/a,dimlat))/g
 ; Write to file
-f = addfile("energy03.nc","c")
+f = addfile("energy03" + suffix, "c")
 copy_VarCoords(avevar,CKEKM) ; copy coordinates
 CKEKM@long_name = "eddy KE conversion to mean KE"
 CKEKM@units = "W/m2 Pa"
@@ -218,7 +226,7 @@ dtbardy = center_finite_diff_n(tbar(:,:,:,0),rlat*a,False,0,dimlat) ; not functi
 CPMPE = -1.*cp*(gam*dim_avg_n(tstar*vstar,dimlon)*dtbardy + \
   conform_dims(avedims,p^-kappa,dimlev)*dim_avg_n(tstar*wstar,dimlon)*dstuffdp)/g
 ; Write to file
-f = addfile("energy04.nc","c")
+f = addfile("energy04" + suffix, "c")
 copy_VarCoords(avevar,CPMPE) ; copy coordinates
 CPMPE@long_name = "mean APE conversion to eddy APE"
 CPMPE@units = "W/m2 Pa"
@@ -236,7 +244,7 @@ message("  * Time for NCL mean APE conversion to eddy APE")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Conversion from eddy APE to eddy KE, mean APE to mean KE
 ; The first one
-f = addfile("energy05.nc","c")
+f = addfile("energy05" + suffix, "c")
 CPEKE = -1.*R*(dim_avg_n(wstar*tstar,dimlon)/conform_dims(avedims,p,dimlev))/g
 copy_VarCoords(avevar,CPEKE) ; copy coordinates
 CPEKE@long_name = "eddy APE conversion to eddy KE"
@@ -245,7 +253,7 @@ f->plev_bnds = plev_bnds
 f->CPEKE = CPEKE
 delete(f)
 ; The second one one
-f = addfile("energy06.nc","c")
+f = addfile("energy06" + suffix, "c")
 CPMKM = -1.*R*(wStar*tStar/conform_dims(avedims,p,dimlev))/g
 copy_VarCoords(avevar,CPMKM) ; copy coordinates
 CPMKM@long_name = "mean APE conversion to mean KE"
@@ -258,7 +266,7 @@ message("  * Time for NCL APE/KE conversion terms")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; APE terms
 ; The first one
-f = addfile("energy07.nc","c")
+f = addfile("energy07" + suffix, "c")
 PE = cp*gam*dim_avg_n(tstar^2,dimlon)/(2*g)
 copy_VarCoords(avevar,PE) ; copy coordinates
 PE@long_name = "eddy APE"
@@ -267,7 +275,7 @@ f->plev_bnds = plev_bnds
 f->PE = PE
 delete(f)
 ; The second one one
-f = addfile("energy08.nc","c")
+f = addfile("energy08" + suffix, "c")
 PM = cp*gam*tStar^2/(2*g)
 copy_VarCoords(avevar,PM) ; copy coordinates
 PM@long_name = "mean APE"
@@ -280,7 +288,7 @@ message("  * Time for NCL APE terms")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; KE terms
 ; The first one
-f = addfile("energy09.nc","c")
+f = addfile("energy09" + suffix, "c")
 KE = dim_avg_n(ustar^2+vstar^2,dimlon)/(2*g)
 copy_VarCoords(avevar,KE) ; copy coordinates
 KE@long_name = "eddy KE"
@@ -289,7 +297,7 @@ f->plev_bnds = plev_bnds
 f->KE = KE
 delete(f)
 ; The second one one
-f = addfile("energy10.nc","c")
+f = addfile("energy10" + suffix, "c")
 KM = (ubar(:,:,:,0)^2+vbar(:,:,:,0)^2)/(2*g)
 copy_VarCoords(avevar,KM) ; copy coordinates
 KM@long_name = "mean KE"
@@ -302,7 +310,7 @@ message("  * Time for NCL KE terms")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Generation terms
 ; The first one
-f = addfile("energy11.nc","c")
+f = addfile("energy11" + suffix, "c")
 GPE = gam*dim_avg_n(qstar*tstar,dimlon)/g
 copy_VarCoords(avevar,GPE) ; copy coordinates
 GPE@long_name = "generation of eddy APE"
@@ -311,7 +319,7 @@ f->plev_bnds = plev_bnds
 f->GPE = GPE
 delete(f)
 ; The second one
-f = addfile("energy12.nc","c")
+f = addfile("energy12" + suffix, "c")
 GPM = gam*qStar*tStar/g
 copy_VarCoords(avevar,GPM) ; copy coordinates
 GPM@long_name = "generation of mean APE"
@@ -324,7 +332,7 @@ message("  * Time for NCL APE generation terms")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Dissipation terms
 ; Note the wind tendency is always negative; we want energy going away to be positive here
-f = addfile("energy13.nc","c")
+f = addfile("energy13" + suffix, "c")
 DKE = -1.*dim_avg_n(ustar*udstar + vstar*vdstar,dimlon)/g
 copy_VarCoords(avevar,DKE) ; copy coordinates
 DKE@long_name = "dissipation of eddy KE"
@@ -332,7 +340,7 @@ DKE@units = "W/m2 Pa"
 f->plev_bnds = plev_bnds
 f->DKE = DKE
 delete(f)
-f = addfile("energy14.nc","c")
+f = addfile("energy14" + suffix, "c")
 DKM = -1.*(ubar(:,:,:,0)*udbar(:,:,:,0) + vbar(:,:,:,0)*vdbar(:,:,:,0))/g
 ; DKM = (ubar(time|:,plev|:,lat|:,lon|0)*udbar(time|:,plev|:,lat|:,lon|0) \
 ;       + vbar(time|:,plev|:,lat|:,lon|0)*vdbar(time|:,plev|:,lat|:,lon|0))/g
