@@ -110,10 +110,12 @@ hybrid_to_press() {
   # Standardize attributes
   # Many of these may already be properly set, but make sure; CDO also may want
   # a few special ones like 'axis' and 'standard_name'
+  # NOTE: This is really fast (0.02s on T42 20 day file)
+  # This is much faster than even editing one attribute in NCL (0.05s)
   ncatted -O -a NumFilesInSet,global,o,l,$numfiles \
     -a edges,lon,d,, -a edges,lat,d,, \
     -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" -a axis,time,o,c,"T" \
-    -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
+    -a long_name,plev,o,c,"pressure_level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
     -a long_name,lat,o,c,"latitude"  -a standard_name,lat,o,c,"latitude" \
     -a long_name,lon,o,c,"longitude" -a standard_name,lon,o,c,"longitude" \
     -a standard_name,time,o,c,"time" \
@@ -208,7 +210,7 @@ xyz_params() {
 
   # Spectral divergence, vorticity
   t=$(date +%s)
-  cdo -O -s -uv2dv -selname,u,v $output dv0.nc &>log.xyz # gets spectral coefs for vor/div from Gaussian grid of u/v
+  cdo -O -s -uv2dv -selname,u,v $output dv0.nc # gets spectral coefs for vor/div from Gaussian grid of u/v
   echo "  * Time for getting spectral div, vor: $(($(date +%s) - t))s"
 
   # Streamfunc
@@ -235,13 +237,20 @@ xyz_params() {
     echo "Warning: Could not get the vir/div/streamfunc terms."
     mv $output $xyzfile
   else
-    # Merge
+    # Merge with CDO; due to copying, is slow (15s for 20 day T42)
+    # t=$(date +%s)
+    # cdo -O -s -merge $output dv1.nc dv2.nc $xyzfile
+    # ! $debug && rm $output
+    # echo "  * Time for merging XYZ files with CDO: $(($(date +%s) - t))s"
+    # Merge with NCO, if faster (6s for 20 day T42)
+    # NOTE: Weird issue where the -gp2sp then -sp2gp results in double precision
+    # lat and lon coordinates, which causes ncks to think they're different.
+    # NOTE: NCL cannot do this; idea was to use f->lat := tofloat(f->lat),
+    # but get Translate.c internal error when attempting to change type;
+    # evidently this is impossible for file variables
     t=$(date +%s)
-    cdo -O -s -merge $output dv1.nc dv2.nc $xyzfile
-    ! $debug && rm $output
-    echo "  * Time for merging XYZ files: $(($(date +%s) - t))s"
-    # Merge with NCO
-    t=$(date +%s)
+    ncap2 -O -s 'lat=float(lat); lon=float(lon)' dv1.nc dv1.nc
+    ncap2 -O -s 'lat=float(lat); lon=float(lon)' dv2.nc dv2.nc
     ncks -A dv1.nc $output
     ncks -A dv2.nc $output
     mv $output $xyzfile

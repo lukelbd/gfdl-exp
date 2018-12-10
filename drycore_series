@@ -414,6 +414,11 @@ for param1 in ${params1[@]}; do
       #----------------------------------------------------------------------------#
       # Add 'params' keys with 'values' values to namelist
       #----------------------------------------------------------------------------#
+      # Copy over the default namelist
+      nml=$expdir/input.nml
+      nml_default=$f90dir/drycore_default.nml
+      echo "Copy $nml_default to $nml"
+      cp $nml_default $nml # move over defaut
       # Message
       echo "Updating namelist with:"
       index=0; width=6; while [ $index -le ${#params[@]} ]; do
@@ -421,11 +426,6 @@ for param1 in ${params1[@]}; do
         let index+=$width
       done
       printf "$message" | column -t
-      # Copy over the default namelist
-      nml=$expdir/input.nml
-      nml_default=$f90dir/drycore_default.nml
-      echo "Copy $nml_default to $nml"
-      cp $nml_default $nml # move over defaut
       # Add forcing namelist
       nml_forcing=$f90dir/forcing_default.nml
       [ ! -r "$nml_forcing" ] && echo "Error: File \"$nml_forcing\" not found." && exit 1
