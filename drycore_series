@@ -113,7 +113,7 @@ case $testmode in 0)
 ;; 1)
   # rdir="${force}_base_t42l40s" # override previous directory
   # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
-  days=5
+  days=20
   nrestart=3
   filename=test
   dt=600

@@ -15,3 +15,5 @@ Some benchmarks for running the dry core model on various machines are provided 
 | "             | "               | "          | "             | "     | "           | "           | With background processing                                                                                     |
 | 9s, 9s, 16s   | 27s, 37s, 49s   | "          | "             | "     | 16, 16      | "           | Background processing doesn't seem to impact; note time is variable, but relationship between commands is same |
 | 138s, 138s    | 281s, 281s      | 106        | "             | "     | 32, 40      | "           | Slower with hire resolution                                                                                  |
+| 28s | 12s total for YZ | 42 | 20, 4 | " | 32 | " | With parallel processing
+| 28s | 16s to combine, 13s to interpolate, 24s for CDO, 21s for NCL, 2s for combine | 42 | 20, 4 | " | 32 | " | With parallel processing

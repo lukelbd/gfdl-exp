@@ -179,11 +179,11 @@ for ncfile in ${ncfiles[@]}; do
   # echo "  * Time for getting extra parameters with NCL: $(($(date +%s) - $t))s."
 
   ##############################################################################
-  # 2) Get 2D resolution parameters
+  # 2) Get YZ parameters
   # First the CDO commands
   # t=$(date +%s)
-  echo "Getting CDO 2D parameters..."
-  $fluxes $ncfile .nc &>log.basic &
+  echo "Getting CDO YZ parameters..."
+  $fluxes $ncfile nc &>log.basic &
   pbasics=$!
   # [ $? != 0 ] && echo "Error: Something failed while getting basic terms." && exit 3
   # echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
@@ -193,8 +193,8 @@ for ncfile in ${ncfiles[@]}; do
   # Some of these require the extra variables output by NCL; also meridional flux
   # terms rely on NCL having set poleward==positive in each hemisphere
   # t=$(date +%s)
-  echo "Getting NCL 2D parameters..."
-  ncl -n -Q "filename=\"$ncfile\"" "suffix=\".nc\"" $lorenz &>log.lorenz &
+  echo "Getting NCL YZ parameters..."
+  ncl -n -Q "filename=\"$ncfile\"" "suffix=\"nc\"" $lorenz &>log.lorenz &
   plorenz=$!
   # if nclcheck log.lorenz; then
   #   echo "Error: Something failed getting extra parameters with NCL." && exit 4
@@ -206,16 +206,16 @@ for ncfile in ${ncfiles[@]}; do
   wait $pbasics # wait for basic terms
   [ $? != 0 ] && echo "Error: Something failed while getting CDO parameters." && exit 3
   twait=$(tail -1 log.basic | sed 's/[^0-9]*//g')
-  echo "  * Time for getting 2D parameters with CDO: ${twait}s."
+  echo "  * Time for getting YZ parameters with CDO: ${twait}s."
   wait $plorenz # wait for Lorenz terms
   if nclcheck log.lorenz; then
     echo "Error: Something failed while getting NCL parameters." && exit 4
   fi
   twait=$(tail -1 log.lorenz | sed 's/[^0-9]*//g')
-  echo "  * Time for getting 2D parameters with NCL: ${twait}s."
+  echo "  * Time for getting YZ parameters with NCL: ${twait}s."
 
   ##############################################################################
-  # 4) Tidy up, and get 2D terms
+  # 4) Tidy up, and get YZ terms
   t=$(date +%s)
   echo "Merging the CDO and NCL parameters into one file..."
   # First add back longitudes to NCL calculated terms
@@ -248,7 +248,7 @@ for ncfile in ${ncfiles[@]}; do
         ! $debug && rm $ncfile
       fi
       ! $debug && rm dv?.nc # remove any that may exist
-      echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
+      echo "  * Time for getting XYZ params: $(($(date +%s) - $t))s."
     else
       # Delete the old file
       echo "Removing XYZ file..."

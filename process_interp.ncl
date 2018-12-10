@@ -31,7 +31,7 @@ if .not. isvar("outfile") then
   print("fatal:Output file must be passed as variable 'outfile' as follows: " + demo)
   exit ; almost impossible to put double-quote in string
 end if
-f = addfile(filename,"r") ; read data from here, write later
+f = addfile(filename, "r") ; read data from here, write later
 ; Get the sigma-coordinates and center-coordinates for interpolation
 hyai   = f->hyai
 hybi   = f->hybi
@@ -87,13 +87,13 @@ pouti_edges := pouti_edges(plev|:,bnds|:)
 ; * vinth2p_ecmwf produced smoother/nicer results than vinth2p for temperature
 ;   and geopotential; much more believable
 ; * this may be what CDO results are supposed to look like
-print("Interpolating variables in "+q+filename+q+"...")
+print("Interpolating variables in " + q + filename + q + "...")
 varnames = getfilevarnames(f)
 dimnames = getvardims(f) ; will work on file handle passed to it
 setfileoption("nc", "Format", "LargeFile") 
   ; see: http://www.ncl.ucar.edu/FAQ/#file_io_004
   ; recommended for files >2GB, and my output file may be that big
-o = addfile(outfile,"c")
+o = addfile(outfile, "c")
 o->plev_bnds = pouti_edges ; will rename later and add atributes
 do i=0,dimsizes(varnames)-1
   varname := varnames(i) ; wrap in array to strip attributes
@@ -102,10 +102,10 @@ do i=0,dimsizes(varnames)-1
     ; Get variable and verify some stuff
     var := f->$varname$ ; load from old file
     if dimsizes(dimsizes(var)) .eq. 1 then
-      print("Variable "+q+varname+q+" is a coordinate.")
+      print("Variable " + q + varname + q + " is a coordinate.")
       continue
     else if .not. any("mlev" .eq. getvardims(var)) then
-      print("Variable "+q+varname+q+" does not have pressure levels.")
+      print("Variable " + q + varname + q + " does not have pressure levels.")
       o->$varname$ = var
       continue
     end if end if
@@ -120,9 +120,9 @@ do i=0,dimsizes(varnames)-1
     ; Interpolate the variable and save it
     var_out = vinth2p_ecmwf(var, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True, varflag, tbot, zbot)
     var_out!1 = "plev" ; rename dimension; simple as that
-    copy_VarAtts(var,var_out)
+    copy_VarAtts(var, var_out)
     o->$varname$ = var_out ; write to new file
-    message(" * Time for NCL interpolation of "+q+varname+q)
+    message(" * Time for NCL interpolation of " + q + varname + q)
     delete(var_out)
   end if
 end do

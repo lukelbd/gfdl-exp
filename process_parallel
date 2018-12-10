@@ -97,7 +97,7 @@ hybrid_to_press() {
     echo "Interpolating with CDO..."
     $interpcdo $ncfile $output &>process-logs/log.interp.${suffix%.nc} # that simple babe
     [ $? != 0 ] && echo "Error: Something failed during CDO interpolation." && exit $?
-    ! $debug && rm interp?.nc
+    ! $debug && rm interp?.$suffix
   # b) Use NCL vint2hp_ecmwf for interpolation
   else
     echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
@@ -108,12 +108,17 @@ hybrid_to_press() {
   fi
 
   # Standardize attributes
-  ncatted -a edges,lon,d,, -a edges,lat,d,, \
-    -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" \
+  # Many of these may already be properly set, but make sure; CDO also may want
+  # a few special ones like 'axis' and 'standard_name'
+  ncatted -O -a NumFilesInSet,global,o,l,$numfiles \
+    -a edges,lon,d,, -a edges,lat,d,, \
+    -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" -a axis,time,o,c,"T" \
     -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
-    -a long_name,lat,o,c,"latitude" -a units,lat,o,c,"degrees_north" \
-    -a long_name,lon,o,c,"longitude" -a units,lon,o,c,"degrees_east" $output
-  $debug && ncfile=$output || mv $output $ncfile # move old file on top of new file
+    -a long_name,lat,o,c,"latitude"  -a standard_name,lat,o,c,"latitude" \
+    -a long_name,lon,o,c,"longitude" -a standard_name,lon,o,c,"longitude" \
+    -a standard_name,time,o,c,"time" \
+    -a units,lat,o,c,"degrees_north" -a units,lon,o,c,"degrees_east" $output
+  ! $debug && mv $output $ncfile # move old file on top of new file
   echo "  * Time for interpolation: $(($(date +%s) - t))s."
 }
 
@@ -129,8 +134,6 @@ yz_params() {
   ncfile="$1"
   suffix="$2"
   output="${yzfile%.nc}.${suffix}"
-  ncatted -O -a long_name,udamp,o,c,"Rayleigh damping of zonal wind" $ncfile
-  ncatted -O -a long_name,vdamp,o,c,"Rayleigh damping of meridional wind" $ncfile
 
   # Fluxes and means
   t=$(date +%s)
@@ -154,17 +157,88 @@ yz_params() {
   # t2=$(tail -1 process-logs/log.lorenz.${suffix%.nc} | sed 's/[^0-9]*//g')
   echo "  * Time for getting YZ parameters with NCL: ${t2}s."
 
-  # Merge, and add back longitudes to NCL calculated terms
+  # Add back longitudes to NCL calculated terms
   # Hard/annoying/verbose to fix this in NCL so do it here
   t=$(date +%s)
   echo "Merging the CDO and NCL parameters into one file..."
   for f in energy??.$suffix; do # absolutely necessary for CDO to detect plev as vertical axis, and need singleton longitude
     cdo -s -setgrid,basic1.$suffix $f tmp.$suffix; mv tmp.$suffix $f # so ugly... kill me...
   done
+  echo "  * Time for setting grid: $(($(date +%s) - t))s."
+
+  # Merge files
+  t=$(date +%s)
   cdo -O -s -merge basic?.$suffix energy??.$suffix $output # will raise errors because edges were deleted, but still referenced by attributes
-  ncks -O $output $output # clever hack; just *alphabetizes* the variables in file, and very fast
+  # ncks -O $output $output # clever hack; just *alphabetizes* the variables in file, and very fast
   echo "  * Time for merging into one file: $(($(date +%s) - t))s."
   ! $debug && rm basic?.$suffix energy??.$suffix
+
+  # Simple NCL script to fix attributes
+  # Add NumFilesInSet attribute (required)
+  t=$(date +%s)
+  ncatted -O -a NumFilesInSet,global,o,l,$numfiles $output
+  ncl -n -Q <<< "
+  f = addfile(\"$ncfile\", \"r\")
+  o = addfile(\"$output\", \"w\")
+  ; Fix attributes and whatnot
+  o->lat = f->lat
+  o->plev = f->plev
+  o->time = f->time
+  ; Fix longitudes
+  lon = o->lon
+  lon@domain_decomposition = (/1, 1, 1, 1/)
+  o->lon = lon
+  ; 'Save' (i.e. delete handle)
+  delete(o)
+  "
+  echo "  * Time for fixing attributes: $(($(date +%s) - t))s"
+}
+
+# Gets extra XYZ parameters
+xyz_params() {
+  # Input
+  local t t1 output
+  output=$1 # then ncfiles are remaining input
+
+  # Merge files
+  t=$(date +%s)
+  t1=$t # save
+  $mppnccombine -r $output ${@:2}
+  echo "  * Time for combining XYZ files: $(($(date +%s) - t))"
+
+  # Spectral divergence, vorticity
+  t=$(date +%s)
+  cdo -O -s -uv2dv -selname,u,v $output dv0.nc &>log.xyz # gets spectral coefs for vor/div from Gaussian grid of u/v
+  echo "  * Time for getting spectral div, vor: $(($(date +%s) - t))"
+
+  # Streamfunc
+  t=$(date +%s)
+  cdo -O -s -delname,velopot -invertlat -sp2gp -dv2ps dv0.nc dv1.nc # spectral vor/div to spectral streamfunc/velocity pot; throw out the latter
+  echo "  * Time for getting streamfunc: $(($(date +%s) - t))"
+
+  # Gridpoint divergence, vorticity
+  t=$(date +%s)
+  cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc  # better names
+  echo "  * Time for getting gridpoint div, vor: $(($(date +%s) - t))"
+
+  # Absolute vorticity; asterisk means this is a "RAM" variable, not saved
+  t=$(date +%s)
+  ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc # tack on absolute vorticity
+  echo "  * Time for getting absvor: $(($(date +%s) - t))"
+
+  # Merge or delete?
+  if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
+    # Delete
+    echo "Warning: Could not get the vir/div/streamfunc terms."
+    mv $output $xyzfile
+  else
+    # Merge
+    t=$(date +%s)
+    cdo -O -s -merge $output dv1.nc dv2.nc $xyzfile
+    ! $debug && rm $output
+    echo "  * Time for merging XYZ files: $(($(date +%s) - t))"
+  fi
+  echo "TOTAL TIME ELAPSED: $(($(date +%s) - t1))s."
 }
 
 ################################################################################
@@ -203,6 +277,7 @@ for file in ${files[@]}; do
     parts=(${file})
   fi
   echo Files: ${parts[@]}
+  numfiles=${#parts[@]}
   xyzfile="${base}_full.${PWD##*/}.nc"   # original data
   yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
 
@@ -210,6 +285,7 @@ for file in ${files[@]}; do
   # netcdf file
   echo "Getting YZ parameters..."
   mkdir process-logs
+  # exit 1
   t1=$(date +%s)
   for ncfile in ${parts[@]}; do
     # Number
@@ -219,22 +295,25 @@ for file in ${files[@]}; do
       suffix=${num}.nc
     else
       num=0000
-      suffix=.nc # dummy
+      suffix=nc # dummy
     fi
     # Interpolate and process
     {
     if ! $resume; then
       hybrid_to_press "$ncfile" "$suffix"
     fi
+    $debug && ncfile=${ncfile%%.*}_interp.$suffix
     yz_params "$ncfile" "$suffix"
     } &>process-logs/log.${num} &
   done
   wait
-  echo "  * Time for getting YZ params in parallel: $(($(date +%s) - t1))"
+  $debug && parts=(${base}_interp.*.nc)
+  echo "  * Time for getting YZ params in parallel: $(($(date +%s) - t1))s"
+  # exit 1
   # Merge the parallel-processed YZ files
   if $combine; then
     t=$(date +%s)
-    $mppnccombine -r $yzfile ${yzfile%.nc}*.nc
+    $mppnccombine -r $yzfile ${yzfile%.nc}.*.nc
     echo "  * Time for combining YZ files: $(($(date +%s) - t))s."
   fi
 
@@ -250,44 +329,10 @@ for file in ${files[@]}; do
     else
       # XYZ files
       echo "Keeping XYZ files and calculating extra terms..."
-      ncfile=${base}.nc
-      {
       t=$(date +%s)
-      t1=$t # save
-      $mppnccombine -r $ncfile ${parts[@]}
-      echo "  * Time for combining XYZ files: $(($(date +%s) - t))"
-      # Spectral divergence, vorticity
-      t=$(date +%s)
-      cdo -O -s -uv2dv -selname,u,v $ncfile dv0.nc &>log.xyz # gets spectral coefs for vor/div from Gaussian grid of u/v
-      echo "  * Time for getting spectral div, vor: $(($(date +%s) - t))"
-      # Streamfunc
-      t=$(date +%s)
-      cdo -O -s -delname,velopot -invertlat -sp2gp -dv2ps dv0.nc dv1.nc # spectral vor/div to spectral streamfunc/velocity pot; throw out the latter
-      echo "  * Time for getting streamfunc: $(($(date +%s) - t))"
-      # Gridpoint divergence, vorticity
-      t=$(date +%s)
-      cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc  # better names
-      echo "  * Time for getting gridpoint div, vor: $(($(date +%s) - t))"
-      # Absolute vorticity; asterisk means this is a "RAM" variable, not saved
-      t=$(date +%s)
-      ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc # tack on absolute vorticity
-      echo "  * Time for getting absvor: $(($(date +%s) - t))"
-      # Merge or delete?
-      if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
-        # Delete
-        echo "Warning: Could not get the vir/div/streamfunc terms."
-        mv $ncfile $xyzfile
-      else
-        # Merge
-        t=$(date +%s)
-        cdo -O -s -merge $ncfile dv1.nc dv2.nc $xyzfile
-        ! $debug && rm $ncfile
-        echo "  * Time for merging XYZ files: $(($(date +%s) - t))"
-      fi
-      echo "TOTAL TIME ELAPSED: $(($(date +%s) - t1))s."
-      } &>log.xyz
+      xyz_params ${base}.nc ${parts[@]} &>log.xyz
       ! $debug && rm dv?.nc # remove any that may exist
-      echo "  * Time for getting XYZ params: $(($(date +%s) - t1))s."
+      echo "  * Time for getting XYZ params: $(($(date +%s) - t))s."
     fi
   fi
 
