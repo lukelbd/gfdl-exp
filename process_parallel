@@ -47,19 +47,18 @@ debug=false # test
 keepxyz=true
 
 # Global vars
-t0=$(date +%s)                    # starting time
-bin=${0%/*}                       # same location as this file; trim filename from right
-run=mpirun                        # for running mppnccombine on Cheyenne; parallelization really necessary
-interpcdo=$bin/process_interp     # interpolate with CDO
-interpncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
-mppnccombine=$bin/mppnccombine.x  # combine; needs to have been compiled here
-fluxes=$bin/process_fluxes        # zonal means and flux terms with CDO
-lorenz=$bin/process_energy.ncl    # eddy and mean Lorenz energy cycle terms with NCL
-# lorenz=$bin/process_lorenz      # Lorenz energy cycle terms with CDO
-# energy=$bin/process_energy      # Lorenz energy cycle terms with CDO
+t0=$(date +%s) # starting time
+bin=${0%/*}    # same location as this file; trim filename from right
+run=mpirun     # for running mppnccombine on Cheyenne; parallelization really necessary
+interpcdo=$bin/process/process_interp.cdo # interpolate with CDO
+interpncl=$bin/process/process_interp.ncl # interpolate with NCL, automatic iteration
+mppnccombine=$bin/mppnccombine.x          # combine; needs to have been compiled here
+basics=$bin/process/process_basics.cdo    # zonal means and flux terms with CDO
+lorenz=$bin/process/process_energy.ncl    # eddy and mean Lorenz energy cycle terms with NCL
+# energy=$bin/process_energy      # energy cycle terms with CDO
 
 # Double check some stuff
-[ ! -x $fluxes ]        && echo "Error: The script \"$fluxes\" is missing."                       && exit 127
+[ ! -x $basics ]        && echo "Error: The script \"$basics\" is missing."                       && exit 127
 [ ! -x $lorenz ]        && echo "Error: The script \"$lorenz\" is missing."                       && exit 127
 [ ! -r $interpncl ]     && echo "Error: The script \"$interpncl\" is missing."                    && exit 127
 [ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable \"$mppnccombine\" is missing." && exit 127
@@ -136,7 +135,7 @@ yz_params() {
   # Fluxes and means
   t=$(date +%s)
   echo "Getting CDO YZ parameters..."
-  $fluxes $ncfile $suffix &>LOGS/log.basic.${suffix%.nc} #&
+  $basics $ncfile $suffix &>LOGS/log.basic.${suffix%.nc} #&
   [ $? != 0 ] && echo "Error: Something failed while getting CDO parameters." && exit 3
   t2=$(($(date +%s) - t))
   # t2=$(tail -1 LOGS/log.basic.${suffix%.nc} | sed 's/[^0-9]*//g')
