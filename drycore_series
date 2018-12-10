@@ -51,7 +51,12 @@ Other flags:
 
 To customize other things, make direct edits to this script.
 "
-################################################################################
+# Load modules
+module load impi &>/dev/null # to parallelize the combine process, need mpirun!
+module load nco &>/dev/null
+module load ncl &>/dev/null
+module load cdo/1.9.4 &>/dev/null
+
 # Default settings
 # For runmode:
 # For testmode: 0 is normal, 1 is quick test, 2 is spit out the

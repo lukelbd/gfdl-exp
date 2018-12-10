@@ -24,7 +24,7 @@ none=false # throw out all data for all days (i.e. just keep restarts)?
 # Executables
 # export MPI_SHEPHERD=true # see: https://www2.cisl.ucar.edu/sites/default/files/intro_to_hpc.pdf
 # when mpiexec_mpt used, MPI_SHEPHERD required, but this failed for me
-module load impi &>/dev/null # absolutely necessary!
+# Make sure module load impi has been declared by parent
 run=mpirun # for running in parallel
 fms=$cwd/fms.x # location of executables
 process=$cwd/process_serial   # the script for on-the-fly processing
@@ -215,7 +215,7 @@ driver() {
   # Process new data, and remove old data
   # Previously we set processor affinities, but didn't help much
   echo "Calling processing script with flags: $(echo $pflags_i $pflags | xargs)"
-  $process $pflags_i $pflags &>log.process #&
+  $process $pflags_i $pflags &>log.process &
   pp=$! # record PID
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $!
   # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs

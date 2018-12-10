@@ -6,14 +6,17 @@ All sorts of useful tools for running and processing parameter sweep experiments
 Some benchmarks for running the dry core model on various machines are provided below.
 
 ## Cheyenne
+First some basic experiments, 5 days.
+| Model time(s) | Process time(s) | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                             |
+| ---           | ---             | ---        | ---           | ---   | ---         | ---         | ---                                               |
+| 15s           | 24s             | "          | 5, 4          | "     | "           | "           | Much better performance fewer days                |
+| "             | "               | "          | "             | "     | "           | "           | With background processing                        |
+| 9s, 9s, 16s   | 27s, 37s, 49s   | "          | "             | "     | 16, 16      | "           | With background processing, model using all cores |
 
-| Model time(s) | Process time(s)                           | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                             |
-| ---           | ---                                       | ---        | ---           | ---   | ---         | ---         | ---                                               |
-| 29s, 26s      | 294s, 184s                                | 42         | 5, 24         | 1     | 16, 8       |             | No background processing, combine takes about 13s |
-| 28s           | 183s                                      | "          | "             | "     | "           | 109         | No difference with extra memory                   |
-| 15s           | 24s                                       | "          | ", 4          | "     | "           | "           | Much better performance fewer days                |
-| "             | "                                         | "          | "             | "     | "           | "           | With background processing                        |
-| 9s, 9s, 16s   | 27s, 37s, 49s                             | "          | "             | "     | 16, 16      | "           | With background processing, model using all cores |
-| 138s, 138s    | 281s, 281s                                | 106        | "             | "     | 32, 40      | "           | Slower with hire resolution                       |
-| 28s           | 12s                                       | 42         | 20, 4         | "     | 32          | "           | With parallel processing
-| 28s           | 16s combine, 13s interp, 24s CDO, 21s NCL | 42         | 20, 4         | "     | 32          | "           | With parallel processing
+Next play with parallelization.
+| Model time(s) | Process time(s)         | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                             |
+| ---           | ---                     | ---        | ---           | ---   | ---         | ---         | ---                                               |
+| 30s           | 15s                     | 42         | 20, 4         | "     | 32          | "           | With parallel processing
+| 40s           | 30s                     | 42         | 20, 4         | "     | "           | "           | Process in background each step
+| 38s           | 27s                     | 42         | 20, 4         | "     | 32,64       | "           | With "extra" cores for processing, not any faster
+| 28s           | 16s + 13s + (24s + 24s) | 42         | 20, 4         | "     | 32          | "           | Without parallel processing (combine, interp, CDO, NCL)

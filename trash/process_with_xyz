@@ -23,6 +23,12 @@ nclcheck() { # input log file as argument
     # ignore ^warning: because these will also happen if we have a systemfunc error possibly
 }
 
+# Make sure modules loaded
+module load impi &>/dev/null # to parallelize the combine process, need mpirun!
+module load nco &>/dev/null
+module load ncl &>/dev/null
+module load cdo/1.9.4 &>/dev/null
+
 # Parse input flags
 # cores=8 # default cores for mppnccombine, actually this didn't work so nevermind
 debug=false     # keep data in original folder, instead of moving to ../netcdf? useful for testing
@@ -43,8 +49,6 @@ while [ $# -gt 0 ]; do
   esac
   shift # shift by one
 done
-debug=false # test
-keepxyz=true
 
 # Global vars
 t0=$(date +%s)                    # starting time
@@ -78,7 +82,6 @@ hybrid_to_press() {
   ncfile="$1"
   suffix="$2"
   output=${ncfile%%.*}_interp.$suffix
-  t=$(date +%s)
 
   # Apply some simple modifications to attributes
   ncrename -d pfull,mlev $ncfile &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
@@ -89,16 +92,17 @@ hybrid_to_press() {
 
   # Interpolation
   # a) Use CDO for interpolation
+  t=$(date +%s)
   if $cdointerp; then
     echo "Interpolating with CDO..."
-    $interpcdo $ncfile $output &>LOGS/log.interp.${suffix%.nc} # that simple babe
+    $interpcdo $ncfile $output &>process-logs/log.interp.${suffix%.nc} # that simple babe
     [ $? != 0 ] && echo "Error: Something failed during CDO interpolation." && exit $?
     ! $debug && rm interp?.$suffix
   # b) Use NCL vint2hp_ecmwf for interpolation
   else
     echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
-    ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$output\"" $interpncl &>LOGS/log.interp.${suffix%.nc} #2> /dev/null
-    if nclcheck LOGS/log.interp.${suffix%.nc} || [ ! -r $output ]; then
+    ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$output\"" $interpncl &>process-logs/log.interp.${suffix%.nc} #2> /dev/null
+    if nclcheck process-logs/log.interp.${suffix%.nc} || [ ! -r $output ]; then
       echo "Error: Something failed during NCL interpolation." && exit 2
     fi
   fi
@@ -136,10 +140,10 @@ yz_params() {
   # Fluxes and means
   t=$(date +%s)
   echo "Getting CDO YZ parameters..."
-  $fluxes $ncfile $suffix &>LOGS/log.basic.${suffix%.nc} #&
+  $fluxes $ncfile $suffix &>process-logs/log.basic.${suffix%.nc} #&
   [ $? != 0 ] && echo "Error: Something failed while getting CDO parameters." && exit 3
   t2=$(($(date +%s) - t))
-  # t2=$(tail -1 LOGS/log.basic.${suffix%.nc} | sed 's/[^0-9]*//g')
+  # t2=$(tail -1 process-logs/log.basic.${suffix%.nc} | sed 's/[^0-9]*//g')
   echo "  * Time for getting YZ parameters with CDO: ${t2}s."
 
   # Energy budgets, NCL commands
@@ -147,12 +151,12 @@ yz_params() {
   # terms rely on NCL having set poleward==positive in each hemisphere
   t=$(date +%s)
   echo "Getting NCL YZ parameters..."
-  ncl -n -Q "suffix=\"$suffix\"" "filename=\"$ncfile\"" $lorenz &>LOGS/log.lorenz.${suffix%.nc} #&
-  if nclcheck LOGS/log.lorenz.${suffix%.nc}; then
+  ncl -n -Q "suffix=\"$suffix\"" "filename=\"$ncfile\"" $lorenz &>process-logs/log.lorenz.${suffix%.nc} #&
+  if nclcheck process-logs/log.lorenz.${suffix%.nc}; then
     echo "Error: Something failed while getting NCL parameters." && exit 4
   fi
   t2=$(($(date +%s) - t))
-  # t2=$(tail -1 LOGS/log.lorenz.${suffix%.nc} | sed 's/[^0-9]*//g')
+  # t2=$(tail -1 process-logs/log.lorenz.${suffix%.nc} | sed 's/[^0-9]*//g')
   echo "  * Time for getting YZ parameters with NCL: ${t2}s."
 
   # Add back longitudes to NCL calculated terms
@@ -190,6 +194,69 @@ yz_params() {
   delete(o)
   "
   echo "  * Time for fixing attributes: $(($(date +%s) - t))s"
+}
+
+# Gets extra XYZ parameters
+xyz_params() {
+  # Input
+  local t t1 output
+  output=$1 # then ncfiles are remaining input
+
+  # Merge files
+  t=$(date +%s)
+  t1=$t # save
+  $mppnccombine -r $output ${@:2}
+  echo "  * Time for combining XYZ files: $(($(date +%s) - t))s"
+
+  # Spectral divergence, vorticity
+  t=$(date +%s)
+  cdo -O -s -uv2dv -selname,u,v $output dv0.nc # gets spectral coefs for vor/div from Gaussian grid of u/v
+  echo "  * Time for getting spectral div, vor: $(($(date +%s) - t))s"
+
+  # Streamfunc
+  t=$(date +%s)
+  cdo -O -s -delname,velopot -invertlat -sp2gp -dv2ps dv0.nc dv1.nc # spectral vor/div to spectral streamfunc/velocity pot; throw out the latter
+  echo "  * Time for getting streamfunc: $(($(date +%s) - t))s"
+
+  # Gridpoint divergence, vorticity
+  t=$(date +%s)
+  cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc  # better names
+  echo "  * Time for getting gridpoint div, vor: $(($(date +%s) - t))s"
+
+  # Absolute vorticity; asterisk means this is a "RAM" variable, not saved
+  # NOTE: Turns out ncap2 really sucks -- absvor took 7s on 20 day T42 file
+  # compared to 4s and 3s for the -sp2gp commands! Thought it was clever but
+  # evidently not worth it.
+  # t=$(date +%s)
+  # ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc # tack on absolute vorticity
+  # echo "  * Time for getting absvor: $(($(date +%s) - t))s"
+
+  # Merge or delete?
+  if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
+    # Delete
+    echo "Warning: Could not get the vir/div/streamfunc terms."
+    mv $output $xyzfile
+  else
+    # Merge with CDO; due to copying, is slow (15s for 20 day T42)
+    # t=$(date +%s)
+    # cdo -O -s -merge $output dv1.nc dv2.nc $xyzfile
+    # ! $debug && rm $output
+    # echo "  * Time for merging XYZ files with CDO: $(($(date +%s) - t))s"
+    # Merge with NCO, if faster (6s for 20 day T42)
+    # NOTE: Weird issue where the -gp2sp then -sp2gp results in double precision
+    # lat and lon coordinates, which causes ncks to think they're different.
+    # NOTE: NCL cannot do this; idea was to use f->lat := tofloat(f->lat),
+    # but get Translate.c internal error when attempting to change type;
+    # evidently this is impossible for file variables
+    t=$(date +%s)
+    ncap2 -O -s 'lat=float(lat); lon=float(lon)' dv1.nc dv1.nc
+    ncap2 -O -s 'lat=float(lat); lon=float(lon)' dv2.nc dv2.nc
+    ncks -A dv1.nc $output
+    ncks -A dv2.nc $output
+    mv $output $xyzfile
+    echo "  * Time for merging XYZ files with NCO: $(($(date +%s) - t))s"
+  fi
+  echo "TOTAL TIME ELAPSED: $(($(date +%s) - t1))s."
 }
 
 ################################################################################
@@ -235,7 +302,7 @@ for file in ${files[@]}; do
   # Interpolate to pressure then get YZ files from each model-produced
   # netcdf file
   echo "Getting YZ parameters..."
-  mkdir LOGS
+  mkdir process-logs
   # exit 1
   t1=$(date +%s)
   for ncfile in ${parts[@]}; do
@@ -255,11 +322,11 @@ for file in ${files[@]}; do
     fi
     $debug && ncfile=${ncfile%%.*}_interp.$suffix
     yz_params "$ncfile" "$suffix"
-    } &>LOGS/log.${num} &
+    } &>process-logs/log.${num} &
   done
   wait
   $debug && parts=(${base}_interp.*.nc)
-  echo "  * Time for getting YZ params in parallel: $(($(date +%s) - t1))s."
+  echo "  * Time for getting YZ params in parallel: $(($(date +%s) - t1))s"
   # exit 1
   # Merge the parallel-processed YZ files
   if $combine; then
@@ -278,11 +345,12 @@ for file in ${files[@]}; do
       echo "Removing XYZ files..."
       ! $debug && rm ${parts[@]} # simple
     else
-      # Merge XYZ files
+      # XYZ files
+      echo "Keeping XYZ files and calculating extra terms..."
       t=$(date +%s)
-      echo "Keeping XYZ files..."
-      $mppnccombine -r $xyzfile ${parts[@]}
-      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+      xyz_params ${base}.nc ${parts[@]} &>log.xyz
+      ! $debug && rm dv?.nc # remove any that may exist
+      echo "  * Time for getting XYZ params: $(($(date +%s) - t))s."
     fi
   fi
 
