@@ -204,27 +204,30 @@ xyz_params() {
   t=$(date +%s)
   t1=$t # save
   $mppnccombine -r $output ${@:2}
-  echo "  * Time for combining XYZ files: $(($(date +%s) - t))"
+  echo "  * Time for combining XYZ files: $(($(date +%s) - t))s"
 
   # Spectral divergence, vorticity
   t=$(date +%s)
   cdo -O -s -uv2dv -selname,u,v $output dv0.nc &>log.xyz # gets spectral coefs for vor/div from Gaussian grid of u/v
-  echo "  * Time for getting spectral div, vor: $(($(date +%s) - t))"
+  echo "  * Time for getting spectral div, vor: $(($(date +%s) - t))s"
 
   # Streamfunc
   t=$(date +%s)
   cdo -O -s -delname,velopot -invertlat -sp2gp -dv2ps dv0.nc dv1.nc # spectral vor/div to spectral streamfunc/velocity pot; throw out the latter
-  echo "  * Time for getting streamfunc: $(($(date +%s) - t))"
+  echo "  * Time for getting streamfunc: $(($(date +%s) - t))s"
 
   # Gridpoint divergence, vorticity
   t=$(date +%s)
   cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc  # better names
-  echo "  * Time for getting gridpoint div, vor: $(($(date +%s) - t))"
+  echo "  * Time for getting gridpoint div, vor: $(($(date +%s) - t))s"
 
   # Absolute vorticity; asterisk means this is a "RAM" variable, not saved
-  t=$(date +%s)
-  ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc # tack on absolute vorticity
-  echo "  * Time for getting absvor: $(($(date +%s) - t))"
+  # NOTE: Turns out ncap2 really sucks -- absvor took 7s on 20 day T42 file
+  # compared to 4s and 3s for the -sp2gp commands! Thought it was clever but
+  # evidently not worth it.
+  # t=$(date +%s)
+  # ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc # tack on absolute vorticity
+  # echo "  * Time for getting absvor: $(($(date +%s) - t))s"
 
   # Merge or delete?
   if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
@@ -236,7 +239,13 @@ xyz_params() {
     t=$(date +%s)
     cdo -O -s -merge $output dv1.nc dv2.nc $xyzfile
     ! $debug && rm $output
-    echo "  * Time for merging XYZ files: $(($(date +%s) - t))"
+    echo "  * Time for merging XYZ files: $(($(date +%s) - t))s"
+    # Merge with NCO
+    t=$(date +%s)
+    ncks -A dv1.nc $output
+    ncks -A dv2.nc $output
+    mv $output $xyzfile
+    echo "  * Time for merging XYZ files with NCO: $(($(date +%s) - t))s"
   fi
   echo "TOTAL TIME ELAPSED: $(($(date +%s) - t1))s."
 }

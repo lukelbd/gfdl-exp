@@ -28,7 +28,7 @@ module load impi &>/dev/null # absolutely necessary!
 run=mpirun # for running in parallel
 fms=$cwd/fms.x # location of executables
 process=$cwd/process_serial   # the script for on-the-fly processing
-# process=$cwd/process_parallel # as above, but this one *processes the parallel-output nc files directly before mering*
+process=$cwd/process_parallel # as above, but this one *processes the parallel-output nc files directly before mering*
 [ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
 [ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
 ! which $run &>/dev/null && echo "Error: $run not found in \$PATH." && exit 1
