@@ -21,4 +21,16 @@ Next play with parallelization.
 | 30s           | 15s                     | 42         | 20, 4         | "     | 32          | "           | With parallel processing
 | 40s           | 30s                     | 42         | 20, 4         | "     | "           | "           | Process in background each step
 | 38s           | 27s                     | 42         | 20, 4         | "     | 32,64       | "           | With "extra" cores for processing, not any faster
-| 28s           | 16s + 13s + (24s + 24s) | 42         | 20, 4         | "     | 32          | "           | Without parallel processing (combine, interp, CDO, NCL)
+| 28s           | 16s + 13s + (21s + 24s) | 42         | 20, 4         | "     | 32          | "           | Without parallel processing (combine, interp, CDO, NCL)
+
+Now up to the high-resolution runs. I just ran 100 days here, so no parallel processing.
+
+| Model time(s) | Total time(s) | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                     |
+| ---           | ---           | ---        | ---           | ---   | ---         | ---         | ---                                       |
+| 134s          | 32s           | 106        | 5, 4          | 1     | 40          | "           | Very slow
+| 2900s         | 3250s         | 106        | 100, 2        | 1     | 20          | "           | About 2 days for
+| 2500s         | 439s          | "          | "             | "     | 40          | "           | Marginally faster for twice as many cores
+| 995s          | 434s          | ?          | "             | 4     | 10          | "           | No different when using more nodes
+
+## Process scripts
+| Interpolation | | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                     |

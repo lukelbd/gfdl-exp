@@ -64,6 +64,10 @@ module load cdo/1.9.4 &>/dev/null
 cores=8
 runmode=0
 testmode=0
+testname=test # default name of directory
+testdays=100
+testblocks=3 # number of blocks of testdays
+initname=init
 dryrun=false # just print function calls
 resume=false # do not overwrite existing dXXXX-dYYYY directories?
 new=false # do not write to existing experiment directories?
@@ -72,15 +76,19 @@ unset series flags
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
     --help|-h) echo "$doc" && exit 0 ;;
-    --new|-n)        new=true ;;
-    --test|-t)       testmode=1 ;;
-    --init|-i)       testmode=2 ;;
-    --resume|-r)     resume=true ;; # no override
-    --dryrun|-d)     dryrun=true ;;
-    --cores=*|-c=*)  cores=${1#*=} ;;
-    --1=*|-1=)       params1=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --2=*|-2=)       params2=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --mode=*|-m=)    runmode=${1#*=} ;;
+    --new|-n)  new=true   ;;
+    --test|-t) testmode=1 ;;
+    --init|-i) testmode=2 ;;
+    --testdays=*|-td=*)   testdays=${1#*=} ;;
+    --testblocks=*|-tb=*) testblocks=${1#*=} ;;
+    --testname=*|-tn=*)   testname=${1#*=} ;;
+    --initname=*|-in=*)   initname=${1#*=} ;;
+    --resume|-r) resume=true ;; # no override
+    --dryrun|-d) dryrun=true ;;
+    --cores=*|-c=*) cores=${1#*=} ;;
+    --1=*|-1=) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --2=*|-2=) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
+    --mode=*|-m=) runmode=${1#*=} ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *) [ -n "$series" ] && echo "Error: More than one experiment series specified." && exit 1
        series="$1" ;;
@@ -103,30 +111,32 @@ reso="${reso%%_*}"
 # Next parameter sweeps and timing
 secs=0 # normally is zero
 case $testmode in 0)
-  filename=4xdaily_inst # name for output files
+  outfreq=12      # every 6
   frequnits=hours # hours
-  outfreq=6       # every 6
-  dt=600    # for other experiments
+  filename=2xdaily_inst # name for output files
+  dt=1200
   days=100  # make resolution dependent?
   tstart=0  # first day of integration; set to 0 for new run.
-  tend=1200 # for new experiments just do 1200 day integrations, first 200 are spinup
-  txyzdata=1000,1100 # when to retain longitude info? try just a couple 100 days
+  tend=5000 # for new experiments just do 1200 day integrations, first 200 are spinup
+  txyzdata="$(seq 3000 100 4900 | tr $'\n' ',')" # for saving
+  # txyzdata=1000,1100 # when to retain longitude info? try just a couple 100 days
   # tnodata=0,100 # when to throw out all data, even y-z cross-sections? good idea to keep it, so we can verify spinup was complete
   # tspindown=1000
-  # tspindown="$(seq 1000 100 5900 | xargs | tr ' ' ',')" # for spindown initiation
+  # tspindown="$(seq 1000 100 5900 | tr $'\n' ',')" # for spindown initiation
 # Run really fast test run
 ;; 1)
   # rdir="${force}_base_t42l40s" # override previous directory
   # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
-  days=20
-  nrestart=3
+  outfreq=12
+  frequnits=hours
   filename=test
-  dt=600
-  outfreq=6 frequnits=hours
-  tstart=0 tend=$(($days * $nrestart))
+  dt=1200
+  days=$testdays
+  tstart=0
+  tend=$((testdays * testblocks))
   new=false resume=false
   process="--debug " # don't move/delete anything; also implies flags="--keep-xyz "
-  tspindown=3
+  # tspindown=3
 # Initial conditions, for sanity checks
 ;; 2)
   filename=init
@@ -289,8 +299,8 @@ for param1 in ${params1[@]}; do
     # Full experiment directory path
     case $testmode in
       0) expdir="$scratch/$exp" ;; # running model
-      1) expdir="$scratch/test" ;;
-      2) expdir="$scratch/init" ;;
+      1) expdir="$scratch/$testname" ;;
+      2) expdir="$scratch/$initname" ;;
     esac
     [ ! -d "$expdir" ] && mkdir "$expdir"
 

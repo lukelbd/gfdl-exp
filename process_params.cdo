@@ -1,5 +1,8 @@
 #!/bin/bash
 ################################################################################
+# NOTE: This turned out *very* slow for large datasets. Small ones NCL was
+# comparable, but large ones NCL blows CDO out of the water!
+################################################################################
 # Processing data with CDO
 # Adds flux terms, variance terms and consolidates them into a file
 # * Have issue with "enlarge" command when variables exist with more than one 
@@ -17,14 +20,14 @@ verify() {
 # First get the basic zonal mean of everything
 t=$(date +%s)
 t0=$t
-echo "Getting basic parameters with CDO..."
-out=basic1.$suffix
+echo "Getting parameters with CDO..."
+out=params_cdo1.$suffix
 cdo $flags -zonmean $ncfile $out; verify $out
-echo "  * Time for basic zonal mean: $(($(date +%s) - t))s."
+echo "  * Time for zonal means: $(($(date +%s) - t))s."
 
 # Heat flux and momentum flux
 t=$(date +%s)
-out=basic2.$suffix
+out=params_cdo2.$suffix
 cdo $flags -setattribute,EMF@long_name="eddy momentum flux",EMF@units="m2/s2" \
   -chname,u,EMF -zonmean \
   -mul -sub -selvar,u $ncfile -enlarge,$ncfile -zonmean -selvar,u $ncfile \
@@ -32,7 +35,7 @@ cdo $flags -setattribute,EMF@long_name="eddy momentum flux",EMF@units="m2/s2" \
   $out; verify $out
 echo "  * Time for eddy momentum flux: $(($(date +%s) - t))s."
 t=$(date +%s)
-out=basic3.$suffix
+out=params_cdo3.$suffix
 cdo $flags -setattribute,EHF@long_name="eddy heat flux",EHF@units="K m/s" \
   -chname,t,EHF -zonmean \
   -mul -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
@@ -40,32 +43,33 @@ cdo $flags -setattribute,EHF@long_name="eddy heat flux",EHF@units="K m/s" \
   $out; verify $out
 echo "  * Time for eddy heat flux: $(($(date +%s) - t))s."
 t=$(date +%s)
-out=basic4.$suffix
-cdo $flags -setattribute,VHF@long_name="vertical eddy heat flux",VHF@units="K Pa/s" \
-  -chname,t,VHF -zonmean \
-  -mul -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
-       -sub -selvar,omega $ncfile -enlarge,$ncfile -zonmean -selvar,omega $ncfile \
-  $out; verify $out
-echo "  * Time for vertical heat flux: $(($(date +%s) - t))s."
+# Omit the 'vertical heat flux', doesn't have much use so far
+# out=params_cdo4.$suffix
+# cdo $flags -setattribute,VHF@long_name="vertical eddy heat flux",VHF@units="K Pa/s" \
+#   -chname,t,VHF -zonmean \
+#   -mul -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
+#        -sub -selvar,omega $ncfile -enlarge,$ncfile -zonmean -selvar,omega $ncfile \
+#   $out; verify $out
+# echo "  * Time for vertical heat flux: $(($(date +%s) - t))s."
 # Omit PV because it is only really relevant on theta-surfaces
 # cdo $flags -setattribute,EPF@long_name="eddy potential vorticity flux",EPF@units="K m3/kg s2" \
 #   -chname,pv,EPF -zonmean \
 #   -mul -sub -selvar,pv $ncfile -enlarge,$ncfile -zonmean -selvar,pv $ncfile \
 #        -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
-#   basic5.$suffix; verify basic4.$suffix
+#   params_cdo5.$suffix; verify params_cdo4.$suffix
 # echo "  * Time for eddy PV flux: $(($(date +%s) - t))s."
 
 # Simple terms: zonal eddy-u variance, eddy-T variance
 # These are from Held-Suarez ideas
 t=$(date +%s)
-out=basic6.$suffix
+out=params_cdo6.$suffix
 cdo $flags -setattribute,tvar@long_name="temperature eddy-variance",tvar@units="K2" \
   -chname,t,tvar -zonmean \
   -sqr -sub -selvar,t $ncfile -enlarge,$ncfile -zonmean -selvar,t $ncfile \
   $out; verify $out
 echo "  * Time for temperature variance: $(($(date +%s) - t))s."
 t=$(date +%s)
-out=basic7.$suffix
+out=params_cdo7.$suffix
 cdo $flags -setattribute,uvar@long_name="zonal-wind eddy-variance",uvar@units="m2/s2" \
   -chname,u,uvar -zonmean \
   -sqr -sub -selvar,u $ncfile -enlarge,$ncfile -zonmean -selvar,u $ncfile \
