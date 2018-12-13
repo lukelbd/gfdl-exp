@@ -5,6 +5,15 @@ All sorts of useful tools for running and processing parameter sweep experiments
 # Benchmarks
 Some benchmarks for running the dry core model on various machines are provided below.
 
+## CDO bottleneck with concurrent background processes
+It seems that CDO becomes exceedingly slow, **particularly** when multiple variables have to be read from one file. Log files for several test experiments can be found in `logs`.
+<!-- The CDO approach was **unique** in that it entails **many, consecutive reads to the same file**... however this **does not explain** the particular slowness of simple `-zonmean` operation. Maybe in this special case, when you have all these consecutive IO threads going on, and other processes in the background, becomes a special bottleneck. -->
+
+Turns out that **running on 40 cores, 1 node** (`qcmd100day_1x40`) or **running on 10 nodes, 4 cores each** (`qsub100day_10x4`) made no difference. When length of days/file sizes got large, CDO got really really slow. However, **running on 4 cores, 1 node** (`qcmd100day_1x4`) resulted in **significant speed-up** for the zonal averages (**47s vs. 186s**), despite individual file sizes being **much larger** (4GB vs. 400MB).
+
+Evidently this is some particular problem for parallel-running CDO processes, due to all of these consecutive IO threads? This is worrying. The thread locking flag `-L` did **not** alleviate the problem. I also verified directly that `cdo zonmean test_interp.0000.nc tmp.nc` takes **15 seconds** in an interactive node or with `qcmd` on a single CPU! Anyway, this issue is remarkably strange.
+
+
 ## Cheyenne
 First some basic experiments, 5 days.
 
@@ -33,10 +42,3 @@ Now up to the high-resolution runs. I just ran 100 days here, so no parallel pro
 | 995s          | 434s          | ?          | "             | 4     | 10          | "           | No different when using more nodes
 
 
-## CDO processing bottleneck
-It seems that CDO becomes exceedingly slow, **particularly** when multiple variables have to be read from one file. Log files for several test experiments can be found in `logs`.
-<!-- The CDO approach was **unique** in that it entails **many, consecutive reads to the same file**... however this **does not explain** the particular slowness of simple `-zonmean` operation. Maybe in this special case, when you have all these consecutive IO threads going on, and other processes in the background, becomes a special bottleneck. -->
-
-Turns out that **running on 40 cores, 1 node** (`qcmd100day_1x40`) or **running on 10 nodes, 4 cores each** (`qsub100day_10x4`) made no difference. When length of days/file sizes got large, CDO got really really slow. However, **running on 4 cores, 1 node** (`qcmd100day_1x4`) resulted in **significant speed-up** for the zonal averages (47s vs. 186s), despite individual file sizes being **much larger** (4GB vs. 280MB).
-
-Evidently this is some particular problem for parallel-running CDO processes, due to all of these consecutive IO threads? This is worrying. The thread locking flag `-L` did **not** alleviate the problem. I also verified directly that `cdo zonmean test_interp.0000.nc tmp.nc` takes **15 seconds** in an interactive node or with `qcmd` on a single CPU! Anyway, this issue is remarkably strange.
