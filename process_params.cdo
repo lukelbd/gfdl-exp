@@ -11,7 +11,7 @@
 ##############################################################################
 ncfile=$1
 suffix=$2 # should be 0000.nc, 0001.nc, etc.
-flags="-s -O"
+flags="-s -O -L" # also employ thread locking
 verify() {
   # if file not found CDO operation failed
   [ ! -r $1 ] && echo "Error: File $1 not found." && exit 1
