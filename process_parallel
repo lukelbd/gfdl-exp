@@ -156,7 +156,7 @@ yz_params() {
   t=$(date +%s)
   echo "Merging the CDO and NCL parameters into one file..."
   for f in energy??.$suffix; do # absolutely necessary for CDO to detect plev as vertical axis, and need singleton longitude
-    cdo -s -setgrid,basic1.$suffix $f tmp.$suffix; mv tmp.$suffix $f # so ugly... kill me...
+    cdo -O -s -setgrid,basic1.$suffix $f tmp.$suffix; mv tmp.$suffix $f # so ugly... kill me...
   done
   echo "  * Time for setting grid: $(($(date +%s) - t))s."
 
@@ -192,10 +192,11 @@ yz_params() {
 # Driver, calls above functions
 ################################################################################
 # Get files
-if $resume && $debug; then
-  files=(*_full.nc)
+move=true
+if $debug; then
+  files=(test.nc.0000) # doesn't really exist
 elif $resume; then
-  files=(../netcdf/*_full.${PWD##*/}.nc)
+  files=(*_full.${PWD##*/}.nc)
 else
   files=(*.nc.0000)
 fi
@@ -211,7 +212,12 @@ fi
 # Loop through each one
 for file in ${files[@]}; do
   # Figure out file names and such
-  if [[ "$file" =~ 0000 ]]; then
+  combine=false
+  if $debug && $resume; then
+    parts=(test.*.nc) # check if already present
+  elif $resume; then
+    parts=(${file})
+  else
     combine=true
     base=${file%%.*}
     for part in ${base}.nc*; do
@@ -220,9 +226,6 @@ for file in ${files[@]}; do
     done
     wait # in background
     parts=(${base}.*.nc)
-  else
-    combine=false
-    parts=(${file})
   fi
   echo Files: ${parts[@]}
   numfiles=${#parts[@]}
@@ -232,18 +235,18 @@ for file in ${files[@]}; do
   # Interpolate to pressure then get YZ files from each model-produced
   # netcdf file
   echo "Getting YZ parameters..."
-  mkdir LOGS
+  mkdir LOGS 2>/dev/null
   # exit 1
   t1=$(date +%s)
   for ncfile in ${parts[@]}; do
     # Number
-    if $combine; then
+    if $resume && ! $debug; then
+      num=0000
+      suffix=nc # dummy value
+    else
       num=${ncfile%.nc}
       num=${num#*.}
       suffix=${num}.nc
-    else
-      num=0000
-      suffix=nc # dummy
     fi
     # Interpolate and process
     {
@@ -255,7 +258,7 @@ for file in ${files[@]}; do
     } &>LOGS/log.${num} &
   done
   wait
-  $debug && parts=(${base}_interp.*.nc)
+  $debug && parts=(${base}_interp.*.nc) # we didn't overwrite them
   echo "  * Time for getting YZ params in parallel: $(($(date +%s) - t1))s."
   # exit 1
   # Merge the parallel-processed YZ files
@@ -283,10 +286,12 @@ for file in ${files[@]}; do
       echo "Keeping XYZ files..."
       for ncfile in ${parts[@]}; do
          # ncks -O -d time,1,,2 -x -v omega,udt,vdt,tdt $ncfile $ncfile &
-         ncks -O -v omega,udt,vdt,tdt $ncfile $ncfile &
+         $debug && out=${ncfile%%.*}_x.${ncfile#*.} || out=$ncfile
+         ncks -O -x -v omega,udt,vdt,tdt $ncfile $out &
+         interp+=($out)
       done
       wait
-      $mppnccombine -r $xyzfile ${parts[@]}
+      $mppnccombine -r $xyzfile ${interp[@]}
       echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
     fi
   fi
