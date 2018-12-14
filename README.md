@@ -15,30 +15,44 @@ Evidently this is some particular problem for parallel-running CDO processes, du
 
 
 ## Cheyenne
-First some basic experiments, 5 days.
+For the following experiments, the model was run for **2 restart blocks**. From this, we sampled the model run time *with and without* background processing, and the processing time *with and without* background model integration. Easy!
 
-| Model time(s) | Process time(s) | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                             |
-| ---           | ---             | ---        | ---           | ---   | ---         | ---         | ---                                               |
-| 15s           | 24s             | "          | 5, 4          | "     | "           | "           | Much better performance fewer days                |
-| "             | "               | "          | "             | "     | "           | "           | With background processing                        |
-| 9s, 9s, 16s   | 27s, 37s, 49s   | "          | "             | "     | 16, 16      | "           | With background processing, model using all cores |
+Not showing the results because it turned out the pattern was very simple: **parallelize on nodes, not cores**! With 20 cores on 2 nodes, a 100 day block at T106 resolution took **1400s**. But with 1 core on 40 nodes, the 100 day block took **700s**. That is a *massive* speedup. Not sure why this is the case.
 
-Next play with parallelization.
+<!-- | Model times | Process times | Truncation | Days, times per day | Nodes, cores, used | Notes | -->
+<!-- | ---         | ---           | ---        | ---                 | ---                | ---   | -->
+<!-- | ---         | ---           | 106        | 5, 2                | ---                | ---   | -->
 
+<!---
+Early playing with background processing.
+| Model times | Process times | Truncation | Days, per day | Nodes, cores, used | Notes |
+| ---           | ---             | ---        | ---           | ---                | ---   |
+
+| Model time(s) | Process time(s) | Truncation | Days, num hrs | Nodes | Cores, used | Notes
+| ---           | ---             | ---        | ---           | ---   | ---         | ---
+| 15s           | 24s             | "          | 5, 4          | "     | "           |
+| "             | "               | "          | "             | "     | "           | With background processing                        |
+| 9s            | 30s             | "          | "             | "     | 16, 16      | With background processing, model using all cores |
+>
+
+<!--
+Early parallel tests
 | Model time(s) | Process time(s)         | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                             |
 | ---           | ---                     | ---        | ---           | ---   | ---         | ---         | ---                                               |
 | 30s           | 15s                     | 42         | 20, 4         | "     | 32          | "           | With parallel processing
 | 40s           | 30s                     | 42         | 20, 4         | "     | "           | "           | Process in background each step
 | 38s           | 27s                     | 42         | 20, 4         | "     | 32,64       | "           | With "extra" cores for processing, not any faster
 | 28s           | 16s + 13s + (21s + 24s) | 42         | 20, 4         | "     | 32          | "           | Without parallel processing (combine, interp, CDO, NCL)
+-->
 
-Now up to the high-resolution runs. I just ran 100 days here, so no parallel processing.
-
+<!--
+Early hi res tests
 | Model time(s) | Total time(s) | Truncation | Days, num hrs | Nodes | Cores, used | Memory (GB) | Notes                                     |
 | ---           | ---           | ---        | ---           | ---   | ---         | ---         | ---                                       |
 | 134s          | 32s           | 106        | 5, 4          | 1     | 40          | "           | Very slow
 | 2900s         | 3250s         | 106        | 100, 2        | 1     | 20          | "           | About 2 days for
 | 2500s         | 439s          | "          | "             | "     | 40          | "           | Marginally faster for twice as many cores
 | 995s          | 434s          | ?          | "             | 4     | 10          | "           | No different when using more nodes
+>
 
 

@@ -27,8 +27,7 @@ none=false # throw out all data for all days (i.e. just keep restarts)?
 # Make sure module load impi has been declared by parent
 run=mpirun # for running in parallel
 fms=$cwd/fms.x # location of executables
-process=$cwd/process_serial   # the script for on-the-fly processing
-process=$cwd/process_parallel # as above, but this one *processes the parallel-output nc files directly before mering*
+process=$cwd/process # *process the parallel-output nc files directly before merging*
 [ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
 [ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
 ! which $run &>/dev/null && echo "Error: $run not found in \$PATH." && exit 1
@@ -37,21 +36,21 @@ process=$cwd/process_parallel # as above, but this one *processes the parallel-o
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    --new)        new=true    ;; # do not write to existing experiment folders?
-    --resume)     resume=true ;; # do not overwrite existing dXXXX-dYYYY folders?
-    --cores=*)    cores=${1#*=}     ;;
-    --start=*)    tstart=${1#*=}    ;; # starting day
-    --end=*)      tend=${1#*=}      ;; # ending day
-    --mode=*)     mode=${1#*=}      ;; # 0 is control, 1 is spindown, 2...
-    --process=*)  pflags="${1#*=}"   ;; # flags for processing script, separated by spaces
-    --restart=*)  rdir_override=${1#*=} ;; # manual override restart directory
-    --days-spindown=*) t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
-    --days-xyzdata=*)  t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
-    --days-nodata=*)   t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
+    -n|--new)        new=true    ;; # do not write to existing experiment folders?
+    -r|--resume)     resume=true ;; # do not overwrite existing dXXXX-dYYYY folders?
+    -c|--cores=*)    cores=${1#*=}     ;;
+    -s|--start=*)    tstart=${1#*=}    ;; # starting day
+    -e|--end=*)      tend=${1#*=}      ;; # ending day
+    -m|--mode=*)     mode=${1#*=}      ;; # 0 is control, 1 is spindown, 2...
+    -p|--process=*)  pflags_global="${1#*=}" ;; # flags for processing script
+    -rs|--restart=*)  rdir_override=${1#*=} ;; # manual override restart directory
+    -ds=*|--days-spindown=*) t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
+    -dxyz=*|--days-xyzdata=*)  t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
+    -dn=*|--days-nodata=*)   t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *)  [ -n "$expdir" ] && echo "Error: More than one experiment directory specified." && exit 1
       expdir="$1" ;;
-  esac; shift # shift by at least one
+  esac; shift
 done
 [ -z $expdir ]               && echo "Error: You must declare the experiment directory."    && exit 1
 [[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared."         && exit 1
@@ -171,10 +170,10 @@ driver() {
   # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
 
   # Check that model ran successfully
-  # FMS prints to standard output 'EXIT CODE: 1' but doesn't actually set
+  # FMS prints error messages to standard output but doesn't actually set
   # the exit code/mpirun doesn't pass that exit code, which is fucking dumb.
-  # Instead parse the logfile
-  grep 'EXIT CODE: [1-9]' log.model &>/dev/null && \
+  # We parse the logfile instead
+  egrep 'EXIT CODE: [1-9]|FATAL from PE' log.model &>/dev/null && \
     echo "Error: Bad exit code from model run step." && exit 1
 
   # Wait for previous processing step, if set
@@ -214,8 +213,8 @@ driver() {
 
   # Process new data, and remove old data
   # Previously we set processor affinities, but didn't help much
-  echo "Calling processing script with flags: $(echo $pflags_i $pflags | xargs)"
-  $process $pflags_i $pflags &>log.process &
+  echo "Calling processing script with flags: $(echo $pflags_day $pflags_global | xargs)"
+  $process $pflags_day $pflags_global &>log.process &
   pp=$! # record PID
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $!
   # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
@@ -276,9 +275,9 @@ case $mode in
       fi; unset rdir_override # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
       [ ! -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
     fi
-    unset pflags_i
-    array_in $cday ${t_nodata[@]} && pflags_i+=" --quit"
-    array_in $cday ${t_xyznodata[@]} && pflags_i+=" --keep-xyz"
+    unset pflags_day
+    array_in $cday ${t_nodata[@]} && pflags_day+=" -q"
+    array_in $cday ${t_xyznodata[@]} && pflags_day+=" -k"
     dir_setup $cdir # sets up working directory, cd into it
     if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
@@ -297,6 +296,8 @@ case $mode in
   done
   echo "Processing last file..."
   wait $pp; pp=
+  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
+  echo "Final process time: ${tprocess%.*}s."
   echo "The control run completed successfully in $(($(date +%s) - $origin)) seconds!"
   echo "Timestamp: $(date)."
 
@@ -331,9 +332,9 @@ case $mode in
       [ $cday -eq 0 ] && rdir=$fstart || \
         rdir=$prefix-spindown$mode-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
       # RUN THE MODEL and COMBINE OUTPUT
-      unset pflags_i
-      array_in $cday ${t_nodata[@]} && pflags_i+=" --quit"
-      array_in $cday ${t_xyznodata[@]} && pflags_i+=" --keep-xyz"
+      unset pflags_day
+      array_in $cday ${t_nodata[@]} && pflags_day+=" -q"
+      array_in $cday ${t_xyznodata[@]} && pflags_day+=" -k"
       dir_setup $cdir # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         copy_restart $rdir # add restart files
@@ -348,6 +349,7 @@ case $mode in
     echo "Timestamp: $(date)."
   done
   echo "Processing last file..."
+  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
   wait $pp; pp=
   echo "The spindown runs completed successfuly in $(($(date +%s) - $origin)) seconds!"
   echo "Timestamp: $(date)."

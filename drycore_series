@@ -54,49 +54,57 @@ To customize other things, make direct edits to this script.
 # Load modules
 module load impi &>/dev/null # to parallelize the combine process, need mpirun!
 module load nco &>/dev/null
-module load ncl &>/dev/null
-module load cdo/1.9.4 &>/dev/null
+# module load ncl &>/dev/null # use conda versions instead, already on path
+# module load cdo/1.9.4 &>/dev/null
 
 # Default settings
-# For runmode:
-# For testmode: 0 is normal, 1 is quick test, 2 is spit out the
-# initial conditions (i.e. forcing environment)
+secs=0 # normally is zero
+days=50
 cores=8
 runmode=0
+dryrun=false
+dt=1200
+tstart=0  # first day of integration; set to 0 for new run.
+tend=5000 # for new experiments just do 1200 day integrations, first 200 are spinup
+# Output settings
+outfreq=12      # every 6
+frequnits=hours # hours
+filename=2xdaily_inst # name for output files
+txyzdata=$(seq 3500 100 5400 | tr $'\n' ',') # for saving
+# Test settings
 testmode=0
 testname=test # default name of directory
-testdays=100
-testblocks=3 # number of blocks of testdays
 initname=init
-dryrun=false # just print function calls
-resume=false # do not overwrite existing dXXXX-dYYYY directories?
-new=false # do not write to existing experiment directories?
+testdays=5
+testblocks=1 # number of blocks of testdays
 # Parse input
-unset series flags
+unset series flags_global
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
     --help|-h) echo "$doc" && exit 0 ;;
-    --new|-n)  new=true   ;;
     --test|-t) testmode=1 ;;
     --init|-i) testmode=2 ;;
+    --days=*|-d=*)  days=${1#*=} ;;
+    --start=*|-s=*) tstart=${1#*=} ;;
+    --end=*|-e=*)   tend=${1#*=} ;;
+    --timestep=*|-dt=*) dt=${1#*=} ;;
     --testdays=*|-td=*)   testdays=${1#*=} ;;
     --testblocks=*|-tb=*) testblocks=${1#*=} ;;
     --testname=*|-tn=*)   testname=${1#*=} ;;
     --initname=*|-in=*)   initname=${1#*=} ;;
-    --resume|-r) resume=true ;; # no override
-    --dryrun|-d) dryrun=true ;;
-    --cores=*|-c=*) cores=${1#*=} ;;
+    --dryrun|-d) dryrun=true ;; # just print function calls?
+    --cores=*|-c=*|-np=*) cores=${1#*=} ;;
     --1=*|-1=) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
     --2=*|-2=) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
     --mode=*|-m=) runmode=${1#*=} ;;
-    -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
+    -*) flags_global+="$1 " ;;
     *) [ -n "$series" ] && echo "Error: More than one experiment series specified." && exit 1
        series="$1" ;;
   esac; shift # shift by at least one
 done
-# [ -z "$series" ] && echo "Error: Must input experiment name." && exit 1
 if [ -z "$series" ]; then
   echo "Warning: No experiment name specified. Running default experiment hs_base_t42l40s."
+  sleep 5 # give user time to cancel
   series='hs_base_t42l40s'
 fi
 
@@ -108,25 +116,14 @@ reso="${series#*_}"
 reso="${reso#*_}"
 reso="${reso%%_*}"
 
-# Next parameter sweeps and timing
-secs=0 # normally is zero
-case $testmode in 0)
-  outfreq=12      # every 6
-  frequnits=hours # hours
-  filename=2xdaily_inst # name for output files
-  dt=1200
-  days=100  # make resolution dependent?
-  tstart=0  # first day of integration; set to 0 for new run.
-  tend=5000 # for new experiments just do 1200 day integrations, first 200 are spinup
-  txyzdata="$(seq 3000 100 4900 | tr $'\n' ',')" # for saving
-  # txyzdata=1000,1100 # when to retain longitude info? try just a couple 100 days
-  # tnodata=0,100 # when to throw out all data, even y-z cross-sections? good idea to keep it, so we can verify spinup was complete
-  # tspindown=1000
-  # tspindown="$(seq 1000 100 5900 | tr $'\n' ',')" # for spindown initiation
 # Run really fast test run
-;; 1)
+case $testmode in
+1)
   # rdir="${force}_base_t42l40s" # override previous directory
   # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
+  unset flags_global # no resume or new days
+  process="-d" # don't move/delete anything; also implies flags="--keep-xyz "
+  process=""
   outfreq=12
   frequnits=hours
   filename=test
@@ -134,21 +131,20 @@ case $testmode in 0)
   days=$testdays
   tstart=0
   tend=$((testdays * testblocks))
-  new=false resume=false
-  process="--debug " # don't move/delete anything; also implies flags="--keep-xyz "
-  # tspindown=3
+  txyzdata=$(seq $tstart $testblocks $tend | tr $'\n' ',')
 # Initial conditions, for sanity checks
 ;; 2)
-  filename=init
   cores=1 # easier for debugging, otherwise print statements executed simultaneously
+  unset flags_global # no resume or new days
+  process="-q" # do nothing
+  outfreq=1
+  frequnits=seconds
+  filename=init
   dt=1
-  days=0 secs=1
-  outfreq=1 frequnits=seconds
-  tstart=0 tend=0
-  new=false resume=false
-  process="--combine-only --debug " # don't post-process anything
-  tspindown=0
-;; *) echo "Error: Unknown testmode \"$testmode\"." && exit 1
+  days=0
+  secs=1
+  tstart=0
+  tend=0
 ;; esac
 
 #------------------------------------------------------------------------------#
@@ -482,8 +478,6 @@ for param1 in ${params1[@]}; do
       #------------------------------------------------------------------------#
       # Flags
       unset flags_exp
-      $new    && flags_exp+="--new "    # do not write to existing experiment folders?
-      $resume && flags_exp+="--resume " # do not overwrite existing dXXXX-dYYYY days?
       [ ! -z "$rdir" ] && [ $runmode -eq 0 ] && echo "Warning: Using \"${rdir}\" for restart files." \
                             && flags_exp+="--restart=$scratch/$rdir/$rdays " # override with this restart directory
       [ ! -z "$txyzdata" ]  && flags_exp+="--days-xyzdata=$txyzdata " # keep XYZ data
@@ -491,7 +485,8 @@ for param1 in ${params1[@]}; do
       [ ! -z "$tspindown" ] && flags_exp+="--days-spindown=$tspindown " # record zero data
       # Run experiment (or just echo command for dryrun)
       $dryrun && cmd="echo ./drycore_run" || cmd="./drycore_run"
-      $cmd $expdir $flags $flags_exp --mode=$runmode --start=$tstart --end=$tend --cores=$cores --process="$process" # could be empty string
+      $cmd $expdir $flags_global $flags_exp --mode=$runmode \
+        --start=$tstart --end=$tend --cores=$cores --process="$process" # could be empty string
       [ $? -ne 0 ] && echo "Warning: $exp integration failed." && echo && echo && echo && continue # keyboard interruption does not trigger this
       # Move initialization files
       if [ $testmode -eq 2 ]; then
