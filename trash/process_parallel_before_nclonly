@@ -1,0 +1,310 @@
+#!/bin/bash
+################################################################################
+# File for processing results of GFDL model runs AS THEY ARE PRODUCED; use this
+# in parallel after every model step while next model step is simultaneously running.
+# ---------
+# Summary of current variables:
+# * with longitude-data:
+#   p, t, u, v, z, vor, omega, teq, D, pt, pv s
+#   forget dthdp (only will want lapse rate to diagnose mean climate/tropopause
+#   heights and can use the mean t/theta fields), but keep S; has physical interpretation
+# * without longitude-data:
+#   t, u, v, z, vor, omega, teq, D, dthdp, pt, pv, s, **NEW** EHF, EMF, EPF, EKE, C, KE
+# Tips:
+# Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
+# directory to see list of files where diag_fields are registered.
+################################################################################
+# Function for checking NCL scripts success
+# Script sometimes fails to spawn child process for displaying time information; ignore these errors
+# Also Execute.c is always shown as error alongside specific function error, so ignore that one
+nclcheck() { # input log file as argument
+  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
+  return $? # return exit code; good status means we found error, bad status means we found nothing
+    # ignore ^warning: because these will also happen if we have a systemfunc error possibly
+}
+
+# Parse input flags
+# cores=8 # default cores for mppnccombine, actually this didn't work so nevermind
+debug=false     # keep data in original folder, instead of moving to ../netcdf? useful for testing
+keepxyz=false   # keep original "full" results?
+resume=false    # process old "full" files?
+cdointerp=false # slower than NCO
+combine=false   # just run mppnccombine
+while [ $# -gt 0 ]; do
+  case $1 in
+    -q|--quit) echo "Skipping processing." && exit 0 ;;
+    -d|--debug)      debug=true      ;;  # if true, keep all intermediate files
+    -r|--resume)     resume=true      ;; # process old results sitting in the directory
+    -k|--keep-xyz)   keepxyz=true     ;; # whether to keep longitudinal data
+    -i|--interp-cdo) cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
+    -c|--combine)    combine=true ;;     # only combine data
+    # -np=*)           cores="${1#*=}" ;;  # number of cores
+    *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
+  esac
+  shift # shift by one
+done
+
+# Global vars
+t0=$(date +%s) # starting time
+bin=${0%/*}    # same location as this file; trim filename from right
+run=mpirun     # for running mppnccombine on Cheyenne; parallelization really necessary
+interp_cdo=$bin/process_interp.cdo # interpolate with CDO
+interp_ncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
+mppnccombine=$bin/mppnccombine.x          # combine; needs to have been compiled here
+process_cdo=$bin/process_params.cdo    # zonal means and flux terms with CDO
+process_ncl=$bin/process_params.ncl    # eddy and mean Lorenz energy cycle terms with NCL
+
+# Double check some stuff
+[ ! -x $process_cdo ]        && echo "Error: The script \"$process_cdo\" is missing."                       && exit 127
+[ ! -r $process_ncl ]        && echo "Error: The script \"$process_ncl\" is missing."                       && exit 127
+[ ! -r $interp_ncl ]     && echo "Error: The script \"$interp_ncl\" is missing."                    && exit 127
+[ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable \"$mppnccombine\" is missing." && exit 127
+! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                                     && exit 127
+! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                                     && exit 127
+! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                                     && exit 127
+
+################################################################################
+# Functions
+# Stdout of following lines is overview; view separate logfiles for specifics
+################################################################################
+# Function for interpolating model levels
+hybrid_to_press() {
+  # Interplolate to pressure levels from model levels
+  local t ncfile output suffix
+  ncfile="$1"
+  suffix="$2"
+  output=${ncfile%%.*}_interp.$suffix
+  t=$(date +%s)
+
+  # Apply some simple modifications to attributes
+  ncrename -d pfull,mlev $ncfile &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
+  ncrename -d phalf,ilev $ncfile &>/dev/null # ilev is the other ECHAM convention
+  ncrename -v pfull,mlev $ncfile &>/dev/null # -d renames dimensions, -v renames variables of same name
+  ncrename -v phalf,ilev $ncfile &>/dev/null
+  ncatted -O -a bounds,mlev,o,c,"ilev" $ncfile
+
+  # Interpolation
+  # a) Use CDO for interpolation
+  if $cdointerp; then
+    echo "Interpolating with CDO..."
+    $interp_cdo $ncfile $output &>LOGS/log.interp.${suffix%.nc} # that simple babe
+    [ $? != 0 ] && echo "Error: Something failed during CDO interpolation." && exit $?
+    ! $debug && rm interp?.$suffix
+  # b) Use NCL vint2hp_ecmwf for interpolation
+  else
+    echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
+    ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$output\"" $interp_ncl &>LOGS/log.interp.${suffix%.nc} #2> /dev/null
+    if nclcheck LOGS/log.interp.${suffix%.nc} || [ ! -r $output ]; then
+      echo "Error: Something failed during NCL interpolation." && exit 2
+    fi
+  fi
+
+  # Standardize attributes
+  # Many of these may already be properly set, but make sure; CDO also may want
+  # a few special ones like 'axis' and 'standard_name'
+  # NOTE: This is really fast (0.02s on T42 20 day file)
+  # This is much faster than even editing one attribute in NCL (0.05s)
+  ncatted -O -a NumFilesInSet,global,o,l,$numfiles \
+    -a edges,lon,d,, -a edges,lat,d,, \
+    -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" -a axis,time,o,c,"T" \
+    -a long_name,plev,o,c,"pressure_level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
+    -a long_name,lat,o,c,"latitude"  -a standard_name,lat,o,c,"latitude" \
+    -a long_name,lon,o,c,"longitude" -a standard_name,lon,o,c,"longitude" \
+    -a standard_name,time,o,c,"time" \
+    -a units,lat,o,c,"degrees_north" -a units,lon,o,c,"degrees_east" $output
+  ! $debug && mv $output $ncfile # move old file on top of new file
+  echo "  * Time for interpolation: $(($(date +%s) - t))s."
+}
+
+# Once, this function also accepted averaged data; not anymore, but these are
+# some approaches for testing if file has averaged data
+# * [[ " $(cdo -s showname $ncfile) " =~ " time_bounds " ]] # CDO test if averaged
+#   isaveraged="print(isfilevar(addfile(\"$ncfile\",\"r\"),\"time_bounds\"))"
+# * [ $(ncl -Q -n <<< "$isaveraged") == "False" ] # NCL test if averaged
+# * [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
+yz_params() {
+  # Ouput file names
+  local t t2 ncfile output suffix
+  ncfile="$1"
+  suffix="$2"
+  output="${yzfile%.nc}.${suffix}"
+
+  # Fluxes and means
+  t=$(date +%s)
+  echo "Getting CDO YZ parameters..."
+  $process_cdo $ncfile $suffix &>LOGS/log.basic.${suffix%.nc} #&
+  [ $? != 0 ] && echo "Error: Something failed while getting CDO parameters." && exit 3
+  t2=$(($(date +%s) - t))
+  # t2=$(tail -1 LOGS/log.basic.${suffix%.nc} | sed 's/[^0-9]*//g')
+  echo "  * Time for getting YZ parameters with CDO: ${t2}s."
+
+  # Energy budgets, NCL commands
+  # Some of these require the extra variables output by NCL; also meridional flux
+  # terms rely on NCL having set poleward==positive in each hemisphere
+  t=$(date +%s)
+  echo "Getting NCL YZ parameters..."
+  ncl -n -Q "suffix=\"$suffix\"" "filename=\"$ncfile\"" $process_ncl &>LOGS/log.lorenz.${suffix%.nc} #&
+  if nclcheck LOGS/log.lorenz.${suffix%.nc}; then
+    echo "Error: Something failed while getting NCL parameters." && exit 4
+  fi
+  t2=$(($(date +%s) - t))
+  # t2=$(tail -1 LOGS/log.lorenz.${suffix%.nc} | sed 's/[^0-9]*//g')
+  echo "  * Time for getting YZ parameters with NCL: ${t2}s."
+
+  # Add back longitudes to NCL calculated terms
+  # Hard/annoying/verbose to fix this in NCL so do it here
+  t=$(date +%s)
+  echo "Merging the CDO and NCL parameters into one file..."
+  for f in energy??.$suffix; do # absolutely necessary for CDO to detect plev as vertical axis, and need singleton longitude
+    cdo -O -s -setgrid,basic1.$suffix $f tmp.$suffix; mv tmp.$suffix $f # so ugly... kill me...
+  done
+  echo "  * Time for setting grid: $(($(date +%s) - t))s."
+
+  # Merge files
+  t=$(date +%s)
+  cdo -O -s -merge basic?.$suffix energy??.$suffix $output # will raise errors because edges were deleted, but still referenced by attributes
+  # ncks -O $output $output # clever hack; just *alphabetizes* the variables in file, and very fast
+  echo "  * Time for merging into one file: $(($(date +%s) - t))s."
+  ! $debug && rm basic?.$suffix energy??.$suffix
+
+  # Simple NCL script to fix attributes
+  # Add NumFilesInSet attribute (required)
+  t=$(date +%s)
+  ncatted -O -a NumFilesInSet,global,o,l,$numfiles $output
+  ncl -n -Q <<< "
+  f = addfile(\"$ncfile\", \"r\")
+  o = addfile(\"$output\", \"w\")
+  ; Fix attributes and whatnot
+  o->lat = f->lat
+  o->plev = f->plev
+  o->time = f->time
+  ; Fix longitudes
+  lon = o->lon
+  lon@domain_decomposition = (/1, 1, 1, 1/)
+  o->lon = lon
+  ; 'Save' (i.e. delete handle)
+  delete(o)
+  "
+  echo "  * Time for fixing attributes: $(($(date +%s) - t))s"
+}
+
+################################################################################
+# Driver, calls above functions
+################################################################################
+# Get files
+move=true
+if $debug; then
+  files=(test.nc.0000) # doesn't really exist
+elif $resume; then
+  files=(*_full.${PWD##*/}.nc)
+else
+  files=(*.nc.0000)
+fi
+if [[ "$files" =~ "*" ]]; then
+  files=(*.nc) # already present?
+  if [ ${#files[@]} -ge 1 ]; then
+    echo "Note: Model ran on only 1 core, do not need to merge files."
+  else
+    echo "Error: XYZ resolution files not found." && exit 1 # make sure nullglob turned off
+  fi
+fi
+
+# Loop through each one
+for file in ${files[@]}; do
+  # Figure out file names and such
+  combine=false
+  if $debug && $resume; then
+    parts=(test.*.nc) # check if already present
+  elif $resume; then
+    parts=(${file})
+  else
+    combine=true
+    base=${file%%.*}
+    for part in ${base}.nc*; do
+      num=${part##*.}
+      mv $part ${base}.${num}.nc & # some programs won't recognize file without .nc extension
+    done
+    wait # in background
+    parts=(${base}.*.nc)
+  fi
+  echo Files: ${parts[@]}
+  numfiles=${#parts[@]}
+  xyzfile="${base}_full.${PWD##*/}.nc"   # original data
+  yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
+
+  # Interpolate to pressure then get YZ files from each model-produced
+  # netcdf file
+  echo "Getting YZ parameters..."
+  mkdir LOGS 2>/dev/null
+  # exit 1
+  t1=$(date +%s)
+  for ncfile in ${parts[@]}; do
+    # Number
+    if $resume && ! $debug; then
+      num=0000
+      suffix=nc # dummy value
+    else
+      num=${ncfile%.nc}
+      num=${num#*.}
+      suffix=${num}.nc
+    fi
+    # Interpolate and process
+    {
+    if ! $resume; then
+      hybrid_to_press "$ncfile" "$suffix"
+    fi
+    $debug && ncfile=${ncfile%%.*}_interp.$suffix
+    yz_params "$ncfile" "$suffix"
+    } &>LOGS/log.${num} &
+  done
+  wait
+  $debug && parts=(${base}_interp.*.nc) # we didn't overwrite them
+  echo "  * Time for getting YZ params in parallel: $(($(date +%s) - t1))s."
+  # exit 1
+  # Merge the parallel-processed YZ files
+  if $combine; then
+    t=$(date +%s)
+    $mppnccombine -r $yzfile ${yzfile%.nc}.*.nc
+    echo "  * Time for combining YZ files: $(($(date +%s) - t))s."
+  fi
+
+  # Optionally merge the pressure-interpolated files, then get XYZ
+  # parameters, or just delete those files
+  # TODO: Consider reducing to a standard horizontal resolution at least, if
+  # not vertical? This could save considerable space.
+  if ! $resume; then
+    if ! $debug && ! $keepxyz; then
+      # Delete the old file
+      echo "Removing XYZ files..."
+      ! $debug && rm ${parts[@]} # simple
+    else
+      # Merge XYZ files
+      # Will drop variables in parallel before merging
+      # NOTE: Might also consider dropping some timesteps, but currently
+      # already only doing 12 hourly data
+      t=$(date +%s)
+      echo "Keeping XYZ files..."
+      for ncfile in ${parts[@]}; do
+         # ncks -O -d time,1,,2 -x -v omega,udt,vdt,tdt $ncfile $ncfile &
+         $debug && out=${ncfile%%.*}_x.${ncfile#*.} || out=$ncfile
+         ncks -O -x -v omega,udt,vdt,tdt $ncfile $out &
+         interp+=($out)
+      done
+      wait
+      $mppnccombine -r $xyzfile ${interp[@]}
+      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+    fi
+  fi
+
+  # Copy files to common directory
+  if ! $debug; then
+    ! [ -d ../netcdf ] && mkdir ../netcdf
+    [ -r $yzfile ]  && mv $yzfile ../netcdf
+    [ -r $xyzfile ] && mv $xyzfile ../netcdf
+  fi
+done
+
+# Echo time of finish
+# Can parse this to send message to the window that ran the runscript/batch runscript
+# echo $(($(date +%s) - $t0)) # prints UNIX time difference
+echo "TOTAL TIME ELAPSED: $(($(date +%s) - t0))s."

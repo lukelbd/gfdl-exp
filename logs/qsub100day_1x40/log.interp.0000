@@ -1,0 +1,14 @@
+Reading initial file and interpolating...
+  * Time for NCL reading and setup: 1s.
+Interpolating variables in "test.0000.nc"...
+ * Time for NCL interpolation of "t": 1s.
+ * Time for NCL interpolation of "u": 10s.
+ * Time for NCL interpolation of "v": 2s.
+ * Time for NCL interpolation of "omega": 3s.
+Variable "slp" does not have pressure levels.
+Variable "hybi" is a coordinate.
+Variable "hyai" is a coordinate.
+ * Time for NCL interpolation of "tdt": 7s.
+ * Time for NCL interpolation of "udt": 6s.
+ * Time for NCL interpolation of "vdt": 17s.
+TOTAL TIME ELAPSED: 47s.

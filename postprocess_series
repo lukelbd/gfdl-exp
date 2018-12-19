@@ -6,40 +6,28 @@
 # closest values in this new spacing. White lie, but probably insignificant differences.
 #------------------------------------------------------------------------------#
 # Processes files in directories matching some glob pattern
-# Much much much smarter than the method before
-# If you want to process some specific new experiments, just use
-# multiple glob patterns matching exact names
-# 1 for radiation off, 2 for radiation off but surface on, 
-# 3 for everything off (radiation, surface, and friction), 4 for friction off
-runmode=0 # 0 is control run, the rest are different spindown modes:
-parallel_max=1 # maximum parallel post-processing events
 dryrun=false
+runmode=0 # 0 is control run, the rest are different spindown modes:
 filename=4xdaily_inst # prefix for files to be read
-spin_start=0 spin_end=100000
-# globs=('*stratrad1c*t42l50p*' '*stratrad10c*t42l50p*' '*base*t42')
-# globs=('*troprad2_t42l20s*' '*base_t42l20s*')
-# globs=('*troprad2_t42l20s*' '*base_t42l20s*')
-# globs=('*tgrad*p0090.000')
-# globs=('*troprad3*t42l20s*0000.*') # only for the fast runs
-# Quick runs
+parallel_max=8 # maximum parallel post-processing events
+
+# Settings
 # climo_start=100 climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
-# globs=('*troprad3*t42l20s*0000.*') # only for the fast runs
 climo_start=200 climo_end=1100 # NOTE: use this for troprad3 runs, which were screwed in last 100 days
-globs=('*troprad3_*t42l40*')
-# globs=('*troprad3-anom*')
-# globs=('*tgrad*020.000')
-postprocess="--climo "
-# postprocess="--eof2d "
-subfolder=netcdf
-storage=/home/ldavis/data
-scratch=/home/ldavis # on Euclid, home is unmounted/not backed up; so disk I/O is quick
+spin_start=0 spin_end=100000
+globs=('*troprad3-anom*')
+flags="--climo " # --eof2d
+
 # Host-specific settings
+subfolder=netcdf
+storage=$HOME/data
+scratch=$HOME
 case ${HOSTNAME%%.*} in
   uriah) # special case -- we may store real data here
     storage=/Users/ldavis/data
     scratch=/Users/ldavis/data
     subfolder=
-    postprocess+="--use-daily " # no subfolder
+    flags+="--climo-from-daily " # no subfolder
   ;; gauss)
     scratch=/birner-scratch/ldavis # need to use special scratch directory
   ;; euclid)
@@ -48,6 +36,10 @@ case ${HOSTNAME%%.*} in
     scratch=/mdata1/ldavis
   ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
 esac
+flags="$flags --mode=$runmode
+  --spin-start=$spin_start --spin-end=$spin_end
+  --climo-start-$climo_start --climo-end=$climo_end"
+
 # Iterate
 for glob in ${globs[@]}; do
   for input in $scratch/$glob; do
@@ -56,24 +48,24 @@ for glob in ${globs[@]}; do
       echo "Warning: No directories for glob pattern ${input}." && sleep 3 && continue
     fi
     echo "Directory: ${input}."
+
     # Crude parallelization across multiple experiments
-    if [ ${#pids[@]} -gt 0 ] && [ $(( ($counter-1) % $parallel_max )) == 0 ]; then
+    if [ ${#pids[@]} -gt 0 ] && [ $(( (counter - 1) % parallel_max )) == 0 ]; then
       echo "Waiting for processes: ${pids[@]}."
       for pid in ${pids[@]}; do
         wait $pid
         [ $? -ne 0 ] && echo "Error: A post-processing step failed." && exit 1
       done; pids=() # reset tracked process ids
     fi
+
     # Run stuff; will generate individual logs for each 'type' of
     # post-process, and a bigger log that indicates what processes are running
     echo "Current experiment directory: \"${input##*/}\"."
     output="$storage/${input##*/}/" # saving processed data
-    input="$input/$subfolder" # loading raw data
+    input="$input/$subfolder"       # loading raw data
     [ ! -d $output ] && mkdir $output
     $dryrun && cmd="echo ./postprocess_run" || cmd="./postprocess_run"
-    flags="$postprocess --mode $runmode
-      --spin-start $spin_start --spin-end $spin_end
-      --climo-start $climo_start --climo-end $climo_end"
+
     # Opionally run in parallel, or just linearly
     echo "Calling postprocess with flags: $flags"
     sleep 1

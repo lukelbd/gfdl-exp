@@ -7,6 +7,11 @@
 ########################
 .vim/plugged
 
+# Batch scripts #
+#################
+*.pbs
+*.sbatch
+
 # VIM extras #
 ##############
 .session.vim
@@ -25,11 +30,6 @@
 
 # Storage #
 ###########
-old
-trash
-learning
-originals
-copies
 __old__
 __trash__
 __pycache__

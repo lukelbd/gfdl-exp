@@ -17,245 +17,352 @@
 # Function for checking NCL scripts success
 # Script sometimes fails to spawn child process for displaying time information; ignore these errors
 # Also Execute.c is always shown as error alongside specific function error, so ignore that one
-function nclcheck() { # input log file as argument
+nclcheck() { # input log file as argument
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
   return $? # return exit code; good status means we found error, bad status means we found nothing
     # ignore ^warning: because these will also happen if we have a systemfunc error possibly
 }
+
 # Parse input flags
-nomove=false      # keep data in original folder, instead of moving to ../netcdf? useful for testing
-keepxyz=false     # keep original "full" results?
-resume=false      # process old "full" files?
-cdointerp=false   # slower than NCO
-onlycombine=false # just run mppnccombine
+# cores=8 # default cores for mppnccombine, actually this didn't work so nevermind
+_dir='.'
+_debug=false   # keep data in original folder, instead of moving to ../netcdf? useful for testing
+_resume=false  # process old "full" files?
+_keepxyz=false # keep original "full" results?
+_combine=false # only combine model files, nothing else?
+_splitxyz=true # make true the default
+nsplit=4 # number of time splits for XYZ files
 while [ $# -gt 0 ]; do
   case $1 in
+    -c|--combine) echo "Only combining files." && _combine=true ;;
     -q|--quit) echo "Skipping processing." && exit 0 ;;
-    -k|--keep)         keepxyz=true     ;; # whether to keep longitudinal data
-    -r|--resume)       resume=true      ;; # process old results
-    -m|--no-move)      nomove=true      ;; # if true, keep all intermediate files
-    -i|--interp-cdo)   cdointerp=false  ;; # interpolate with CDO instead of NCL? much slower during testing (see notes)
-    -c|--combine-only) onlycombine=true ;; # only combine data
-    *) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
+    -d=*|--dir=*) _dir=${1##*=} ;;
+    -d|--debug)  _debug=true   ;;  # if true, keep all intermediate files
+    -r|--resume) _resume=true  ;; # process old results sitting in the directory
+    -k|--keep)   _keepxyz=true ;; # whether to keep longitudinal data
+    -s|--split) _splitxyz=true ;; # whether to split XYZ files before combining
+    *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
   esac
   shift # shift by one
 done
+$_debug && _keepxyz=true
+$_resume && _keepxyz=true # we are *reading* from existing XYZ files so definitely don't delete them!
+
 # Global vars
-t0=$(date +%s)                    # starting time
-bin=${0%/*}                       # same location as this file; trim filename from right
-interpcdo=$bin/process_interp     # interpolate with CDO
-interpncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
-mppnccombine=$bin/mppnccombine.x  # combine; needs to have been compiled here
-params=$bin/process_params.ncl    # params with NCL
-basics=$bin/process_basic         # zonal means and flux terms with CDO
-lorenz=$bin/process_energy.ncl    # eddy and mean Lorenz energy cycle terms with NCL
-process3d=$bin/process_3d         # 3d processing with CDO and stuff
-# lorenz=$bin/process_lorenz      # Lorenz energy cycle terms with CDO
-# energy=$bin/process_energy      # Lorenz energy cycle terms with CDO
+t0=$(date +%s) # starting time
+bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from right
+run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
+interp_cdo=$bin/process_interp.cdo # interpolate with CDO
+interp_ncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
+mppnccombine=$bin/mppnccombine.x # combine; needs to have been compiled here
+process=$bin/process_params.ncl  # eddy and mean Lorenz energy cycle terms with NCL
+means=$bin/process_means.ncl     # just gets zonal means
+cd $_dir # optionally pass dir argument
+
 # Double check some stuff
-[ ! -x $basics ]        && echo "Error: The script \"$basics\" is missing."                       && exit 127
-[ ! -x $lorenz ]        && echo "Error: The script \"$lorenz\" is missing."                       && exit 127
-[ ! -r $interpncl ]     && echo "Error: The script \"$interpncl\" is missing."                    && exit 127
-[ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable \"$mppnccombine\" is missing." && exit 127
-! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                                     && exit 127
-! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                                     && exit 127
-! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                                     && exit 127
+[ ! -r $process ]       && echo "Error: The script \"$process\" is missing."          && exit 127
+[ ! -r $interp_ncl ]    && echo "Error: The script \"$interp_ncl\" is missing."       && exit 127
+[ ! -x $mppnccombine ]  && echo "Error: The executable \"$mppnccombine\" is missing." && exit 127
+! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                         && exit 127
+! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                         && exit 127
+# ! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                       && exit 127
 
 ################################################################################
-# Combine the files produced in parallel
-# And check if any netCDF output; see: https://stackoverflow.com/q/2937407/4970632
-if $resume; then
-  # Will use existing _full.nc XYZ resolution files for getting the XY files
-  echo "Using previous model results for getting XY files."
-  if $nomove; then
-    ncfiles=(*_full.nc)
-  else
-    ncfiles=(../netcdf/*_full.${PWD##*/}.nc)
-  fi
-  [[ "$ncfiles" =~ "*" ]] && echo "Error: XYZ resolution file was not found."
-else
-  # Will process the raw model output, then get the _full XYZ files and XY files from result
+# Functions
+# Stdout of following lines is overview; view separate logfiles for specifics
+################################################################################
+# Function for interpolating model levels
+hybrid_to_press() {
+  # Interplolate to pressure levels from model levels
+  local t log filename output suffix
+  filename="$1"
+  suffix="$2"
+  output=${filename%%.*}_interp.$suffix
+  log=LOGS/log.interp.${suffix%.nc}
   t=$(date +%s)
-  for ncfile in *.nc.0000; do # for each output filename
-    [[ "$ncfile" =~ "*" ]] && echo "Error: No netcdf files found." && exit 1 # make sure nullglob turned off
-    files=(${ncfile%%.*}.nc*) # put into array
-    echo "Combining files: ${files[@]} into ${ncfile%%.*}.nc"
-    $mppnccombine -r ${ncfile%%.*}.nc ${files[@]}
-  done # -r flag says to remove the decomposed .0000 files after they are combined; arg 1 is output, arg 2-N is input
-  echo "  * Time for combining files: $(($(date +%s) - $t))s."
-  # Initialize directory for output
-  [ ! -d ../netcdf ] && mkdir ../netcdf # make directory if doesn't exist
-  ncfiles=(*.nc) # each output file
-fi
-# Optional exit, if only wanted to combine data
-if $onlycombine; then
-  exit 0
-fi
 
-################################################################################
-# THE STDOUT OF THESE LINES IS AN OVERVIEW; SEPARATE STDOUTS FOR CDO/NCL STEPS
-# CAN BE FOUND IN SEPARATE LOGS; CHECK THOSE LOGS IF WE HAVE AN ERROR
-# Before, this function also accepted averaged data; not anymore, but these are
-#   some approaches for testing if file has averaged data
-# * [[ " $(cdo -s showname $ncfile) " =~ " time_bounds " ]] # CDO test if averaged
-#   isaveraged="print(isfilevar(addfile(\"$ncfile\",\"r\"),\"time_bounds\"))"
-# * [ $(ncl -Q -n <<< "$isaveraged") == "False" ] # NCL test if averaged
-# * [[ ! " $(ncvarlist $ncfile) " =~ " time_bounds " ]] # NCO test if averaged
-for ncfile in ${ncfiles[@]}; do
-  # Ouput file names
-  if $nomove; then # special names, and keep in same folder
-    xyfile="${ncfile%%.*}_summary.nc" # longitude-averaged data
-    xyzfile="${ncfile%%.*}_full.nc" # original data
-  else
-    xyfile="../netcdf/${ncfile%%.*}_summary.${PWD##*/}.nc" # longitude-averaged data
-    xyzfile="../netcdf/${ncfile%%.*}_full.${PWD##*/}.nc" # original data
-  fi
   # Apply some simple modifications to attributes
-  ncrename -d pfull,mlev $ncfile &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
-  ncrename -d phalf,ilev $ncfile &>/dev/null # ilev is the other ECHAM convention
-  ncrename -v pfull,mlev $ncfile &>/dev/null # -d renames dimensions, -v renames variables of same name
-  ncrename -v phalf,ilev $ncfile &>/dev/null
-  ncatted -O -a bounds,mlev,o,c,"ilev" $ncfile
-  ncatted -O -a long_name,udamp,o,c,"Rayleigh damping of zonal wind" $ncfile
-  ncatted -O -a long_name,vdamp,o,c,"Rayleigh damping of meridional wind" $ncfile
+  # NOTE: Use -h to prevent appending history
+  ncrename -h -d pfull,mlev $filename &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
+  ncrename -h -d phalf,ilev $filename &>/dev/null # ilev is the other ECHAM convention
+  ncrename -h -v pfull,mlev $filename &>/dev/null # -d renames dimensions, -v renames variables of same name
+  ncrename -h -v phalf,ilev $filename &>/dev/null
+  ncatted -h -O -a bounds,mlev,o,c,"ilev" $filename
 
-  ############################################################################
-  if ! $resume; then # data already interpolated
-    # 1) Interpolate the data to pressure levels
-    interpfile=${ncfile%%.*}_interp.nc
-    # a) Use CDO for interpolation
-    t=$(date +%s)
-    if $cdointerp; then
-      echo "Interpolating with CDO..."
-      $interpcdo $ncfile $interpfile &>log.interp # that simple babe
-      [ $? != 0 ] && echo "Error: Something failed during CDO interpolation." && exit $?
-      ! $nomove && rm interp?.nc
-    # b) Use NCL vint2hp_ecmwf for interpolation
-    else
-      echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
-      ncl -n -Q "filename=\"$ncfile\"" "outfile=\"$interpfile\"" $interpncl &>log.interp #2> /dev/null
-      if nclcheck log.interp || [ ! -r $interpfile ]; then
-        echo "Error: Something failed during NCL interpolation." && exit 2
-      fi
-    fi
-    # Standardize attributes
-    ncatted -a edges,lon,d,, -a edges,lat,d,, \
-      -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" \
-      -a long_name,plev,o,c,"pressure level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
-      -a long_name,lat,o,c,"latitude" -a units,lat,o,c,"degrees_north" \
-      -a long_name,lon,o,c,"longitude" -a units,lon,o,c,"degrees_east" $interpfile
-    $nomove && ncfile=$interpfile || mv $interpfile $ncfile # move old file on top of new file
-    echo "  * Time for interpolation: $(($(date +%s) - $t))s."
+  # Interpolation
+  echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
+  [ -r "$output" ] && rm "$output"
+  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" $interp_ncl &>$log #2> /dev/null
+  if nclcheck $log || [ ! -r $output ]; then
+    echo "Error: Something failed during NCL interpolation." && exit 2
   fi
 
-  # ##############################################################################
-  # # Add some parameters to the longitude-latitude file with NCL
-  # t=$(date +%s)
-  # echo "Getting extra parameters with NCL..." # -Q = no banner, -n = do not enumerate print statements
-  # ncl -n -Q "filename=\"$ncfile\"" $params &>log.params #2> /dev/null
-  # if nclcheck log.params; then
-  #   echo "Error: Something failed getting extra parameters with NCL." && exit 3
-  # fi
-  # echo "  * Time for getting extra parameters with NCL: $(($(date +%s) - $t))s."
+  # Standardize attributes
+  # Many of these may already be properly set, but make sure; CDO also may want
+  # a few special ones like 'axis' and 'standard_name'
+  # NOTE: This is really fast (0.02s on T42 20 day file)
+  # This is much faster than even editing one attribute in NCL (0.05s)
+  # NOTE: We set the calendar to '360_day' because that seems reasonable for
+  # an equinoctial model run (even months of 30), and software like CDO and
+  # xarray cannot interpret the default 'NO_CALENDAR'
+  ncatted -h -O -a NumFilesInSet,global,o,l,$numfiles \
+    -a edges,lon,d,, -a edges,lat,d,, \
+    -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" -a axis,time,o,c,"T" \
+    -a long_name,plev,o,c,"pressure_level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
+    -a long_name,lat,o,c,"latitude"  -a standard_name,lat,o,c,"latitude" \
+    -a long_name,lon,o,c,"longitude" -a standard_name,lon,o,c,"longitude" \
+    -a calendar_type,time,d,, -a calendar,time,o,c,"360_day" -a standard_name,time,o,c,"time" \
+    -a units,lat,o,c,"degrees_north" -a units,lon,o,c,"degrees_east" $output
+  ! $_debug && mv $output $filename # move old file on top of new file
+  echo "  * Time for interpolation: $(($(date +%s) - t))s."
+}
 
-  ##############################################################################
-  # 2) Get 2D resolution parameters
-  # First the CDO commands
-  # t=$(date +%s)
-  echo "Getting CDO 2D parameters..."
-  $basics $ncfile &>log.basic &
-  pbasics=$!
-  # [ $? != 0 ] && echo "Error: Something failed while getting basic terms." && exit 3
-  # echo "  * Time for getting basic terms with CDO: $(($(date +%s) - $t))s."
-  ##############################################################################
-  # Next the NCL commands; used to get energy terms
-  # Some of these require the extra variables output by NCL; also meridional flux
-  # terms rely on NCL having set poleward==positive in each hemisphere
-  # t=$(date +%s)
-  echo "Getting NCL 2D parameters..."
-  ncl -n -Q "filename=\"$ncfile\"" $lorenz &>log.lorenz &
-  plorenz=$!
-  # if nclcheck log.lorenz; then
-  #   echo "Error: Something failed getting extra parameters with NCL." && exit 4
-  # fi
-  # echo "  * Time for getting Lorenz energy terms with NCL: $(($(date +%s) - $t))s."
-  ##############################################################################
-  # Manage the two background processes
-  wait $pbasics # wait for basic terms
-  [ $? != 0 ] && echo "Error: Something failed while getting CDO parameters." && exit 3
-  twait=$(tail -1 log.basic | sed 's/[^0-9]*//g')
-  echo "  * Time for getting 2D parameters with CDO: ${twait}s."
-  wait $plorenz # wait for Lorenz terms
-  if nclcheck log.lorenz; then
-    echo "Error: Something failed while getting NCL parameters." && exit 4
-  fi
-  twait=$(tail -1 log.lorenz | sed 's/[^0-9]*//g')
-  echo "  * Time for getting 2D parameters with NCL: ${twait}s."
-
-  ##############################################################################
-  # 4) Tidy up, and get 2D terms
+# Means
+means() {
+  # Get the zonal means
+  local t log filename output suffix
+  filename="$1"
+  suffix="$2"
+  output=means.${suffix}
+  log=LOGS/log.means.${suffix%.nc}
   t=$(date +%s)
-  echo "Merging the CDO and NCL parameters into one file..."
-  # First add back longitudes to NCL calculated terms
-  # Hard/annoying/verbose to fix this in NCL so do it here
-  for f in energy??.nc; do # absolutely necessary for CDO to detect plev as vertical axis, and need singleton longitude
-    cdo -s -setgrid,basic1.nc $f tmp.nc; mv tmp.nc $f # so ugly... kill me...
-  done
-  # Next apply merge
-  cdo -O -s -merge basic?.nc energy??.nc $xyfile # will raise errors because edges were deleted, but still referenced by attributes
-  ncks -O $xyfile $xyfile # clever hack; just *alphabetizes* the variables in file, and very fast
-  echo "  * Time for merging into one file: $(($(date +%s) - $t))s."
-  # Then remove the temporary files
-  ! $nomove && rm basic?.nc energy??.nc
-  if ! $resume; then
-    if $nomove || $keepxyz; then
-      # Keep the old file
-      # Also get divergence, vorticity, streamfunction, and velocity potential
-      t=$(date +%s)
-      echo "Keeping XYZ file and calculating extra terms..."
-      cdo -O -s -uv2dv -selname,u,v $ncfile dv0.nc 1>/dev/null          # gets spectral coefs for vor/div from Gaussian grid of u/v
-      cdo -O -s -delname,velopot -invertlat -sp2gp -dv2ps dv0.nc dv1.nc # spectral vor/div to spectral streamfunc/velocity pot; throw out the latter
-      cdo -O -s -chname,sd,div,svo,vor -invertlat -sp2gp dv0.nc dv2.nc  # better names
-      ncap2 -O -s '*f[$lat] = 2*7.292e-5*sin(lat*3.14159/180); absvor = vor+f' dv2.nc dv2.nc # tack on absolute vorticity
-        # get absolute vorticity; asterisk means this is a "RAM" variable, not saved in final output
-      if [ ! -r dv0.nc ] || [ ! -r dv1.nc ] || [ ! -r dv2.nc ]; then
-        echo "Warning: Could not get the vir/div/streamfunc terms."
-        mv $ncfile $xyzfile
-      else
-        cdo -O -s -merge $ncfile dv1.nc dv2.nc $xyzfile
-        ! $nomove && rm $ncfile
-      fi
-      ! $nomove && rm dv?.nc # remove any that may exist
-      echo "  * Time for getting extra div/vor/streamfunc terms from original file: $(($(date +%s) - $t))s."
+  echo "Getting zonal means..."
+  [ -r "$output" ] && rm "$output"
+  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" $means &>$log
+  if nclcheck $log; then
+    echo "Error: Something failed while getting zonal means." && exit 4
+  fi
+  echo "  * Time for getting zonal means: $(($(date +%s) - t))s."
+}
+
+# Once, this function also accepted averaged data; not anymore, but these are
+# some approaches for testing if file has averaged data
+params() {
+  # Ouput file names
+  local t log filename output suffix
+  filename="$1"
+  suffix="$2"
+  output=params.${suffix}
+  log=LOGS/log.params.${suffix%.nc}
+  t=$(date +%s)
+  echo "Getting other params..."
+  [ -r "$output" ] && rm "$output"
+  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" "suffix=\"$suffix\"" $process &>$log
+  if nclcheck $log; then
+    echo "Error: Something failed while getting other params." && exit 4
+  fi
+  echo "  * Time for getting other params: $(($(date +%s) - t))s."
+}
+
+################################################################################
+# Driver, calls above functions
+################################################################################
+# Get files
+if $_debug; then
+  _parallel=true
+  files=(test.nc.0000) # doesn't really exist
+elif $_resume; then
+  _parallel=false
+  files=(*_full.${PWD##*/}.nc) # the preserved output file
+else
+  _parallel=true
+  files=(*.nc.0000)
+fi
+if [[ "$files" =~ "*" ]]; then
+  files=(*.nc) # already present?
+  [ ${#files[@]} -eq 1 ] && echo "Error: XYZ resolution files not found." && exit 1 # make sure nullglob turned off
+  echo "Note: Model ran on only 1 core, do not need to merge files."
+fi
+# Loop through each file
+for file in ${files[@]}; do
+  ##############################################################################
+  # Initial stuff
+  ##############################################################################
+  # File names and such
+  base=${file%%.*}
+  if $_debug && $_resume; then
+    ncfiles=(${base}.*.nc) # check if already present
+  elif $_resume; then
+    ncfiles=(${file})
+  else
+    for part in ${base}.nc*; do
+      num=${part##*.}
+      mv $part ${base}.${num}.nc & # some programs won't recognize file without .nc extension
+    done
+    wait # in background
+    ncfiles=(${base}.*.nc)
+  fi
+  echo Files: ${ncfiles[@]}
+  numfiles=${#ncfiles[@]}
+  xyzfile="${base}_full.${PWD##*/}.nc"   # original data
+  yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
+  # Just want to combine files and exit?
+  if $_combine; then
+    [ -r ${base}.nc ] && rm ${base}.nc
+    $mppnccombine -r ${base}.nc ${ncfiles[@]}
+    continue
+  fi
+
+  ##############################################################################
+  # 1) Interpolate to pressure, get means in parallel
+  ##############################################################################
+  tp=$(date +%s)
+  echo "Interpolating and getting means..."
+  ! [ -d LOGS ] && mkdir LOGS
+  for ncfile in ${ncfiles[@]}; do
+    if ! $_debug && $_resume; then
+      # Just get means
+      num=0000
+      suffix=nc # dummy value
+      means "$ncfile" "nc" &>LOGS/log.$num &
     else
-      # Delete the old file
-      echo "Removing XYZ file..."
-      ! $nomove && rm $ncfile # simple
+      # Number
+      num=${ncfile%.nc}
+      num=${num#*.}
+      suffix=${num}.nc
+      # Interpolate and get means
+      $_debug && mfile=${ncfile%%.*}_interp.$suffix || mfile=$ncfile
+      { hybrid_to_press "$ncfile" "$suffix"; means "$mfile" "$suffix"; } &>LOGS/log.$num &
     fi
+  done; wait
+  $_debug && ncfiles=(${base}_interp.*.nc) # we didn't overwrite them
+  echo "  * Time for interpolating and getting zonal means in parallel: $(($(date +%s) - tp))s."
+
+  ##############################################################################
+  # 2) Calculate other params in parallel
+  ##############################################################################
+  # Global means were required for some, hence the initial merge
+  tp=$(date +%s)
+  echo "Getting other params..."
+  for ncfile in ${ncfiles[@]}; do
+    # Number
+    if $_resume && ! $_debug; then
+      num=0000
+      suffix=nc # dummy value
+    else
+      num=${ncfile%.nc}
+      num=${num#*.}
+      suffix=${num}.nc
+    fi
+    params "$ncfile" "$suffix" &>>LOGS/log.${num} &
+  done; wait
+  echo "  * Time for getting params in parallel: $(($(date +%s) - tp))s."
+
+  # Merge zonal means
+  # NOTE: Use mppnccombine -h to print help info; the -r removes files after
+  # run was successful
+  if $_parallel; then
+    # Merge params
+    echo "Combining YZ files..."
+    t=$(date +%s)
+    [ -r means.nc ] && rm means.nc
+    [ -r params.nc ] && rm params.nc
+    $mppnccombine means.nc means.*.nc &
+    $mppnccombine params.nc params.*.nc &
+    wait
+    echo "  * Time for combining files: $(($(date +%s) - t))s."
+    $_debug && rm means.*.nc params.*.nc
+  fi
+  # Append params to file; want them to show up at end of ncdump ideally
+  # ncks -h --no-abc -A means.nc params.nc
+  ncks -h --no-abc -A params.nc means.nc
+  if $_debug; then
+    cp means.nc $yzfile
+  else
+    mv means.nc $yzfile
+    rm params.nc
+  fi
+
+  ##############################################################################
+  # 3) Optionally merge the pressure-interpolated files
+  # TODO: Consider reducing to a standard horizontal resolution at least, if
+  # not vertical? This could save considerable space.
+  # NOTE: Had error on Cheyenne where mppnccombine failed for sufficiently
+  # big files (threshold was somewhere between 60-80 timesteps at T106 resolution)
+  # To fix this, we take time hyperslabs, merge each half, then re-combine
+  ##############################################################################
+  # Delete the old file
+  if ! $_keepxyz; then
+    echo "Removing XYZ files..."
+    ! $_debug && rm ${ncfiles[@]} # simple
+  # Merge files
+  # Will drop variables in parallel before merging
+  elif ! $_resume; then
+    t=$(date +%s)
+    unset interp # empty array
+    echo "Keeping XYZ files..."
+    keep=plev_bnds,latb,lonb,slp,u,v,t
+    # Without splitting in half
+    if ! $_splitxyz; then
+      for ncfile in ${ncfiles[@]}; do
+        $_debug && out=${ncfile%%.*}_x.${ncfile#*.} || out=$ncfile
+        ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $ncfile $out &
+        interp+=($out)
+      done; wait
+      echo "  * Time for trimming variables: $(($(date +%s) - t))s."
+      t=$(date +%s)
+      echo "Combine full files."
+      [ -r $xyzfile ] && rm $xyzfile
+      $mppnccombine -r $xyzfile ${interp[@]}
+      [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
+      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+    # Split into files of *n* timesteps
+    else
+      # First a simple test
+      ts=$(ncdump -h ${ncfiles[0]} | grep 'UNLIMITED' | sed 's/[^0-9]//g')
+      [ -z "$ts" ] && echo "Error: Unknown timesteps for file ${ncfiles[0]}." && exit 127
+      [ $((ts % nsplit)) -eq 1 ] && echo "Error: Incompatible number of timesteps ${ts} for ${nsplit} splits." && exit 127
+      # Bugfix; had issues with lost memory even on 109GB nodes, maybe has
+      # to do with hardware architecture or something
+      for ni in $(seq 1 $nsplit); do
+        unset outs
+        for ncfile in ${ncfiles[@]}; do
+          out=${ncfile%%.*}_x${ni}.${ncfile#*.}
+          t1=$(((ni - 1)*ts/nsplit)) # e.g. nsplit=10, ts=200, goes 0, 20, 40, 60
+          t2=$((ni*ts/nsplit - 1)) # e.g. nsplit=10, ts=200, goes 19, 39, 59
+          ncks -O -h --no-abc -d time,$t1,$t2 -v $keep $ncfile $out &
+          outs+=" $out"
+        done
+        interp+=("$outs")
+      done; wait
+      echo "  * Time for trimming variables: $(($(date +%s) - t))s."
+      t=$(date +%s)
+      # Combine groups of half-files
+      i=1
+      unset ps xyzfiles
+      echo "Combine pieces..."
+      for group in "${interp[@]}"; do
+        ixyzfile=${xyzfile%.nc}_${i}.nc
+        $mppnccombine -r $ixyzfile $group &
+        xyzfiles+=($ixyzfile)
+        ps+=($!)
+        let i+=1
+      done
+      for p in ${ps[@]}; do
+        wait $p
+        [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
+      done
+      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+      # Put back together
+      t=$(date +%s)
+      echo "Put back together..."
+      ncrcat -O ${xyzfiles[@]} $xyzfile
+      ! $_debug && rm ${xyzfiles[@]} ${ncfiles[@]}
+      echo "  * Time for putting XYZ files back together: $(($(date +%s) - t))s."
+    fi
+  fi
+
+  ##############################################################################
+  # Then copy files to common directory
+  ##############################################################################
+  if ! $_debug; then
+    ! [ -d ../netcdf ] && mkdir ../netcdf
+    [ -r $yzfile ]  && mv $yzfile ../netcdf
+    [ -r $xyzfile ] && mv $xyzfile ../netcdf
   fi
 done
-# Finally, echo time of finish
+
+# Echo time of finish
 # Can parse this to send message to the window that ran the runscript/batch runscript
 # echo $(($(date +%s) - $t0)) # prints UNIX time difference
-echo "TOTAL TIME ELAPSED: $(($(date +%s) - $t0))s."
-
-################################################################################
-# Old stuff
-# Previous CDO commands
-# cdo $flags chname,f0,EHF -zonmean $timmean \
-#   -mul -selvar,f0 $ncfile \
-#        -div -mul -sub -selvar,pt $ncfile -enlarge,$ncfile -zonmean -selvar,pt $ncfile \
-#                  -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
-#             -selvar,dthdp $ncfile \
-# cdo $flags chname,u,KE $timmean \
-#   -add -divc,9.81 -divc,2 -add -sqr -selvar,u out1.nc \
-#                                -sqr -selvar,v out1.nc \
-#        -selvar,EKE out5.nc \
-#   out7.nc # the total kinetic energy
-# Whitespace-safe option for looping through glob results:
-# find . -iname "*.nc.0000" | while read ncfile; do
-# find . -iname "*.nc" | while read file; do
-# Note: 'read' reads each line from standard input and splits line into variable names
-# requested (e.g. could have read a b c <<< "foo bar baz"); the while works because exit
-# status is 1 during read process, and is 0 when reaching end of file/data stream
-
+echo "TOTAL TIME ELAPSED: $(($(date +%s) - t0))s."

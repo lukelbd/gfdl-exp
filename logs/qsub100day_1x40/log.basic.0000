@@ -1,0 +1,68 @@
+Getting parameters with CDO...
+Warning (set_calendar): calendar >no_calendar< unsupported!
+  * Time for zonal means: 181s.
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+
+
+
+
+
+
+
+
+
+
+
+
+
+  * Time for eddy momentum flux: 65s.
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+
+
+
+
+
+
+
+
+
+
+
+
+
+  * Time for eddy heat flux: 30s.
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+
+
+
+
+
+
+
+
+  * Time for temperature variance: 2s.
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+Warning (set_calendar): calendar >no_calendar< unsupported!
+
+
+
+
+
+
+
+
+  * Time for zonal wind variance: 4s.
+TOTAL TIME ELAPSED: 282s.
