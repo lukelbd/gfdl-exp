@@ -261,7 +261,7 @@ for file in ${files[@]}; do
     $mppnccombine params.nc params.*.nc &
     wait
     echo "  * Time for combining files: $(($(date +%s) - t))s."
-    $_debug && rm means.*.nc params.*.nc
+    ! $_debug && rm means.*.nc params.*.nc
   fi
   # Append params to file; want them to show up at end of ncdump ideally
   # ncks -h --no-abc -A means.nc params.nc

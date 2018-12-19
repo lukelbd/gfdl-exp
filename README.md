@@ -30,6 +30,19 @@ Turned out that **running process step in parallel** was bad idea. Didn't really
 | T95 | 2000 | 120GB (1.2TB per series) |
 | T95 | 5000 | 300GB (3TB per series) |
 | T63 | 5000 | 130GB (1.3TB per series) |
+
+## Minimum timestep and damping rate
+| Truncation | Timescale (days) | Maximum timesteps (s) |
+| --- | --- | --- |
+| T95 | 0.2-4 | 400 |
+| T95 | 10-40 | 600 (800?) |
+| T95 | 100 | 800 |
+| T95 | 200-400 | 1000? |
+| T95 | 1000 | 1200 |
+
+The 10-100 experiments were run with 600s timesteps. Haven't tested 800.
+
+
 <!-- Also will **archive full resolution data** for time being, consider then storing everything at T63 resolution! Or just save 2000 days. Up to me. Ask Thomas. -->
 <!-- In terms of **timesteps** -- tried 400s for experiments faster than 10 days, and 1200s for default experiments slower than 40 days. Perhaps should try **800s** for the 10 day-40 day experiments, and for the temperature gradient experiments. -->
 
