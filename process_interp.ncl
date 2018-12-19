@@ -18,6 +18,7 @@ begin ; procedures don't have to return values like functions
   print(message + ": " + tostring(newtime-time) + "s.")
   time = newtime ; overwrite in global scope
 end
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; First read the file
 print("Reading initial file and interpolating...")

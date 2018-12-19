@@ -12,7 +12,7 @@
 # 1 for radiation off, 2 for radiation off but surface on, 
 # 3 for everything off (radiation, surface, and friction), 4 for friction off
 runmode=0 # 0 is control run, the rest are different spindown modes:
-parallel_max=8 # maximum parallel post-processing events
+parallel_max=1 # maximum parallel post-processing events
 dryrun=false
 filename=4xdaily_inst # prefix for files to be read
 spin_start=0 spin_end=100000
@@ -25,7 +25,8 @@ spin_start=0 spin_end=100000
 # climo_start=100 climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
 # globs=('*troprad3*t42l20s*0000.*') # only for the fast runs
 climo_start=200 climo_end=1100 # NOTE: use this for troprad3 runs, which were screwed in last 100 days
-globs=('*troprad3-anom*')
+globs=('*troprad3_*t42l40*')
+# globs=('*troprad3-anom*')
 # globs=('*tgrad*020.000')
 postprocess="--climo "
 # postprocess="--eof2d "
