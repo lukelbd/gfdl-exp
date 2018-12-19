@@ -32,23 +32,23 @@ spin_end=100000
 # Parse user input
 while [ $# -gt 0 ]; do
   case $1 in
-    --mode=*|-m=*)         mode=${1##*=}               ;;
-    --climo-start=*|-c1=*) climo_start=${1##*=}        ;;
-    --climo-end=*|-c2=*)   climo_end=${1##*=}          ;;
-    --spin-start=*|-s1=*)  spin_start=${1##*=}         ;;
-    --spin-end=*|-s2=*)    spin_end=${1##*=}           ;;
-    --debug|-d)            debug=true                  ;;
-    --daily)               daily=true                  ;;
-    --climo-from-daily)    climo_from_daily=true       ;;
-    --climo)               climate=true                ;;
-    --climo-timeseries)    climo_timeseries=true       ;;
-    --autocorr)            autocorr=true               ;;
-    --energy)              energy=true                 ;;
-    --eof1d)               eof1d=true                  ;;
-    --eof2d)               eof2d=true                  ;;
-    --spin-climate)        spin_climate=true           ;;
-    --spin-ensemble)       spin_ensemble=true        ;;
-    --spin-timescale)      spin_timescale=true         ;;
+    -m=*|--mode=*)           mode=${1##*=}         ;;
+    -c1=*|--climo-start=*)   climo_start=${1##*=}  ;;
+    -c2=*|--climo-end=*)     climo_end=${1##*=}    ;;
+    -s1=*|--spin-start=*)    spin_start=${1##*=}   ;;
+    -s2=*|--spin-end=*)      spin_end=${1##*=}     ;;
+    -d|--debug)              debug=true            ;;
+    -da|--daily)             daily=true            ;;
+    -cl|--climo)             climate=true          ;;
+    -cld|--climo-from-daily) climo_from_daily=true ;;
+    -clt|--climo-timeseries) climo_timeseries=true ;;
+    -a|--autocorr)           autocorr=true         ;;
+    -e|--energy)             energy=true           ;;
+    -e1d|--eof1d)            eof1d=true            ;;
+    -e2d|--eof2d)            eof2d=true            ;;
+    -sc|--spin-climate)      spin_climate=true     ;;
+    -se|--spin-ensemble)     spin_ensemble=true    ;;
+    -st|--spin-timescale)    spin_timescale=true   ;;
     -*) echo "Error: Unknown flag \"${1}\"." && exit 1 ;;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
@@ -60,7 +60,7 @@ while [ $# -gt 0 ]; do
       else echo "Error: Too many arguments." && exit 1
       fi ;;
   esac
-  shift # shift at least once for flags; for key-value pairs, make sure to shift twice
+  shift
 done
 echo file $filename input $input output $output
 
