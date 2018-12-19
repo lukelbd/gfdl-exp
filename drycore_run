@@ -154,7 +154,7 @@ driver() {
   echo "Calling processing script with flags: $(echo $pflags_day $pflags_global | xargs)"
   $process $pflags_day $pflags_global &>log.process
   exit_check $?
-  tprocess=$(tail -1 $rdir/log.process | sed 's/[^0-9]*//g' )
+  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
   echo "Process time: ${tprocess%.*}s."
   # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $!
   # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs

@@ -5,21 +5,33 @@ All sorts of useful tools for running and processing parameter sweep experiments
 # Benchmarks
 Some benchmarks for running the dry core model on various machines are provided below.
 
-## CDO bottleneck with concurrent background processes
-It seems that CDO becomes exceedingly slow, **particularly** when multiple variables have to be read from one file. Log files for several test experiments can be found in `logs`.
-<!-- The CDO approach was **unique** in that it entails **many, consecutive reads to the same file**... however this **does not explain** the particular slowness of simple `-zonmean` operation. Maybe in this special case, when you have all these consecutive IO threads going on, and other processes in the background, becomes a special bottleneck. -->
+<!-- ## CDO bottleneck with concurrent background processes -->
+<!-- It seems that CDO becomes exceedingly slow, **particularly** when multiple variables have to be read from one file. Log files for several test experiments can be found in `logs`. -->
 
-Turns out that **running on 40 cores, 1 node** (`qcmd100day_1x40`) or **running on 10 nodes, 4 cores each** (`qsub100day_10x4`) made no difference. When length of days/file sizes got large, CDO got really really slow. However, **running on 4 cores, 1 node** (`qcmd100day_1x4`) resulted in **significant speed-up** for the zonal averages (**47s vs. 186s**), despite individual file sizes being **much larger** (4GB vs. 400MB).
+<!-- Turns out that **running on 40 cores, 1 node** (`qcmd100day_1x40`) or **running on 10 nodes, 4 cores each** (`qsub100day_10x4`) made no difference. When length of days/file sizes got large, CDO got really really slow. However, **running on 4 cores, 1 node** (`qcmd100day_1x4`) resulted in **significant speed-up** for the zonal averages (**47s vs. 186s**), despite individual file sizes being **much larger** (4GB vs. 400MB). -->
+<!-- Evidently this is some particular problem for parallel-running CDO processes, due to all of these consecutive IO threads? This is worrying. The thread locking flag `-L` did **not** alleviate the problem. I also verified directly that `cdo zonmean test_interp.0000.nc tmp.nc` takes **15 seconds** in an interactive node or with `qcmd` on a single CPU! Anyway, this issue is remarkably strange. -->
 
-Evidently this is some particular problem for parallel-running CDO processes, due to all of these consecutive IO threads? This is worrying. The thread locking flag `-L` did **not** alleviate the problem. I also verified directly that `cdo zonmean test_interp.0000.nc tmp.nc` takes **15 seconds** in an interactive node or with `qcmd` on a single CPU! Anyway, this issue is remarkably strange.
+## Cheyenne timing
+| Truncation | Nodes | Days | Model time (with parallel) | Process time (with parallel) |
+| --- | --- | --- | --- | --- |
+| T95 | 2 | 100 | 840s (1000s) | 150s (300s) |
+| T95 | 1 | 100 | 1620s (1720s) | 300s (420s) |
 
-## Cheyenne number of cores
-At T95 resolution, 100 day blocks, 2 nodes and 36 cores: got **840s** model time without background processing, **1000s** model time with background processing, and **550s** to **600s** for processing. For 1 node and 36 cores, got **1625s** model time without background processing, **1735s** with background processing, and **420s** for processing.
-
+Turned out that **running process step in parallel** was bad idea. Didn't really get much benefit.
+<!-- At T95 resolution, 100 day blocks, 2 nodes and 36 cores: got **840s** model time without background processing, **1000s** model time with background processing, and **550s** to **600s** for processing. For 1 node and 36 cores, got **1625s** model time without background processing, **1735s** with background processing, and **420s** for processing. -->
 <!-- Seems more cores make processing slower; mppnccombine is contributor but even other processing steps are slightly slower, despite smaller individual files. So speeds are otherwise competitive, but parallel processing has **160s impact** on 2 nodes, only **100s impact** on 1 node. -->
-Tried splitting up file into 2 time blocks. Took **350-400s*, or **160s** for mccpncombine, compared to **350s** just for the combine step without splitting up times. For 1 node, took **300s**. Much smaller difference.
+<!-- Tried **splitting** up file into 4 time blocks. Took **350-400s*, or **160s** for mccpncombine, compared to **350s** just for the combine step without splitting up times. For 1 node, took **300s**. -->
+<!-- now am getting **800s-840s** model runtime and **120-150s** processing time, where before model was slowed to **1000s** or so. -->
+<!-- Ask Thomas about archiving 2000 days at higher resolution or 5000 days at lower resolution. -->
 
-Turned out that **running process step in parallel** was bad idea. Didn't really get much benefit; now am getting **800s-840s** model runtime and **120-150s** processing time, where before model was slowed to **1000s** or so. Also will **archive full resolution data** for time being, consider then storing everything at T63 resolution! Or just save 2000 days. Up to me. Ask Thomas.
+## Experiment storage space
+| Truncation | Days | Space |
+| --- | --- | --- |
+| T95 | 2000 | 120GB (1.2TB per series) |
+| T95 | 5000 | 300GB (3TB per series) |
+| T63 | 5000 | 130GB (1.3TB per series) |
+<!-- Also will **archive full resolution data** for time being, consider then storing everything at T63 resolution! Or just save 2000 days. Up to me. Ask Thomas. -->
+<!-- In terms of **timesteps** -- tried 400s for experiments faster than 10 days, and 1200s for default experiments slower than 40 days. Perhaps should try **800s** for the 10 day-40 day experiments, and for the temperature gradient experiments. -->
 
 <!-- For T95 resolution, got **84s** for 5 days, 1 node, all 36 cores; got **48s** for 2 nodes. -->
 <!-- For the following experiments, the model was run for **2 restart blocks**. From this, we sampled the model run time *with and without* background processing, and the processing time *with and without* background model integration. Easy! -->
