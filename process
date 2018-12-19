@@ -30,14 +30,17 @@ _debug=false   # keep data in original folder, instead of moving to ../netcdf? u
 _resume=false  # process old "full" files?
 _keepxyz=false # keep original "full" results?
 _combine=false # only combine model files, nothing else?
+_splitxyz=true # make true the default
+nsplit=4 # number of time splits for XYZ files
 while [ $# -gt 0 ]; do
   case $1 in
     -c|--combine) echo "Only combining files." && _combine=true ;;
     -q|--quit) echo "Skipping processing." && exit 0 ;;
-    -d=*|--dir=*)  _dir=${1##*=} ;;
+    -d=*|--dir=*) _dir=${1##*=} ;;
     -d|--debug)  _debug=true   ;;  # if true, keep all intermediate files
     -r|--resume) _resume=true  ;; # process old results sitting in the directory
     -k|--keep)   _keepxyz=true ;; # whether to keep longitudinal data
+    -s|--split) _splitxyz=true ;; # whether to split XYZ files before combining
     *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
   esac
   shift # shift by one
@@ -57,12 +60,12 @@ means=$bin/process_means.ncl     # just gets zonal means
 cd $_dir # optionally pass dir argument
 
 # Double check some stuff
-[ ! -r $process ]        && echo "Error: The script \"$process\" is missing."                       && exit 127
-[ ! -r $interp_ncl ]     && echo "Error: The script \"$interp_ncl\" is missing."                    && exit 127
-[ ! -x $mppnccombine ]  && echo "Error: The mpp combine executable \"$mppnccombine\" is missing." && exit 127
-! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                                     && exit 127
-! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                                     && exit 127
-! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                                     && exit 127
+[ ! -r $process ]       && echo "Error: The script \"$process\" is missing."          && exit 127
+[ ! -r $interp_ncl ]    && echo "Error: The script \"$interp_ncl\" is missing."       && exit 127
+[ ! -x $mppnccombine ]  && echo "Error: The executable \"$mppnccombine\" is missing." && exit 127
+! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                         && exit 127
+! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                         && exit 127
+# ! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                       && exit 127
 
 ################################################################################
 # Functions
@@ -79,11 +82,12 @@ hybrid_to_press() {
   t=$(date +%s)
 
   # Apply some simple modifications to attributes
-  ncrename -d pfull,mlev $filename &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
-  ncrename -d phalf,ilev $filename &>/dev/null # ilev is the other ECHAM convention
-  ncrename -v pfull,mlev $filename &>/dev/null # -d renames dimensions, -v renames variables of same name
-  ncrename -v phalf,ilev $filename &>/dev/null
-  ncatted -O -a bounds,mlev,o,c,"ilev" $filename
+  # NOTE: Use -h to prevent appending history
+  ncrename -h -d pfull,mlev $filename &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
+  ncrename -h -d phalf,ilev $filename &>/dev/null # ilev is the other ECHAM convention
+  ncrename -h -v pfull,mlev $filename &>/dev/null # -d renames dimensions, -v renames variables of same name
+  ncrename -h -v phalf,ilev $filename &>/dev/null
+  ncatted -h -O -a bounds,mlev,o,c,"ilev" $filename
 
   # Interpolation
   echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
@@ -98,13 +102,16 @@ hybrid_to_press() {
   # a few special ones like 'axis' and 'standard_name'
   # NOTE: This is really fast (0.02s on T42 20 day file)
   # This is much faster than even editing one attribute in NCL (0.05s)
-  ncatted -O -a NumFilesInSet,global,o,l,$numfiles \
+  # NOTE: We set the calendar to '360_day' because that seems reasonable for
+  # an equinoctial model run (even months of 30), and software like CDO and
+  # xarray cannot interpret the default 'NO_CALENDAR'
+  ncatted -h -O -a NumFilesInSet,global,o,l,$numfiles \
     -a edges,lon,d,, -a edges,lat,d,, \
     -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" -a axis,time,o,c,"T" \
     -a long_name,plev,o,c,"pressure_level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
     -a long_name,lat,o,c,"latitude"  -a standard_name,lat,o,c,"latitude" \
     -a long_name,lon,o,c,"longitude" -a standard_name,lon,o,c,"longitude" \
-    -a standard_name,time,o,c,"time" \
+    -a calendar_type,time,d,, -a calendar,time,o,c,"360_day" -a standard_name,time,o,c,"time" \
     -a units,lat,o,c,"degrees_north" -a units,lon,o,c,"degrees_east" $output
   ! $_debug && mv $output $filename # move old file on top of new file
   echo "  * Time for interpolation: $(($(date +%s) - t))s."
@@ -174,25 +181,25 @@ for file in ${files[@]}; do
   # File names and such
   base=${file%%.*}
   if $_debug && $_resume; then
-    parts=(${base}.*.nc) # check if already present
+    ncfiles=(${base}.*.nc) # check if already present
   elif $_resume; then
-    parts=(${file})
+    ncfiles=(${file})
   else
     for part in ${base}.nc*; do
       num=${part##*.}
       mv $part ${base}.${num}.nc & # some programs won't recognize file without .nc extension
     done
     wait # in background
-    parts=(${base}.*.nc)
+    ncfiles=(${base}.*.nc)
   fi
-  echo Files: ${parts[@]}
-  numfiles=${#parts[@]}
+  echo Files: ${ncfiles[@]}
+  numfiles=${#ncfiles[@]}
   xyzfile="${base}_full.${PWD##*/}.nc"   # original data
   yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
   # Just want to combine files and exit?
   if $_combine; then
     [ -r ${base}.nc ] && rm ${base}.nc
-    $mppnccombine -r ${base}.nc  ${parts[@]}
+    $mppnccombine -r ${base}.nc ${ncfiles[@]}
     continue
   fi
 
@@ -202,7 +209,7 @@ for file in ${files[@]}; do
   tp=$(date +%s)
   echo "Interpolating and getting means..."
   ! [ -d LOGS ] && mkdir LOGS
-  for ncfile in ${parts[@]}; do
+  for ncfile in ${ncfiles[@]}; do
     if ! $_debug && $_resume; then
       # Just get means
       num=0000
@@ -217,20 +224,9 @@ for file in ${files[@]}; do
       $_debug && mfile=${ncfile%%.*}_interp.$suffix || mfile=$ncfile
       { hybrid_to_press "$ncfile" "$suffix"; means "$mfile" "$suffix"; } &>LOGS/log.$num &
     fi
-  done
-  wait
-  $_debug && parts=(${base}_interp.*.nc) # we didn't overwrite them
+  done; wait
+  $_debug && ncfiles=(${base}_interp.*.nc) # we didn't overwrite them
   echo "  * Time for interpolating and getting zonal means in parallel: $(($(date +%s) - tp))s."
-  # Merge the files
-  # NOTE: Use mppnccombine -h to print help info; the -r removes files after
-  # run was successful
-  if $_parallel; then
-    echo "Combining zonal mean files..."
-    t=$(date +%s)
-    [ -r means.nc ] && rm means.nc
-    $mppnccombine means.nc means.*.nc
-    echo "  * Time for combining zonal mean files: $(($(date +%s) - t))s."
-  fi
 
   ##############################################################################
   # 2) Calculate other params in parallel
@@ -238,7 +234,7 @@ for file in ${files[@]}; do
   # Global means were required for some, hence the initial merge
   tp=$(date +%s)
   echo "Getting other params..."
-  for ncfile in ${parts[@]}; do
+  for ncfile in ${ncfiles[@]}; do
     # Number
     if $_resume && ! $_debug; then
       num=0000
@@ -249,48 +245,111 @@ for file in ${files[@]}; do
       suffix=${num}.nc
     fi
     params "$ncfile" "$suffix" &>>LOGS/log.${num} &
-  done
-  wait
+  done; wait
   echo "  * Time for getting params in parallel: $(($(date +%s) - tp))s."
-  # Merge the files
+
+  # Merge zonal means
+  # NOTE: Use mppnccombine -h to print help info; the -r removes files after
+  # run was successful
   if $_parallel; then
-    echo "Combining param files..."
+    # Merge params
+    echo "Combining YZ files..."
     t=$(date +%s)
+    [ -r means.nc ] && rm means.nc
     [ -r params.nc ] && rm params.nc
-    $mppnccombine params.nc params.*.nc
-    echo "  * Time for combining param files: $(($(date +%s) - t))s."
+    ! $_debug && cflag='-r'
+    $mppnccombine $cflag means.nc means.*.nc &
+    $mppnccombine $cflag params.nc params.*.nc &
+    wait
+    echo "  * Time for combining files: $(($(date +%s) - t))s."
   fi
-  # Append means to file
-  ncks -A means.nc params.nc
-  $_debug && _cmd=cp || _cmd=mv
-  $_cmd params.nc $yzfile
-  # Cleanup
-  ! $_debug && rm means.nc means.*.nc params.*.nc
+  # Append params to file; want them to show up at end of ncdump ideally
+  # ncks -h --no-abc -A means.nc params.nc
+  ncks -h --no-abc -A params.nc means.nc
+  if $_debug; then
+    cp means.nc $yzfile
+  else
+    mv means.nc $yzfile
+    rm params.nc
+  fi
 
   ##############################################################################
   # 3) Optionally merge the pressure-interpolated files
-  ##############################################################################
   # TODO: Consider reducing to a standard horizontal resolution at least, if
   # not vertical? This could save considerable space.
+  # NOTE: Had error on Cheyenne where mppnccombine failed for sufficiently
+  # big files (threshold was somewhere between 60-80 timesteps at T106 resolution)
+  # To fix this, we take time hyperslabs, merge each half, then re-combine
+  ##############################################################################
+  # Delete the old file
   if ! $_keepxyz; then
-    # Delete the old file
     echo "Removing XYZ files..."
-    ! $_debug && rm ${parts[@]} # simple
-  elif ! $_resume || $_debug; then
-    # Merge files
-    # Will drop variables in parallel before merging
+    ! $_debug && rm ${ncfiles[@]} # simple
+  # Merge files
+  # Will drop variables in parallel before merging
+  elif ! $_resume; then
     t=$(date +%s)
+    unset interp # empty array
     echo "Keeping XYZ files..."
-    for ncfile in ${parts[@]}; do
-      # ncks -O -d time,1,,2 -x -v omega,udt,vdt,tdt $ncfile $ncfile &
-      $_debug && out=${ncfile%%.*}_x.${ncfile#*.} || out=$ncfile
-      ncks -O -x -v omega,udt,vdt,tdt $ncfile $out &
-      interp+=($out)
-    done
-    wait
-    [ -r $xyzfile ] && rm $xyzfile
-    $mppnccombine -r $xyzfile ${interp[@]}
-    echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+    keep=plev_bnds,latb,lonb,slp,u,v,t
+    # Without splitting in half
+    if ! $_splitxyz; then
+      for ncfile in ${ncfiles[@]}; do
+        $_debug && out=${ncfile%%.*}_x.${ncfile#*.} || out=$ncfile
+        ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $ncfile $out &
+        interp+=($out)
+      done; wait
+      echo "  * Time for trimming variables: $(($(date +%s) - t))s."
+      t=$(date +%s)
+      echo "Combine full files."
+      [ -r $xyzfile ] && rm $xyzfile
+      $mppnccombine -r $xyzfile ${interp[@]}
+      [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
+      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+    # Split into files of *n* timesteps
+    else
+      # First a simple test
+      ts=$(ncdump -h ${ncfiles[0]} | grep 'UNLIMITED' | sed 's/[^0-9]//g')
+      [ -z "$ts" ] && echo "Error: Unknown timesteps for file ${ncfiles[0]}." && exit 127
+      [ $((ts % nsplit)) -eq 1 ] && echo "Error: Incompatible number of timesteps ${ts} for ${nsplit} splits." && exit 127
+      # Bugfix; had issues with lost memory even on 109GB nodes, maybe has
+      # to do with hardware architecture or something
+      for ni in $(seq 1 $nsplit); do
+        unset outs
+        for ncfile in ${ncfiles[@]}; do
+          out=${ncfile%%.*}_x${ni}.${ncfile#*.}
+          t1=$(((ni - 1)*ts/nsplit)) # e.g. nsplit=10, ts=200, goes 0, 20, 40, 60
+          t2=$((ni*ts/nsplit - 1)) # e.g. nsplit=10, ts=200, goes 19, 39, 59
+          ncks -O -h --no-abc -d time,$t1,$t2 -v $keep $ncfile $out &
+          outs+=" $out"
+        done
+        interp+=("$outs")
+      done; wait
+      echo "  * Time for trimming variables: $(($(date +%s) - t))s."
+      t=$(date +%s)
+      # Combine groups of half-files
+      i=1
+      unset ps xyzfiles
+      echo "Combine pieces..."
+      for group in "${interp[@]}"; do
+        ixyzfile=${xyzfile%.nc}_${i}.nc
+        $mppnccombine -r $ixyzfile $group &
+        xyzfiles+=($ixyzfile)
+        ps+=($!)
+        let i+=1
+      done
+      for p in ${ps[@]}; do
+        wait $p
+        [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
+      done
+      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+      # Put back together
+      t=$(date +%s)
+      echo "Put back together..."
+      ncrcat -O ${xyzfiles[@]} $xyzfile
+      ! $_debug && rm ${xyzfiles[@]} ${ncfiles[@]}
+      echo "  * Time for putting XYZ files back together: $(($(date +%s) - t))s."
+    fi
   fi
 
   ##############################################################################

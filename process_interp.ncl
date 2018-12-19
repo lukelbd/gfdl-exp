@@ -11,6 +11,7 @@ exists("filename")
 exists("output")
 f = addfile(filename, "r") ; read data from here, write later
 o = addfile(output, "c") ; output
+filedimdef(o, "time", -1, True) ; set unlimited
 copy_VarAtts(f, o) ; also works for files; see: https://www.ncl.ucar.edu/Support/talk_archives/2013/0556.html
 
 ; Get the sigma-coordinates and center-coordinates for interpolation
@@ -23,16 +24,7 @@ p0   = 101325. ; reference pressure
 p0mb = 1013.25 ; in mb for function input
 pouti = (hyai + hybi*p0) / 100. ; back to mb
 poutm = (pouti(1:nedges-1) + pouti(0:nedges-2)) / 2.
-
-; Parameters needed for interpolation
-slp = f->slp ; sea level pressure in mb
-; Parameters needed for extrapolation
-hyam_norm = hyam/p0 ; required for vint2hp function
-tbot = f->t(:,0,:,:) ; temperature at bottom level
-zbot = tbot(0,:,:) ; indexing makes a copy in NCL
-zbot(:,:) = 0 ; zero surface geopotential
-; Print message
-timer("  * Time for NCL reading and setup")
+poutm!0 = "plev"
 
 ; Add bounds to file
 ; This replicates behavior of genlevelbounds in CDO
@@ -41,7 +33,26 @@ pouti_edges!0 = "bnds"
 pouti_edges!1 = "plev"
 pouti_edges&plev = poutm ; the central levels
 pouti_edges := pouti_edges(plev|:,bnds|:)
+
+; Parameters needed for interpolation
+slp = f->slp ; sea level pressure in mb
+; Parameters needed for extrapolation
+hyam_norm = hyam/p0 ; required for vint2hp function
+tbot = f->t(:,0,:,:) ; temperature at bottom level
+zbot = tbot(0,:,:) ; indexing makes a copy in NCL
+zbot(:,:) = 0 ; zero surface geopotential
+
+; Explicitly copy these!
+; NOTE: This controls the order they appear in ncdump!!! Important for my OCD!!!
+o->time = f->time
+o->plev = poutm
 o->plev_bnds = pouti_edges ; will rename later and add atributes
+o->lat = f->lat
+o->latb = f->latb
+o->lon = f->lon
+o->lonb = f->lonb
+; Print message
+timer("  * Time for NCL reading and setup")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Apply the interpolation to variables, and write to new file
@@ -57,7 +68,7 @@ do i=0,dimsizes(varnames)-1
   if .not. any(varname .eq. dimnames) then
     ; Get variable and verify some stuff
     var := f->$varname$ ; load from old file
-    if dimsizes(dimsizes(var)) .eq. 1 then
+    if (dimsizes(dimsizes(var)) .eq. 1) then
       print("Variable " + qq + varname + qq + " is a coordinate.")
       continue
     else if .not. any("mlev" .eq. getvardims(var)) then

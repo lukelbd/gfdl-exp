@@ -40,16 +40,18 @@ end
 ; dummy@unit = "degrees_east"
 ; dummy@long_name = "longitude"
 ; Function for adding this
-function singleton(orig:numeric, mean:numeric, is3d:numeric)
+; function singleton(orig:numeric, mean:numeric, is3d:numeric)
+function singleton(orig:numeric, mean:numeric)
 local dims, mean, mean1
 begin
   dims = dimsizes(orig)
-  if (is3d .eq. 1) then
+  if (dimsizes(dims) .eq. 4) ; i.e. a 3D variable with time dimension
+  ; if (is3d .eq. 1) then
     dims := array_append_record(dims(0:2), (/1/), 0) ; add singleton
     mean1 = conform_dims(dims, mean, (/0, 1, 2/))
     ilon = 3
     mean1!3 = "lon"
-  else
+  else ; i.e. a 2D variable with time dimension
     dims := array_append_record(dims(0:1), (/1/), 0)
     mean1 = conform_dims(dims, mean, (/0, 1/))
     mean1!2 = "lon"

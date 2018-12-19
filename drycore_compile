@@ -29,8 +29,8 @@
 execdir=./drycore-${HOSTNAME%%.*}   # where code is compiled and executable is created
 flags_optimization='-O3'            # O2 or O3? more optimization can actually be *slower*, but GFDL default was O3 so maybe not; https://stackoverflow.com/a/19985801/4970632
 flags_float='-Ktrap=fp'             # add =flag1,flag2,... for options; controls floating point exceptions; http://www.dartmouth.edu/~rc/HPC/man/pgf90.html
-flags_fort='-lnetcdff -lnetcdf'     # for mppnccombine
-flags_ld='-Mmpi=mpich'              # special 'pgflags', adds flags -L$MPILIB -lfmpich -lmpich; http://www.dartmouth.edu/~rc/HPC/man/pgf90.html
+flags_nc='-lnetcdff -lnetcdf'       # include netcdf libs
+flags_mp='-Mmpi=mpich'              # special 'pgflags', adds flags -L$MPILIB -lfmpich -lmpich; http://www.dartmouth.edu/~rc/HPC/man/pgf90.html
 cppdefs='-Duse_libMPI -Duse_netCDF' # not sure what this does
 
 # Use Intel MPI or openmpi instead of default mpt
@@ -59,15 +59,13 @@ case ${HOSTNAME%%.*} in
     include=($NETCDF/include)
     root=$HOME/gfdl-drycore
     execdir=./drycore-cheyenne/ # usually cheyenneN, where N is login node number
-    fortran=mpif90 # or ifort?
-    cpp=mpicc # or icc? why use a different compiler, can't we supply normal one with mpi flags?
+    # fortran=mpif90 # or ifort?
+    # cpp=mpicc # or icc? why use a different compiler, can't we supply normal one with mpi flags?
     fortran=mpiifort
     cpp=mpiicc
     # Cheyenne uses a compiler wrapper mpif90 that handles all mpi flags
-    flags_float=''
-    flags_fort='-lnetcdff -lnetcdf' # do not need much
-    flags_ld=''
-    flags_ld='-qopenmp'
+    flags_float='' # the -Ktrap syntax is only for openmpi, not Intel mpi
+    flags_mp='-qopenmp' # misleading name for impi, but this is necessary; see https://www2.cisl.ucar.edu/resources/computational-systems/cheyenne/code-development-support/compiling-code
     # Load modules? Or just run with correct modules installed already.
     # module load intel
   ;; monde)
@@ -86,8 +84,8 @@ case ${HOSTNAME%%.*} in
 esac
 
 # Flags
-flags_links="${links[@]/#/-L}"                 # search these paths for library files
-flags_include="${include[@]/#/-I}"             # include flags
+lib_links="${links[@]/#/-L}"       # search these paths for library files
+include_links="${include[@]/#/-I}" # include flags
 # Directories
 src=$root/src                                  # path to directory containing model source code
 pathnames=$src/path_names_new                  # change this to pick different blocks of code
@@ -104,12 +102,13 @@ mppnsource=$root/postprocessing/mppnccombine.c # source code
 
 #------------------------------------------------------------------------------
 # Build executable model code and post-processing tool
+# NOTE: Don't compile with mpi support, just runs it a bunch of times
 #------------------------------------------------------------------------------#
 # Create mppnccombine; should supply with same libraries supplied to model executable through its makefile
-# $pgi/pgcc -O -o $mppnccombine -I$netcdfc/include -I$mpich/include $mppnsource $flags_links $flags_libs
+# $pgi/pgcc -O -o $mppnccombine -I$netcdfc/include -I$mpich/include $mppnsource $lib_links $flags_libs
 time=$(date +%s)
 echo "Generating mppnccombine executable..."
-$cpp -O -o $execdir/mppnccombine.x $flags_include $flags_links $flags_fort $mppnsource
+$cpp -O -o $execdir/mppnccombine.x $include_links $lib_links $flags_nc $mppnsource
 
 #------------------------------------------------------------------------------#
 # Build makefile template (assumes pgi bin is on $PATH)
@@ -121,7 +120,7 @@ FC = $fortran
 LD = $fortran
 CPPFLAGS =
 FFLAGS = -r8 -pc 64 $flags_float $flags_optimization
-LDFLAGS = $flags_links $flags_fort $flags_ld
+LDFLAGS = $lib_links $flags_nc $flags_mp
 LIST = -Mlist
 DELIM
 cat $mkmftemplate >> mkmf.template # appends provided template to custom defs

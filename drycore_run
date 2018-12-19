@@ -1,14 +1,10 @@
 #!/bin/bash
 ################################################################################
+# README.md file has instructions on namelist/diagnostic table parameters
 # This script runs the GFDL dry core model in blocks of N days, and concurrently
-# processes data with "process" script while next block is run
+# processes data with "process" script while next block is run.
 # Concurrent processing can hugely reduce the amount of time needed to get derived
 # quantities like heat flux and stuff.
-# README.md file has instructions on namelist/diagnostic table parameters
-# * 8  cores: 100-day Control  run, T42 64lats was 1181 seconds
-# * 12 cores: 100-day Spindown run, T39 60lats was 1022 seconds
-# * 8  cores: 10-day  Control  run, T42 64lats was 140  seconds
-# * 12 cores: 10-day  Spindown run, T39 60lats was 111  seconds
 ################################################################################
 # Initial stuff 
 ################################################################################
@@ -36,26 +32,26 @@ process=$cwd/process # *process the parallel-output nc files directly before mer
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    -n|--new)        new=true    ;; # do not write to existing experiment folders?
-    -r|--resume)     resume=true ;; # do not overwrite existing dXXXX-dYYYY folders?
-    -c|--cores=*)    cores=${1#*=}     ;;
-    -s|--start=*)    tstart=${1#*=}    ;; # starting day
-    -e|--end=*)      tend=${1#*=}      ;; # ending day
-    -m|--mode=*)     mode=${1#*=}      ;; # 0 is control, 1 is spindown, 2...
-    -p|--process=*)  pflags_global="${1#*=}" ;; # flags for processing script
-    -rs|--restart=*)  rdir_override=${1#*=} ;; # manual override restart directory
-    -ds=*|--days-spindown=*) t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
-    -dxyz=*|--days-xyzdata=*)  t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
-    -dn=*|--days-nodata=*)   t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
+    -n|--new)         new=true ;;       # use this to *exit* if experiment folder already exists
+    -r|--resume)      resume=true ;;    # use this to *autodetect* last day of existing run, continue from there
+    -ts=*|--tstart=*) tstart=${1#*=} ;; # use this to continue from *particular* day of existing run
+    -te=*|--tend=*)   tend=${1#*=} ;;   # ending day
+    -c=*|--cores=*)   cores=${1#*=} ;;
+    -m=*|--mode=*)    mode=${1#*=} ;;   # 0 is control, 1 is spindown, 2...
+    -p=*|--process=*)  pflags_global="${1#*=}" ;; # flags for processing script
+    -rd=*|--restart=*) rdir_override=${1#*=} ;;   # manual override restart directory
+    -ds=*|--days-spindown=*)  t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
+    -dxyz=*|--days-xyzdata=*) t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
+    -dn=*|--days-nodata=*)    t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
     -*) echo "Error: Unknown flag \"$1\"." && exit 1 ;;
     *)  [ -n "$expdir" ] && echo "Error: More than one experiment directory specified." && exit 1
       expdir="$1" ;;
   esac; shift
 done
-[ -z $expdir ]               && echo "Error: You must declare the experiment directory."    && exit 1
-[[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared."         && exit 1
-[ ${#t_xyzdata[@]} -gt 0 ]   && echo "Preserving full resolution for days: ${t_xyzdata[@]}."
+[ -z $expdir ]               && echo "Error: You must declare the experiment directory." && exit 1
+[[ -z $tstart || -z $tend ]] && echo "Error: Start and end times must be declared."      && exit 1
 [ ${#t_nodata[@]} -gt 0 ]    && echo "Removing all data for days: ${t_nodata[@]}."
+[ ${#t_xyzdata[@]} -gt 0 ]   && echo "Preserving full resolution for days: ${t_xyzdata[@]}."
 [[ $mode -ne 0 && ${#t_spindown[@]} -gt 0 ]] && echo "Starting spindown for days: ${t_spindown[@]}"
 
 # Optionally exit from script if directory already exists
@@ -65,7 +61,7 @@ if [ ! -d $expdir ]; then
   [ $? -ne 0 ] && echo "Error: Could not create experiment directory \"$expdir\"." && exit 1
 fi
 
-# Array membership
+# Usage is array_in value ${array[@]}, behaves like python 'value in array'
 array_in() {
   [[ " ${@:2} " =~ " ${1} " ]]
   return $?
@@ -87,9 +83,83 @@ nml_replace() { # first argument is param name, second argument is value
   done
 }
 days=$(nml_parse days) # number of days in each block
+# Process exit status
+exit_check() {
+  estatus=$1
+  if [ $estatus != 0 ]; then
+    echo "Error: Exit status $estatus from post-processing previous block..."
+    case $estatus in
+      1) echo "NetCDF files missing. Check log.model." ;;
+      2) echo "Something failed during model interpolation. Check log.interp." ;;
+      3) echo "Something failed while getting basic terms. Check log.basic." ;;
+      4) echo "Something failed while getting Lorenz cycle terms. Check log.lorenz." ;;
+      *) echo "Check log.process; other/miscellaneous failure." ;;
+    esac
+    exit 1
+  fi
+}
 
 ################################################################################
-# Helper functions for model runs
+# Function for running the next model step from a previous step
+# applying post-processing to a previous model step in the background, and organizing
+# all the NetCDF files
+################################################################################
+driver() {
+  # Run model in parallel
+  # Previously we set processor affinities
+  local rdir=$1 # the restart direcotry
+  [ $# -ne 1 ] && echo "Error: driver() function takes exactly 1 argument." && exit 1
+  t1=$(date +%s)
+  echo "Running model..."
+  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
+  egrep 'EXIT CODE: [1-9]|FATAL from PE' log.model &>/dev/null && \
+    echo "Error: Bad exit code from model run step." && exit 1
+  tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
+  echo "Model time: ${tmodel%.*}s." # is just max of the two
+  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
+  # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
+
+  # Check that model ran successfully
+  # FMS prints error messages to standard output but doesn't actually set
+  # the exit code/mpirun doesn't pass that exit code, which is fucking dumb.
+  # We parse the logfile instead
+  # egrep 'EXIT CODE: [1-9]|FATAL from PE' log.model &>/dev/null && \
+  #   echo "Error: Bad exit code from model run step." && exit 1
+  # Wait for previous processing step, if set
+  # If unset, means we are just now starting the model run
+  # if [ -n "$pp" ]; then # post-processing is active
+  #   echo "Wating for process: $pp"
+  #   wait $pp # wait command will always exit with exit status of supplied process ID
+  #   exit_check $?
+  # fi
+  # Echo timing information from previous run
+  # Processing was run in parallel, remember
+  # tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
+  # echo "Model time: ${tmodel%.*}s." # is just max of the two
+  # if [ -r $rdir/log.process ]; then
+  #   tprocess=$(tail -1 $rdir/log.process | sed 's/[^0-9]*//g' )
+  #   echo "Model time: ${tmodel%.*}s, Previous process time: ${tprocess%.*}s."
+  # else
+  #   echo "Model time: ${tmodel%.*}s." # is just max of the two
+  # fi
+
+  # Remove some files
+  # [ -r INPUT/topography.data.nc ] && rm INPUT/topography.data.nc # remove topography
+  [ -d INPUT ] && rm -r INPUT # remove everything
+  [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
+  rm fms.x # remove executable, because takes up space
+
+  # Process new data, and remove old data
+  # Previously we set processor affinities, but didn't help much
+  echo "Calling processing script with flags: $(echo $pflags_day $pflags_global | xargs)"
+  $process $pflags_day $pflags_global &>log.process
+  exit_check $?
+  tprocess=$(tail -1 $rdir/log.process | sed 's/[^0-9]*//g' )
+  echo "Process time: ${tprocess%.*}s."
+  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $!
+  # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
+}
+
 ################################################################################
 # Set up input files for model executable to read
 # Takes two arguments: 1) the working directory, and 2) the iteration mode
@@ -154,73 +224,6 @@ dir_setup() {
 }
 
 ################################################################################
-# Function for running the next model step from a previous step
-# applying post-processing to a previous model step in the background, and organizing
-# all the NetCDF files
-################################################################################
-driver() {
-  # Run model in parallel
-  # Previously we set processor affinities
-  local rdir=$1 # the restart direcotry
-  [ $# -ne 1 ] && echo "Error: driver() function takes exactly 1 argument." && exit 1
-  t0=$(date +%s)
-  echo "Running model..."
-  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
-  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $! # match processor affinities
-  # taskset -cp 0-19 $! 1>/dev/null # $! == pid of last job run in background
-
-  # Check that model ran successfully
-  # FMS prints error messages to standard output but doesn't actually set
-  # the exit code/mpirun doesn't pass that exit code, which is fucking dumb.
-  # We parse the logfile instead
-  egrep 'EXIT CODE: [1-9]|FATAL from PE' log.model &>/dev/null && \
-    echo "Error: Bad exit code from model run step." && exit 1
-
-  # Wait for previous processing step, if set
-  # If unset, means we are just now starting the model run
-  if [ ! -z $pp ]; then # post-processing is active
-    wait $pp; estatus=$? # wait command will always exit with exit status of supplied process ID
-    if [ $estatus != 0 ]; then
-      echo "Error: Exit status $estatus from post-processing previous block..."
-      case $estatus in
-        1) echo "NetCDF files missing. Check log.model." ;;
-        2) echo "Something failed during model interpolation. Check log.interp." ;;
-        3) echo "Something failed while getting basic terms. Check log.basic." ;;
-        4) echo "Something failed while getting Lorenz cycle terms. Check log.lorenz." ;;
-        *) echo "Check log.process; other/miscellaneous failure." ;;
-      esac
-      exit 1
-    fi
-  fi
-
-  # Echo timing information from previous run
-  # Processing was run in parallel, remember
-  if [ -r $rdir/log.process ]; then
-    tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
-    tprocess=$(tail -1 $rdir/log.process | sed 's/[^0-9]*//g' )
-    echo "Model time: ${tmodel%.*}s, Process time: ${tprocess%.*}s."
-    if [ "$tprocess" -eq "${tmodel%%.*}" ] 2>/dev/null; then
-      echo "Model completion time MINUS processing time: $((${tmodel%%.*} - $tprocess))s."
-    fi
-  fi
-  echo "Time for integration: $(($(date +%s) - $t0))s."
-
-  # Remove some files
-  # [ -r INPUT/topography.data.nc ] && rm INPUT/topography.data.nc # remove topography
-  [ -d INPUT ] && rm -r INPUT # remove everything
-  [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
-  rm fms.x # remove executable, because takes up space
-
-  # Process new data, and remove old data
-  # Previously we set processor affinities, but didn't help much
-  echo "Calling processing script with flags: $(echo $pflags_day $pflags_global | xargs)"
-  $process $pflags_day $pflags_global &>log.process &
-  pp=$! # record PID
-  # taskset -p $(taskset -p $$ | cut -d ':' -f 2) $!
-  # taskset -cp 20-23 $! 1>/dev/null # send to particular CPUs
-}
-
-################################################################################
 # Function for restarting model; put correct files in correct place so 
 # fms can read them and continue iteration from a previous state.
 ################################################################################
@@ -253,12 +256,19 @@ case $mode in
   # PREPARE FOR THE LOOP
   echo "Running control experiment from day $tstart to day $tend on $cores cores, restart every $days days."
   coldstart=true # assume cold start by default
-  origin=$(date +%s) # start time
-  pday=$(($tstart - $days)) # only time when we do minus days
-  cday=$tstart
-  nday=$(($tstart + $days))
+  t0=$(date +%s) # start time
+  pday=0 # only time when we do minus days
+  cday=0
+  nday=$days
   while [ $nday -le $tend ]; do
     # MESSAGE AND RESET TIMER/FLAGS
+    # SKIP THIS TIME (OPTIONALLY)
+    if [ $cday -lt $tstart ]; then
+      pday=$cday # previous day
+      cday=$((pday + days))
+      nday=$((cday + days))
+      continue
+    fi
     echo "Running from day $cday to day $nday."
     time=$(date +%s)
     # RUN THE MODEL and COMBINE OUTPUT
@@ -276,8 +286,8 @@ case $mode in
       [ ! -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
     fi
     unset pflags_day
-    array_in $cday ${t_nodata[@]} && pflags_day+=" -q"
-    array_in $cday ${t_xyznodata[@]} && pflags_day+=" -k"
+    array_in $cday ${t_nodata[@]} && pflags_day+=" -q" && echo "Will delete output netcdf files."
+    array_in $cday ${t_xyzdata[@]} && pflags_day+=" -k" && echo "Will keep XYZ netcdf files."
     dir_setup $cdir # sets up working directory, cd into it
     if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
@@ -291,14 +301,18 @@ case $mode in
     [ $days -eq 0 ] && break
     # STEP THINGS FORWARD, FOR NEXT ITERATION
     pday=$cday
-    cday=$(($pday + $days))
-    nday=$(($cday + $days))
+    cday=$((pday + days))
+    nday=$((cday + days))
   done
+  # LAST FILE
   echo "Processing last file..."
-  wait $pp; pp=
+  wait $pp
+  exit_check $?
+  unset pp
   tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
   echo "Final process time: ${tprocess%.*}s."
-  echo "The control run completed successfully in $(($(date +%s) - $origin)) seconds!"
+  # MESSAGE
+  echo "The control run completed successfully in $(($(date +%s) - t0)) seconds!"
   echo "Timestamp: $(date)."
 
 ##############################################################################
@@ -309,22 +323,22 @@ case $mode in
   [ -z $t_spindown ] && echo "Error: Must declare starting times for spindown experiments." && exit 1
   # PREPARE FOR THE LOOP
   echo "Running spindown experiment $mode from days ${t_spindown[@]} for $tend days, restart every $days days."
-  origin=$(date +%s)
+  t0=$(date +%s)
   # ITERATE THROUGH STARTING DAYS
   for eday in "${t_spindown[@]}"; do
     cday=0 # current day relative to start of equilibrium
-    nday=$(($cday + $days)) # next day, relative to start
+    nday=$days # next day, relative to start
     prefix=$expdir/d$(printf "%04d" $eday) # for successive spindown runs
-    fstart=$expdir/d$(printf "%04d" $(($eday - $days)))-d$(printf "%04d" $eday) # for restart files from control
-    origin=$(date +%s) # record time
+    fstart=$expdir/d$(printf "%04d" $((eday - days)))-d$(printf "%04d" $eday) # for restart files from control
+    ts=$(date +%s) # record time
     echo "Starting radiation-off spindown run from day $eday for $tend days."
     while [ $nday -le $tend ]; do
       # SKIP THIS TIME (OPTIONALLY)
       if [ $cday -lt $tstart ]; then
-        echo "Skipping $cday."
+        echo "Skipping day $cday."
         pday=$cday # previous day
-        cday=$(($pday + $days))
-        nday=$(($cday + $days))
+        cday=$((pday + days))
+        nday=$((cday + days))
         continue
       fi
       # GET DIRECTORIES
@@ -342,17 +356,18 @@ case $mode in
       fi
       # STEP THINGS FORWARD, FOR NEXT ITERATION
       pday=$cday # previous day
-      cday=$(($pday + $days))
-      nday=$(($cday + $days))
+      cday=$((pday + days))
+      nday=$((cday + days))
     done
-    echo "Spindown from $eday completed successfully in $(($(date +%s) - $origin)) seconds!"
+    echo "Spindown from $eday completed successfully in $(($(date +%s) - ts)) seconds!"
     echo "Timestamp: $(date)."
   done
   echo "Processing last file..."
   tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
   wait $pp; pp=
-  echo "The spindown runs completed successfuly in $(($(date +%s) - $origin)) seconds!"
+  echo "The spindown runs completed successfuly in $(($(date +%s) - t0)) seconds!"
   echo "Timestamp: $(date)."
+
 ################################################################################
 # Other experiments types can go below
 ################################################################################

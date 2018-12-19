@@ -33,7 +33,15 @@ exists("filename")
 exists("output")
 f = addfile(filename, "r") ; input
 o = addfile(output, "c") ; output
+filedimdef(o, "time", -1, True)
 copy_VarAtts(f, o) ; also works for files; see: https://www.ncl.ucar.edu/Support/talk_archives/2013/0556.html
+; Explicitly copy these
+; NOTE: This controls the order they appear in ncdump!!! Important for my OCD!!!
+o->time = f->time
+o->plev = f->plev
+o->plev_bnds = f->plev_bnds
+o->lat = f->lat
+o->latb = f->latb
 
 ; Calculate by just iterating over contents, easy
 varnames = getfilevarnames(f)
@@ -46,17 +54,11 @@ do i=0,dimsizes(varnames)-1
     ndims = dimsizes(dimsizes(var))
     if (ndims .eq. 1) .or. (ndims .eq. 2) then ; includes bounds, e.g. plev_bnds
       print("Variable " + qq + varname + qq + " is a coordinate.")
-      o->$varname$ = var
       continue
     end if
     ; Get zonal mean, then add back lon dimension and all coordinates
-    if (ndims .eq. 3) then
-      bar = dim_avg_n(var, 2)
-      bar := singleton(var, bar, 0) ; adds back longitude
-    else
-      bar = dim_avg_n(var, 3)
-      bar := singleton(var, bar, 1)
-    end if
+    bar = dim_avg_n(var, (ndims - 1)) ; last index is always longitude (0-based)
+    bar := singleton(var, bar) ; adds back longitude
     ; Save, and message
     copy_VarAtts(var, bar)
     o->$varname$ = bar ; write to new file

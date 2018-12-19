@@ -13,11 +13,23 @@ Turns out that **running on 40 cores, 1 node** (`qcmd100day_1x40`) or **running 
 
 Evidently this is some particular problem for parallel-running CDO processes, due to all of these consecutive IO threads? This is worrying. The thread locking flag `-L` did **not** alleviate the problem. I also verified directly that `cdo zonmean test_interp.0000.nc tmp.nc` takes **15 seconds** in an interactive node or with `qcmd` on a single CPU! Anyway, this issue is remarkably strange.
 
+## Cheyenne number of cores
+At T95 resolution, 100 day blocks, 2 nodes and 36 cores: got **840s** model time without background processing, **1000s** model time with background processing, and **550s** to **600s** for processing. For 1 node and 36 cores, got **1625s** model time without background processing, **1735s** with background processing, and **420s** for processing.
 
-## Cheyenne
-For the following experiments, the model was run for **2 restart blocks**. From this, we sampled the model run time *with and without* background processing, and the processing time *with and without* background model integration. Easy!
+<!-- Seems more cores make processing slower; mppnccombine is contributor but even other processing steps are slightly slower, despite smaller individual files. So speeds are otherwise competitive, but parallel processing has **160s impact** on 2 nodes, only **100s impact** on 1 node. -->
+Tried splitting up file into 2 time blocks. Took **350-400s*, or **160s** for mccpncombine, compared to **350s** just for the combine step without splitting up times. For 1 node, took **300s**. Much smaller difference.
 
-Not showing the results because it turned out the pattern was very simple: **parallelize on nodes, not cores**! With 20 cores on 2 nodes, a 100 day block at T106 resolution took **1400s**. But with 1 core on 40 nodes, the 100 day block took **700s**. That is a *massive* speedup. Not sure why this is the case.
+Turned out that **running process step in parallel** was bad idea. Didn't really get much benefit; now am getting **800s-840s** model runtime and **120-150s** processing time, where before model was slowed to **1000s** or so. Also will **archive full resolution data** for time being, consider then storing everything at T63 resolution! Or just save 2000 days. Up to me. Ask Thomas.
+
+<!-- For T95 resolution, got **84s** for 5 days, 1 node, all 36 cores; got **48s** for 2 nodes. -->
+<!-- For the following experiments, the model was run for **2 restart blocks**. From this, we sampled the model run time *with and without* background processing, and the processing time *with and without* background model integration. Easy! -->
+<!--  -->
+<!-- Not showing the results because it turned out the pattern was very simple: **parallelize on nodes, not cores**! With 20 cores on 2 nodes, a 100 day block at T106 resolution took **1400s**. But with 1 core on 40 nodes, the 100 day block took **700s**. That is a *massive* speedup. Not sure why this is the case. -->
+<!-- As for the **number** of cores to choose -- got **90s** on 64 cores for 20 days of T85, **120s** on 32 cores, **220s** on 16 cores. Amounts to **270 core hours per 100 days** (16hr runtime) on 16 cores, **290 core hours per 100 days** on 32 cores (9hr runtime), and **390 core hours per 100 days** (6hr runtime) on 32 cores. -->
+<!-- For T106 resolution, I found **640 core hours per 100 days** (8hr runtime) on 80 cores, **480 core hours per 100 days** (12hr runtime) on 40 cores, and **exactly identical** stats for 32 cores (but 15hr runtime). Configuration of the 32 cores made no difference. -->
+
+<!-- That amounts to a speed-up IMO not worth the cost. -->
+<!-- Also, I weirdly got **80s** for the same run on 16 nodes, 4 cores each. Maybe has to do with allocation? Numbers of cores divisible by 2 help? -->
 
 <!-- | Model times | Process times | Truncation | Days, times per day | Nodes, cores, used | Notes | -->
 <!-- | ---         | ---           | ---        | ---                 | ---                | ---   | -->
