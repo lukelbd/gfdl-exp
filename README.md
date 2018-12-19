@@ -31,7 +31,7 @@ Turned out that **running process step in parallel** was bad idea. Didn't really
 | T95 | 5000 | 300GB (3TB per series) |
 | T63 | 5000 | 130GB (1.3TB per series) |
 
-## Minimum timestep and damping rate
+## Maximum timesteps with model stability
 | Truncation | Timescale (days) | Maximum timesteps (s) |
 | --- | --- | --- |
 | T95 | 0.2-4 | 400 |

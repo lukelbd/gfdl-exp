@@ -75,6 +75,7 @@ dt=600
 tstart=0  # first day of integration; set to 0 for new run.
 tend=5500 # for new experiments just do 1200 day integrations, first 200 are spinup
 walltime=12:00
+queue=economy
 # Output settings
 outfreq=12      # every 6
 frequnits=hours # hours
@@ -142,10 +143,9 @@ reso="${reso%%_*}"
 # Run really fast test run
 case $testmode in
 1)
-  # rdir="${force}_base_t42l40s" # override previous directory
-  # rdays=d1100-d1200 # set restart directory days (leave empty to just use the last subfolder in directory)
   unset flags_global # no resume or new days
-  # pflags=""
+  rdir="${force}_base_t95l60e" # override previous directory
+  rdays=d0450-d0500 # set restart directory days (leave empty to just use the last subfolder in directory)
   pflags+=" -d" # don't move/delete anything; also implies flags="--keep-xyz "
   outfreq=12
   frequnits=hours
@@ -157,6 +157,7 @@ case $testmode in
   ktstart=$tstart
   ktend=$tend
   walltime=01:00 # real quick test
+  queue=regular
 # Initial conditions, for sanity checks
 ;; 2)
   unset flags_global # no resume or new days
@@ -170,6 +171,7 @@ case $testmode in
   secs=1
   tstart=0
   tend=0
+  queue=priority
 ;; esac
 # Days for keeping
 txyzdata=$(seq $ktstart $days $ktend | tr $'\n' ',') # for saving
@@ -551,7 +553,7 @@ for param1 in ${params1[@]}; do
 #PBS -N $exp_name
 #PBS -A UCSU0071
 #PBS -M lukelbd@gmail.com
-#PBS -q economy
+#PBS -q $queue
 # Job specs (max possible walltime is 12 hours)
 #PBS -l walltime=$walltime:00
 #PBS -l select=$nodes:ncpus=$cores:mpiprocs=$cores
