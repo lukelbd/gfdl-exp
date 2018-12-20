@@ -5,7 +5,7 @@
 # New convention:
 #   <forcing type>_<experiment series>_<resolution spec>_<relevant parameter values>
 # Forcing type:
-#  * simple, can be either of pk, hs, or da
+#  * simple, can be either of pk, hs, or dbt
 # Experiment 'series' names:
 #  * default
 #  * fric

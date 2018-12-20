@@ -11,7 +11,7 @@ Usage:
      drycore_batch \"force_sweep_resolution\" [flags] --1=[rvalue1:]value1,[rvalue2:]value2,... --2=...
 
 Force specification:
-     hs,pk,da - Held-Suarez 1994, Polvani-Kushner 2004, or Davis custom parameterization
+  hs,pk,dbt - Held-Suarez 1994, Polvani-Kushner 2004, or Davis, Birner, and Thompson (TBD) parameterization
 
 Sweep specifications:
      base              just run forcing scheme with default settings, once
@@ -338,8 +338,9 @@ exp_setup() {
       prefix=${exp_sweep%-*}
       suffix=${exp_sweep#*-}
       kstrat=-${p_values[0]}
-      kdepth=${prefix#stratrad}
-      kdepth=${kdepth%[a-z]}
+      kdepth=${p_values[1]} # param 2 is depth of transition region
+      # kdepth=${prefix#stratrad}
+      # kdepth=${kdepth%[a-z]}
       stratdamp=${prefix##*[0-9]}
       case "$stratdamp" in
         l) stratdamp=linear ;;

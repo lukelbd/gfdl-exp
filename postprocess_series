@@ -15,7 +15,8 @@ pmax=8 # parallelization
 # climo_start=100 climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
 climo_start=200 climo_end=1100 # NOTE: use this for troprad3 runs, which were screwed in last 100 days
 spin_start=0 spin_end=100000
-globs=('*troprad3*t42l40s*')
+# globs=('*troprad3*t42l40s*')
+globs=('*troprad3*t42l20s*')
 flags="--climo " # --eof2d
 
 # Host-specific settings
