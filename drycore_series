@@ -18,8 +18,8 @@ Sweep specifications:
      troprad[123]      change tropospheric damping; number is boundary layer option
      fric              change friction
      diag[123]         change both friction and tropospheric damping
-     stratrad[XX][cl]  change stratospheric damping, XX is the depth of
-                       transition layer and the suffix controls upper stratosphere option
+     stratrad[cl]      change stratospheric damping, suffix controls upper
+                       stratosphere option XX is the depth of
 
 Resolution specification: t[XX]l[YY][spe]
     * First number is truncation number.
@@ -301,7 +301,10 @@ exp_setup() {
       prefix=${exp_sweep%-*}
       suffix=${exp_sweep#*-}
       ktrop=-${p_values[0]}
-      [[ $exp_sweep =~ diag[0-9] ]] && kfric=-${p_values[1]} # diagaonal experiment
+      if [[ $exp_sweep =~ diag[0-9] ]]; then
+        kfric=-${p_values[1]} # diagaonal experiment
+        [ -z "$kfric" ] && echo "Error: Need friction timescale for diagonal experiment." && exit 1
+      fi
       if [ "$suffix" == anom ]; then
         ktrop="-40,$ktrop"
       elif [ "$suffix" == mean ]; then
@@ -339,6 +342,7 @@ exp_setup() {
       suffix=${exp_sweep#*-}
       kstrat=-${p_values[0]}
       kdepth=${p_values[1]} # param 2 is depth of transition region
+      [ -z "$kdepth" ] && echo
       # kdepth=${prefix#stratrad}
       # kdepth=${kdepth%[a-z]}
       stratdamp=${prefix##*[0-9]}
@@ -566,7 +570,9 @@ $exp_run &>>$log
 EOF
     fi
     # Wrap up
-    [ $testmode -eq 2 ] && cp $exp_dir/d0000-d0000/init.nc $HOME/data/init_${exp_name}.nc
+    ! [ -d $HOME/data ] && mkdir $HOME/data
+    ! [ -d $HOME/data/forcing ] && mkdir $HOME/data/forcing
+    [ $testmode -eq 2 ] && cp $exp_dir/d0000-d0000/init.nc $HOME/data/forcing/init_${exp_name}.nc
     unset flags
     let counter+=1
     cd $cwd # ensure are still in same directory
