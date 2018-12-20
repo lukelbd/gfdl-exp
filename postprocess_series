@@ -8,16 +8,21 @@
 # Processes files in directories matching some glob pattern
 dryrun=false
 runmode=0 # 0 is control run, the rest are different spindown modes:
-filename=4xdaily_inst # prefix for files to be read
-pmax=8 # parallelization
+# filename=4xdaily_inst # prefix for files to be read
+filename=2xdaily_inst
+pmax=1 # parallelization
 
 # Settings
-# climo_start=100 climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
-climo_start=200 climo_end=1100 # NOTE: use this for troprad3 runs, which were screwed in last 100 days
-spin_start=0 spin_end=100000
+# climo_start=100
+# climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
+climo_start=500
+climo_end=5500
+spin_start=0
+spin_end=100000 # just get all of them
 # globs=('*troprad3*t42l40s*')
-globs=('*troprad3*t42l20s*')
-flags="--climo " # --eof2d
+globs=('*troprad3_t42l20s*')
+# flags='--climo ' # --eof2d
+flags='--energy ' # --eof2d
 
 # Host-specific settings
 subfolder=netcdf
@@ -66,7 +71,7 @@ for glob in ${globs[@]}; do
     output="$storage/${input##*/}" # saving processed data
     input="$input/$subfolder"       # loading raw data
     [ ! -d $output ] && mkdir $output
-    $dryrun && cmd="echo ./postprocess_run" || cmd="./postprocess_run"
+    $dryrun && cmd="echo ./postprocess" || cmd="./postprocess"
 
     # Opionally run in parallel, or just linearly
     echo "Log file: tail -f $output/log"

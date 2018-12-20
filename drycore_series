@@ -92,8 +92,10 @@ testblocks=1 # number of blocks of testdays
 # simultaneously, by auto-generating a PBS script
 if [[ $HOSTNAME =~ cheyenne* ]]; then
   super=true
+  diag_table=diag_table_default
 else
   super=false
+  diag_table=diag_table_old # WARNING: temporary! PGI compilers expired, names changed!
 fi
 # Parse input
 unset series_name flags_global
@@ -471,7 +473,7 @@ exp_setup() {
   # Set up diag table; so far this is kept very simple
   #------------------------------------------------------------------------#
   diag="$exp_dir/diag_table"
-  [ $testmode -eq 2 ] && diag_default=$f90dir/diag_table_init || diag_default=$f90dir/diag_table_default
+  [ $testmode -eq 2 ] && diag_default=$f90dir/diag_table_init || diag_default=$f90dir/$diag_table
   cp $diag_default $diag
   sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' $diag
   sed -i 's/#.*$//g;/^[ \t]*$/d' $diag # remove comments, empty lines, for clarity

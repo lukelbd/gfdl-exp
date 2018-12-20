@@ -6,8 +6,8 @@
 # This script was recently modified, but should be fine now
 ################################################################################
 # Verify environmental variables are set
-# flags="-s -O" # overwrite, and only issue warnings
-flags="-O"
+# flags='-O'
+flags='-s -O' # overwrite, and only issue warnings
 shopt -s nullglob # will return empty if no match
 
 # Optional environmental variables, with defaults
@@ -20,10 +20,12 @@ climo_start=0
 climo_end=100000
 climo_timeseries=false
 climo_from_daily=false # use pre-combined daily means instead of raw output?
+# Objective analysis stuff, energy time series
 autocorr=false
 energy=false
 eof1d=false
 eof2d=false
+# Spindown options
 spin_climate=false
 spin_ensemble=false
 spin_timescale=false
@@ -123,16 +125,17 @@ region_selbox() {
   echo $selregion
 }
 
-# Climate files
+# Every single summary file
+allfiles=($input/${psummary}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc)
+
+# Climate files within day range (e.g. to ignore spinup)
 # Used for climate means and climate variability stuff
 climate_files() {
   echo "Getting list of climate files within days $climo_start and $climo_end."
   if $climo_from_daily; then
     climofiles=($input/$fdaily)
-    echo ${allfiles[@]}
   else
     climofiles=()
-    allfiles=($input/${psummary}.d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc)
     for file in ${allfiles[@]}; do
       daystring=${file#$input/${psummary}.}
       daystring=${daystring%.nc}
@@ -236,6 +239,44 @@ daily() {
   cdo $flags -mergetime ${commands[@]} $fdaily
 }
 
+# This function preserves levels, and takes means from 20deg to 70deg
+# Used for the spectral analysis later
+# TODO: ***FOUND A BUG***: For whatever reason, putting the region-selection
+# before selname causes error, but after selname works fine.
+mean_ts() {
+  # Verify files present
+  if [[ ${#allfiles[@]} -eq 0 ]]; then
+    echo "Error: No files available between days ${climo_start} and ${climo_end}."
+    exit 1
+  fi
+  # Just pick a couple simple variables
+  # Can be re-run no problem
+  echo "Getting time series of hemispheric means through days ${allfiles[@]##*/${psummary}.}."
+  for region in SH NH; do
+    selregion=$(region_selbox $region)
+    commands=("${allfiles[@]/#/ -fldmean -selname,$ts_params $selregion }")
+    # cdo -v -O ${commands[0]} test.nc; echo ${commands[0]}; echo Region $region; exit 1
+    cdo $flags -mergetime ${commands[@]} ${fregion%.nc}${region}.nc # merge the means
+  done
+}
+
+# Time series of global energy terms
+# For this we use "all files", i.e. include spinup before climo_start and any
+# days after climo_end; use these files to monitor spinup progress
+energy_budget_ts() {
+  # Verify files present
+  if [[ ${#allfiles[@]} -eq 0 ]]; then
+    echo "Error: No files available between days ${climo_start} and ${climo_end}."
+    exit 1
+  fi
+  # Very simple again
+  echo "Getting time series of energy terms through days ${allfiles[@]##*/${psummary}.}."
+  echo ${allfiles[@]}
+  sleep 5
+  commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$energy_params }")
+  cdo $flags -mergetime ${commands[@]} $fenergy # merge the means
+}
+
 # Lag-1 autocorrelation for North et al. estimates
 energy_budget_autocorr() {
   # Just get the autocorrelation from the time-mean
@@ -262,42 +303,6 @@ energy_budget_autocorr() {
   cdo $flags -timcor -seltimestep,$timesteps1 tmp.nc \
     -seltimestep,$timestepsN tmp.nc $fautocorr
   rm tmp.nc # remove file
-}
-
-# Time series of global energy terms
-# For this we use "all files", i.e. include spinup before climo_start and any
-# days after climo_end; use these files to monitor spinup progress
-energy_budget_ts() {
-  # Verify files present
-  if [[ ${#allfiles[@]} -eq 0 ]]; then
-    echo "Error: No files available between days ${climo_start} and ${climo_end}."
-    exit 1
-  fi
-  # Very simple again
-  echo "Getting time series of energy terms through days ${allfiles[@]##*/${psummary}.}."
-  commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$energy_params }")
-  cdo $flags -mergetime ${commands[@]} $fenergy # merge the means
-}
-
-# This function preserves levels, and takes means from 20deg to 70deg
-# Used for the spectral analysis later
-# TODO: ***FOUND A BUG***: For whatever reason, putting the region-selection
-# before selname causes error, but after selname works fine.
-mean_ts() {
-  # Verify files present
-  if [[ ${#allfiles[@]} -eq 0 ]]; then
-    echo "Error: No files available between days ${climo_start} and ${climo_end}."
-    exit 1
-  fi
-  # Just pick a couple simple variables
-  # Can be re-run no problem
-  echo "Getting time series of hemispheric means through days ${allfiles[@]##*/${psummary}.}."
-  for region in SH NH; do
-    selregion=$(region_selbox $region)
-    commands=("${allfiles[@]/#/ -fldmean -selname,$ts_params $selregion }")
-    # cdo -v -O ${commands[0]} test.nc; echo ${commands[0]}; echo Region $region; exit 1
-    cdo $flags -mergetime ${commands[@]} ${fregion%.nc}${region}.nc # merge the means
-  done
 }
 
 ################################################################################
