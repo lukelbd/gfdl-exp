@@ -539,7 +539,6 @@ for param1 in ${params1[@]}; do
         printf "Warning: $exp_name integration failed.\n\n\n\n"
         continue # keyboard interruption does not trigger this
       fi
-      echo
     # On supercomputer, submit via qsub
     # NOTE: See Readme and subfolders in 'logs' folder to see rationale
     # for core selection; found that *mpiprocs/openmp flags made no change*,
