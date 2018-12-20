@@ -168,18 +168,24 @@ dir_setup() {
   # Set up working directory, and move there
   wdir="$1" # where to move files
   [ $# -ne 1 ] && echo "Error: dir_setup() functions requires exactly 1 argument." && exit 1
-  if [ ! -d $wdir ]; then
+  if ! [ -d $wdir ]; then
     # Resume run here
     resume=false
     echo "Setting up working directory ${wdir##*/}..."
   elif $resume; then
-    if compgen -G "$wdir/*.nc" &>/dev/null; then
-      echo "Working directory ${wdir##*/} contains failed processing step. Deleting..."
-    elif [ -z "$(\ls $wdir/RESTART)" ]; then # need to check *contents*; don't care about empty one
-      echo "Working directory ${wdir##*/} contains unfinished integration. Deleting..."
-    else
-      echo "Working directory ${wdir##*/} contains completed integration. Cancelling..."
+    # if compgen -G "$wdir/*.nc" &>/dev/null; then
+    #   echo "Working directory ${wdir##*/} contains failed processing step. Deleting..."
+    # elif [ -z "$(\ls $wdir/RESTART)" ]; then # need to check *contents*; don't care about empty one
+    #   echo "Working directory ${wdir##*/} contains unfinished integration. Deleting..."
+    # else
+    #     echo "Working directory ${wdir##*/} contains completed integration. Cancelling..."
+    #   return 1 # breaks out of if statement
+    # fi
+    if compgen -G "$wdir/../netcdf/*${wdir##*/}.nc" &>/dev/null; then
+      echo "NetCDF files already exist for block ${wdir##*/}. Cancelling..."
       return 1 # breaks out of if statement
+    else
+      echo "No NetCDF files found for block ${wdir##*/}. Resuming..."
     fi
     # Otherwise, resume run and delete 'unfinished' contents
     resume=false
