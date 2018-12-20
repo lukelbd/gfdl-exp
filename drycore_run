@@ -112,7 +112,7 @@ driver() {
   t1=$(date +%s)
   echo "Running model..."
   $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
-  egrep 'EXIT CODE: [1-9]|FATAL from PE' log.model &>/dev/null && \
+  egrep 'EXIT CODE: [1-9]|FATAL from PE|WARNING from PE' log.model &>/dev/null && \
     echo "Error: Bad exit code from model run step." && exit 1
   tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
   echo "Model time: ${tmodel%.*}s." # is just max of the two

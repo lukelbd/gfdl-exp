@@ -154,6 +154,17 @@ params() {
   echo "  * Time for getting other params: $(($(date +%s) - t))s."
 }
 
+# Check exit codes
+pidcheck() {
+  for pid in $@; do
+    wait $pid
+    if [ $? -ne 0 ]; then
+      echo "Error: Bad exit code from one or more of the parallel processes."
+      exit 4
+    fi
+  done
+}
+
 ################################################################################
 # Driver, calls above functions
 ################################################################################
@@ -206,6 +217,7 @@ for file in ${files[@]}; do
   ##############################################################################
   # 1) Interpolate to pressure, get means in parallel
   ##############################################################################
+  unset pids
   tp=$(date +%s)
   echo "Interpolating and getting means..."
   ! [ -d LOGS ] && mkdir LOGS
@@ -223,15 +235,29 @@ for file in ${files[@]}; do
       # Interpolate and get means
       $_debug && mfile=${ncfile%%.*}_interp.$suffix || mfile=$ncfile
       { hybrid_to_press "$ncfile" "$suffix"; means "$mfile" "$suffix"; } &>LOGS/log.$num &
+      pids+=($!)
     fi
-  done; wait
+  done; pidcheck ${pids[@]}
   $_debug && ncfiles=(${base}_interp.*.nc) # we didn't overwrite them
   echo "  * Time for interpolating and getting zonal means in parallel: $(($(date +%s) - tp))s."
+  # Merge zonal means
+  # NOTE: Use mppnccombine -h to print help info; the -r removes files after
+  # run was successful
+  if $_parallel; then
+    # Merge params
+    echo "Combining YZ files..."
+    t=$(date +%s)
+    [ -r means.nc ] && rm means.nc
+    $mppnccombine means.nc means.*.nc
+    wait
+    echo "  * Time for combining means: $(($(date +%s) - t))s."
+  fi
 
   ##############################################################################
   # 2) Calculate other params in parallel
   ##############################################################################
   # Global means were required for some, hence the initial merge
+  unset pids
   tp=$(date +%s)
   echo "Getting other params..."
   for ncfile in ${ncfiles[@]}; do
@@ -245,7 +271,8 @@ for file in ${files[@]}; do
       suffix=${num}.nc
     fi
     params "$ncfile" "$suffix" &>>LOGS/log.${num} &
-  done; wait
+    pids+=($!)
+  done; pidcheck ${pids[@]}
   echo "  * Time for getting params in parallel: $(($(date +%s) - tp))s."
 
   # Merge zonal means
@@ -255,13 +282,10 @@ for file in ${files[@]}; do
     # Merge params
     echo "Combining YZ files..."
     t=$(date +%s)
-    [ -r means.nc ] && rm means.nc
     [ -r params.nc ] && rm params.nc
-    $mppnccombine means.nc means.*.nc &
     $mppnccombine params.nc params.*.nc &
     wait
-    echo "  * Time for combining files: $(($(date +%s) - t))s."
-    ! $_debug && rm means.*.nc params.*.nc
+    echo "  * Time for combining params: $(($(date +%s) - t))s."
   fi
   # Append params to file; want them to show up at end of ncdump ideally
   # ncks -h --no-abc -A means.nc params.nc
@@ -270,7 +294,7 @@ for file in ${files[@]}; do
     cp means.nc $yzfile
   else
     mv means.nc $yzfile
-    rm params.nc
+    rm params.nc means.*.nc params.*.nc
   fi
 
   ##############################################################################
@@ -329,19 +353,15 @@ for file in ${files[@]}; do
       t=$(date +%s)
       # Combine groups of half-files
       i=1
-      unset ps xyzfiles
+      unset pids xyzfiles
       echo "Combine pieces..."
       for group in "${interp[@]}"; do
         ixyzfile=${xyzfile%.nc}_${i}.nc
         $mppnccombine -r $ixyzfile $group &
         xyzfiles+=($ixyzfile)
-        ps+=($!)
+        pids+=($!)
         let i+=1
-      done
-      for p in ${ps[@]}; do
-        wait $p
-        [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
-      done
+      done; pidcheck ${pids[@]}
       echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
       # Put back together
       t=$(date +%s)
