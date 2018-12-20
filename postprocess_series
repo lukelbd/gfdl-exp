@@ -9,13 +9,13 @@
 dryrun=false
 runmode=0 # 0 is control run, the rest are different spindown modes:
 filename=4xdaily_inst # prefix for files to be read
-parallel_max=8 # maximum parallel post-processing events
+pmax=8 # parallelization
 
 # Settings
 # climo_start=100 climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
 climo_start=200 climo_end=1100 # NOTE: use this for troprad3 runs, which were screwed in last 100 days
 spin_start=0 spin_end=100000
-globs=('*troprad3-anom*')
+globs=('*troprad3*t42l40s*')
 flags="--climo " # --eof2d
 
 # Host-specific settings
@@ -36,9 +36,7 @@ case ${HOSTNAME%%.*} in
     scratch=/mdata1/ldavis
   ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
 esac
-flags="$flags --mode=$runmode
-  --spin-start=$spin_start --spin-end=$spin_end
-  --climo-start-$climo_start --climo-end=$climo_end"
+flags="$flags -m=$runmode -s1=$spin_start -s2=$spin_end -c1=$climo_start -c2=$climo_end"
 
 # Iterate
 for glob in ${globs[@]}; do
@@ -47,10 +45,10 @@ for glob in ${globs[@]}; do
     if ! [ -d $input ]; then
       echo "Warning: No directories for glob pattern ${input}." && sleep 3 && continue
     fi
-    echo "Directory: ${input}."
+    # echo "Directory: ${input}."
 
     # Crude parallelization across multiple experiments
-    if [ ${#pids[@]} -gt 0 ] && [ $(( (counter - 1) % parallel_max )) == 0 ]; then
+    if [ ${#pids[@]} -gt 0 ] && [ $(((counter - 1) % pmax)) -eq 0 ]; then
       echo "Waiting for processes: ${pids[@]}."
       for pid in ${pids[@]}; do
         wait $pid
@@ -60,20 +58,24 @@ for glob in ${globs[@]}; do
 
     # Run stuff; will generate individual logs for each 'type' of
     # post-process, and a bigger log that indicates what processes are running
-    echo "Current experiment directory: \"${input##*/}\"."
-    output="$storage/${input##*/}/" # saving processed data
+    echo "Experiment: \"${input##*/}\"."
+    output="$storage/${input##*/}" # saving processed data
     input="$input/$subfolder"       # loading raw data
     [ ! -d $output ] && mkdir $output
     $dryrun && cmd="echo ./postprocess_run" || cmd="./postprocess_run"
 
     # Opionally run in parallel, or just linearly
+    echo "Log file: tail -f $output/log"
     echo "Calling postprocess with flags: $flags"
     sleep 1
-    if [ $parallel_max -eq 1 ]; then
+    if [ $pmax -eq 1 ]; then
       $cmd "$filename" "$input" "$output" $flags --debug
     else
+      # $cmd "$filename" "$input" "$output" $flags &>logs/pp_${log}.log &
+      # $cmd "$filename" "$input" "$output" $flags &>logs/pp_${output##*/}.log &
       $cmd "$filename" "$input" "$output" $flags &>$output/log &
     fi
     pids+=($!) # record process
+    echo
   done
 done

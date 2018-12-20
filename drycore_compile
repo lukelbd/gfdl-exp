@@ -1,4 +1,5 @@
 #!/bin/bash
+#------------------------------------------------------------------------------#
 # Script for compiling fortran source code, as user has specified. Then the runscript will integrate
 # it forward, produce output, etc.
 # pgcc or pgif90 flags:
@@ -20,7 +21,6 @@
 #   -c = list of 'cpp #define's passed to source files, as -D flags (what?)
 #   -a = abspath, attaches 'abspath' (here, $src) to the FRONT of RELATIVE paths to the source file
 # args (all the later stuff) = list of directories/files to be searched for targets and dependencies
-
 #------------------------------------------------------------------------------
 # Initial stuff
 #------------------------------------------------------------------------------

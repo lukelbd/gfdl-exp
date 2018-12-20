@@ -530,11 +530,11 @@ for param1 in ${params1[@]}; do
 
     # Run experiment (or just echo command for dryrun)
     np=$((cores * nodes))
-    exp_run="./drycore_run $exp_dir $flags_global $flags -m=$runmode -ts=$tstart -te=$tend -c=$np -p=\"$pflags\""
+    exp_run="./drycore_run $exp_dir $flags_global $flags -m=$runmode -ts=$tstart -te=$tend -c=$np -p='$pflags'"
     $dryrun && echo $exp_run && continue
     # On server
     if ! $super; then
-      $exp_run &>>$log
+      eval "$exp_run &>>$log"
       if [ $? -ne 0 ]; then
         printf "Warning: $exp_name integration failed.\n\n\n\n"
         continue # keyboard interruption does not trigger this
