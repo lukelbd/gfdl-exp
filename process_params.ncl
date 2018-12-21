@@ -1,4 +1,3 @@
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; This file adds various parameters to NetCDF file that are difficult or impossible
 ; to do with NCO/CDO tools... actually maybe NCO could work but this is probably easier
@@ -137,6 +136,12 @@ uvar@long_name = "zonal wind zonal variance"
 uvar@units = "m2/s2"
 o->uvar = uvar
 delete(uvar)
+vvar = dim_avg_n(v_star * v_star, ilon)
+vvar := singleton(t, vvar)
+vvar@long_name = "meridional wind zonal variance"
+vvar@units = "m2/s2"
+o->vvar = vvar
+delete(vvar)
 timer("  * Time for getting variance terms")
 
 ; Eddy flux
