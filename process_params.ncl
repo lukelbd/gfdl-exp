@@ -112,11 +112,12 @@ delete(w_bar) ; this is never used again
 ; Stability factor -(theta/T)*(R/cp)*(dthetabar/dp)^=1 where R/cp==kappa
 ; New way recognizing that t/theta == (p/p0)^kappa since theta==t*(p0/p)^kappa
 ; which means gamma == -R/(cp*p*(dtheta/dp)*(t/theta)) = -kappa/((dtheta/dp)*p*(p/p0)^kappa)
-pt_bar = dim_avg_wgt_n(t_bar(:,:,:,0)*conform_dims(ave_dims, p0/p, ilev)^kappa, \
-                       clat, 0, ilat) ; weighted ave
-stab  = -kappa/(center_finite_diff_n(pt_bar, p, False, 0, ilev) * \
-               conform(pt_bar, p*(p/p0)^kappa, ilev) )
-stab := conform_dims(ave_dims, stab, (/0, 1/))
+pt_bar = dim_avg_wgt_n(t_bar(:,:,:,0)*conform_dims(ave_dims, p0/p, ilev)^kappa, clat, 0, ilat) ; weighted ave
+denom = center_finite_diff_n(pt_bar, p, False, 0, ilev) * conform(pt_bar, p*(p/p0)^kappa, ilev)
+; denom@_FillValue = -999.0
+denom@_FillValue = default_fillvalue(typeof(denom))
+denom = where(denom .ne. 0, denom, denom@_FillValue) ; actually had divide by zero errors for t42l10s runs near poles!
+stab = conform_dims(ave_dims, -kappa/denom, (/0, 1/))
 delete(pt_bar)
 timer("  * Time for getting preliminary parameters")
 

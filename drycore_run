@@ -90,9 +90,9 @@ exit_check() {
     echo "Error: Exit status $estatus from post-processing previous block..."
     case $estatus in
       1) echo "NetCDF files missing. Check log.model." ;;
-      2) echo "Something failed during model interpolation. Check log.interp." ;;
-      3) echo "Something failed while getting basic terms. Check log.basic." ;;
-      4) echo "Something failed while getting Lorenz cycle terms. Check log.lorenz." ;;
+      2) echo "Something failed during pressure level interpolation. Check log.interp." ;;
+      3) echo "Something failed while getting basic terms. Check log.means." ;;
+      4) echo "Something failed while getting param terms. Check log.params." ;;
       *) echo "Check log.process; other/miscellaneous failure." ;;
     esac
     exit 1
