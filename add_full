@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Iterate through a bunch of glob patterns
-# in the scratch directory
-# shopt -s nullglob
+# NOTE: This file adds params that require the "full" data file
+# Call the file
 repair=./process_repair.ncl
 nclcheck() {
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null

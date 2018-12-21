@@ -124,19 +124,19 @@ timer("  * Time for getting preliminary parameters")
 ; Variables
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Eddy variance
-tvar = dim_avg_n(t_star * t_star, ilon)
+tvar = dim_avg_n(t_star^2, ilon)
 tvar := singleton(t, tvar)
 tvar@long_name = "zonal temperature variance"
 tvar@units = "K2"
 o->tvar = tvar
 delete(tvar)
-uvar = dim_avg_n(u_star * u_star, ilon)
+uvar = dim_avg_n(u_star^2, ilon)
 uvar := singleton(t, uvar)
 uvar@long_name = "zonal wind zonal variance"
 uvar@units = "m2/s2"
 o->uvar = uvar
 delete(uvar)
-vvar = dim_avg_n(v_star * v_star, ilon)
+vvar = dim_avg_n(v_star^2, ilon)
 vvar := singleton(t, vvar)
 vvar@long_name = "meridional wind zonal variance"
 vvar@units = "m2/s2"
