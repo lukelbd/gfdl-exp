@@ -20,9 +20,10 @@ climo_end=5500
 spin_start=0
 spin_end=100000 # just get all of them
 # globs=('*troprad3*t42l40s*')
+# globs=('*base_t42l20s*')
 globs=('*troprad3_t42l20s*')
 # flags='--climo ' # --eof2d
-flags='--energy ' # --eof2d
+flags='--climo ' # --eof2d
 
 # Host-specific settings
 subfolder=netcdf
