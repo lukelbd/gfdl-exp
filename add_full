@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# NOTE: This file adds params that require the "full" data file
+# NOTE: Need to add stuff to the base experiment!
+# Call the file
+repair=./add_full.ncl
+case ${HOSTNAME%%.*} in
+  monde)
+    scratch=/mdata1/ldavis
+  ;; cheyenne*)
+    scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
+  ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+
+# Functions
+nclcheck() {
+  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
+  return $? # is *zero* if we *found error strings*
+}
+add() {
+  log=logs/add${i}.log
+  ncl -n -Q "full=\"$full\"" "summary=\"$summary\"" $repair &>$log
+  nclcheck $log
+  return $? # is *zero* if we *found error strings*
+}
+
+# Loop
+pmax=18 # try to parallelize, really slow otherwise
+globs=('hs*t95l60e*') # add to every single file
+for glob in "${globs[@]}"; do
+  for dir in $scratch/$glob; do
+    echo "Dir: ${dir##*/}"
+    t=$(date +%s)
+    filenames=($dir/netcdf/*full.d????-d????.nc)
+    # Loop through files, try to parallelize because very slow
+    i=0 # make sure to wait once we get here
+    unset pids
+    for full in ${filenames[@]}; do
+      let i+=1
+      echo "File: ${full##*/}"
+      summary=${full/full/summary}
+      ! [ -r $summary ] && echo "Error: Companion summary file ${summary##*/} not found." && continue
+      add &
+      pids+=($!)
+      if [ $((${#pids[@]} % pmax)) -eq 0 ] || [ $i -eq ${#filenames[@]} ]; then
+        for pid in ${pids[@]}; do
+          wait $pid
+          [ $? -eq 0 ] && echo "Error: One of the processes failed. Crap." && exit 1
+        done
+        echo "Elapsed time: $(($(date +%s) - t))s."
+        t=$(date +%s)
+      fi
+    done
+  done
+done

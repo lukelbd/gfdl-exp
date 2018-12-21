@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Get the days run for experiments matching glob patterns
+name="$1"
+[ -z "$1" ] && name="*t95l60e*"
+globs=(~/scratch/$name)
+for dir in ${globs[@]}; do
+  cd $dir
+  echo "Dir: $dir"
+  # sleep 1
+  cat input.nml | grep 'dt_atmos'
+done

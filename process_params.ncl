@@ -125,19 +125,19 @@ timer("  * Time for getting preliminary parameters")
 ; Variables
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Eddy variance
-tvar = dim_avg_n(t_star * t_star, ilon)
+tvar = dim_avg_n(t_star^2, ilon)
 tvar := singleton(t, tvar)
 tvar@long_name = "zonal temperature variance"
 tvar@units = "K2"
 o->tvar = tvar
 delete(tvar)
-uvar = dim_avg_n(u_star * u_star, ilon)
+uvar = dim_avg_n(u_star^2, ilon)
 uvar := singleton(t, uvar)
 uvar@long_name = "zonal wind zonal variance"
 uvar@units = "m2/s2"
 o->uvar = uvar
 delete(uvar)
-vvar = dim_avg_n(v_star * v_star, ilon)
+vvar = dim_avg_n(v_star^2, ilon)
 vvar := singleton(t, vvar)
 vvar@long_name = "meridional wind zonal variance"
 vvar@units = "m2/s2"
@@ -263,11 +263,11 @@ timer("  * Time for eddy KE conversion to mean KE")
 
 ; Conversion from mean APE to eddy APE
 ; Formula is cp*(gamma*v'*T'*dT/dy + p^-kappa*w'*T'*d(gamma*p^kappa*T')/dp)
-fact = stab*t_anom*conform_dims(ave_dims, p^kappa, ilev)
-dfact_dp = center_finite_diff_n(fact, p, False, 0, ilev)
+param = stab*t_anom*conform_dims(ave_dims, p^kappa, ilev)
+dparam_dp = center_finite_diff_n(param, p, False, 0, ilev)
 dt_bar_dy = center_finite_diff_n(t_bar(:,:,:,0), rlat*a, False, 0, ilat) ; not function of longitude
 CPMPE = -1.*cp*(stab*dim_avg_n(t_star*v_star, ilon)*dt_bar_dy + \
-  conform_dims(ave_dims, p^-kappa, ilev)*dim_avg_n(t_star*w_star, ilon)*dfact_dp)/g
+  conform_dims(ave_dims, p^-kappa, ilev)*dim_avg_n(t_star*w_star, ilon)*dparam_dp)/g
 ; Write to file
 CPMPE := singleton(t, CPMPE) ; copy coordinates
 CPMPE@long_name = "mean APE conversion to eddy APE"

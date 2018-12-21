@@ -201,7 +201,7 @@ case ${HOSTNAME%%.*} in
     bindir=drycore-cheyenne
   ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
 esac
-[ ! -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
+! [ -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
 # Copy over the appropriate executable file
 cp $bindir/fms.x ./ # location of executables
 [ $? -ne 0 ] && echo "Error: fms.x not found in \"$bindir\"." && exit 1
@@ -521,6 +521,7 @@ for param1 in ${params1[@]}; do
     log=logs/${exp_dir##*/}.log # e.g use the testing name
     echo "Experiment name: ${exp_name}." | tee $log
     echo "Log file: tail -f $log" # so can copy paste this
+    echo "Run flags: $flags_global"
 
     # Prepare namelist, diag table, and flags for experiment
     # NOTE: This sets global variables 'exp_name' and 'exp_dir'
@@ -545,7 +546,6 @@ for param1 in ${params1[@]}; do
         printf "Warning: $exp_name integration failed.\n\n\n\n"
         continue # keyboard interruption does not trigger this
       fi
-      echo
     # On supercomputer, submit via qsub
     # NOTE: See Readme and subfolders in 'logs' folder to see rationale
     # for core selection; found that *mpiprocs/openmp flags made no change*,
@@ -560,6 +560,7 @@ for param1 in ${params1[@]}; do
 #PBS -N $exp_name
 #PBS -A UCSU0071
 #PBS -M lukelbd@gmail.com
+#PBS -m ae
 #PBS -q $queue
 # Job specs (max possible walltime is 12 hours)
 #PBS -l walltime=$walltime:00
@@ -578,6 +579,7 @@ EOF
     unset flags
     let counter+=1
     cd $cwd # ensure are still in same directory
+    echo
   done
 done
-echo # space
+# echo # space
