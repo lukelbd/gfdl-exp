@@ -3,7 +3,7 @@ FC = pgf90
 LD = pgf90
 CPPFLAGS =
 FFLAGS = -r8 -pc 64 -Ktrap=fp -O3
-LDFLAGS = -L/usr/lib64/mpich/lib -lnetcdff -lnetcdf -Mmpi=mpich
+LDFLAGS = -L/usr/lib64/mpich/lib -lnetcdff -lnetcdf -lhdf5 -lhdf5_hl -Mmpi=mpich
 LIST = -Mlist
 # this makefile template recognizes fortran sourcefiles with extensions
 # .f, .f90, .F, .F90. Given a sourcefile <file>.<ext>, where <ext> is one of

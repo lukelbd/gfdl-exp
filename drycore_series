@@ -90,13 +90,9 @@ testdays=5
 testblocks=1 # number of blocks of testdays
 # For supercomputer, idea will be to submit all jobs for the series
 # simultaneously, by auto-generating a PBS script
-if [[ $HOSTNAME =~ cheyenne* ]]; then
-  super=true
-  diag_table=diag_table_default
-else
-  super=false
-  diag_table=diag_table_old # WARNING: temporary! PGI compilers expired, names changed!
-fi
+super=false
+diag_table=diag_table_default
+[[ $HOSTNAME =~ cheyenne* ]] && super=true
 # Parse input
 unset series_name flags_global
 while [ $# -gt 0 ]; do # echo "Flag: $1"
@@ -540,6 +536,7 @@ for param1 in ${params1[@]}; do
     exp_run="./drycore_run $exp_dir $flags_global $flags -m=$runmode -ts=$tstart -te=$tend -c=$np -p='$pflags'"
     $dryrun && echo $exp_run && continue
     # On server
+    # NOTE: Need the eval so the quotes in the -p argument are evaluated
     if ! $super; then
       eval "$exp_run &>>$log"
       if [ $? -ne 0 ]; then
