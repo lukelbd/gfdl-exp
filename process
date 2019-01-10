@@ -19,8 +19,6 @@
 # Also Execute.c is always shown as error alongside specific function error, so ignore that one
 nclcheck() { # input log file as argument
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
-  return $? # return exit code; good status means we found error, bad status means we found nothing
-    # ignore ^warning: because these will also happen if we have a systemfunc error possibly
 }
 
 # Parse input flags
@@ -56,7 +54,7 @@ interp_cdo=$bin/process_interp.cdo # interpolate with CDO
 interp_ncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
 mppnccombine=$bin/mppnccombine.x # combine; needs to have been compiled here
 process=$bin/process_params.ncl  # eddy and mean Lorenz energy cycle terms with NCL
-means=$bin/process_means.ncl     # just gets zonal means
+means=$bin/process_zonmean.ncl   # just gets zonal means
 cd $_dir # optionally pass dir argument
 
 # Double check some stuff
@@ -83,36 +81,20 @@ hybrid_to_press() {
 
   # Apply some simple modifications to attributes
   # NOTE: Use -h to prevent appending history
-  ncrename -h -d pfull,mlev $filename &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
-  ncrename -h -d phalf,ilev $filename &>/dev/null # ilev is the other ECHAM convention
-  ncrename -h -v pfull,mlev $filename &>/dev/null # -d renames dimensions, -v renames variables of same name
-  ncrename -h -v phalf,ilev $filename &>/dev/null
+  ncrename -h -d pfull,mlev -d phalf,ilev $filename &>/dev/null # mlev/ilev is the ECHAM convention, needed for CDO interpolation
+  ncrename -h -v pfull,mlev -v phalf,ilev $filename &>/dev/null # -d renames dimensions, -v renames variables of same name
   ncatted -h -O -a bounds,mlev,o,c,"ilev" $filename
 
   # Interpolation
   echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
   [ -r "$output" ] && rm "$output"
   ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" $interp_ncl &>$log #2> /dev/null
-  if nclcheck $log || [ ! -r $output ]; then
+  if nclcheck $log || ! [ -r $output ]; then
     echo "Error: Something failed during NCL interpolation." && exit 2
   fi
 
-  # Standardize attributes
-  # Many of these may already be properly set, but make sure; CDO also may want
-  # a few special ones like 'axis' and 'standard_name'
-  # NOTE: This is really fast (0.02s on T42 20 day file)
-  # This is much faster than even editing one attribute in NCL (0.05s)
-  # NOTE: We set the calendar to '360_day' because that seems reasonable for
-  # an equinoctial model run (even months of 30), and software like CDO and
-  # xarray cannot interpret the default 'NO_CALENDAR'
-  ncatted -h -O -a NumFilesInSet,global,o,l,$numfiles \
-    -a edges,lon,d,, -a edges,lat,d,, \
-    -a axis,lon,o,c,"X" -a axis,lat,o,c,"Y" -a axis,plev,o,c,"Z" -a axis,time,o,c,"T" \
-    -a long_name,plev,o,c,"pressure_level" -a units,plev,o,c,"mb" -a bounds,plev,o,c,"plev_bnds" \
-    -a long_name,lat,o,c,"latitude"  -a standard_name,lat,o,c,"latitude" \
-    -a long_name,lon,o,c,"longitude" -a standard_name,lon,o,c,"longitude" \
-    -a calendar_type,time,d,, -a calendar,time,o,c,"360_day" -a standard_name,time,o,c,"time" \
-    -a units,lat,o,c,"degrees_north" -a units,lon,o,c,"degrees_east" $output
+  # Add back global attribute
+  ncatted -h -O -a NumFilesInSet,global,o,l,$numfiles
   ! $_debug && mv $output $filename # move old file on top of new file
   echo "  * Time for interpolation: $(($(date +%s) - t))s."
 }

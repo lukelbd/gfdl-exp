@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Add the top-level 'forcing.nc' file to all experiment directories
+shopt -s nullglob
+cwd=$(pwd)
+cmd=$cwd/drycore_run
+case ${HOSTNAME%%.*} in
+  monde*)    scratches=(/mdata2/ldavis /mdata1/ldavis) ;;
+  cheyenne*) scratches=/glade/scratch/davislu ;;
+  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+# Iterate through *all* experiments!
+for scratch in ${scratches[@]}; do
+  subfolders=($scratch/. $scratch/timescales-*) # subfolders contain some older experiment series
+  for subfolder in ${subfolders[@]}; do
+    for ftype in hs pk dbt; do
+      for dir in ${subfolder}/${ftype}_*; do
+        # if true; then
+        if ! [ -r $dir/forcing.nc ]; then
+          echo "Experiment: ${dir##*/}"
+          # Fix issue where older experiments had no top-level namelist
+          if ! [ -r $dir/input.nml ]; then
+            days=($dir/d0000-d????)
+            if [ ${#days[@]} -eq 0 ] || ! [ -r ${days[0]}/input.nml ]; then
+              echo "No namelist or experiment folders found."
+              continue
+            fi
+            echo "Adding namelist to top-level folder."
+            cp ${days[0]}/input.nml $dir
+          fi
+          # Call drycore_run with the 'forcing only' option
+          $cmd --forcing $dir
+        fi
+      done
+    done
+  done
+done

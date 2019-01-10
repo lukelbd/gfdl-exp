@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# Calculate isentropic data and some 2D isentropic values, like
+# the mass-weighted fluxes
+# Will interpolate in *parallel* by splitting file into N time dimensions,
+# running in parallel, then continuing
+#------------------------------------------------------------------------------#
+# Initial stuff
+shopt -s nullglob
+cwd=$(pwd)
+qgpv=$cwd/qgpv.ncl
+spectra=$cwd/spectra.py
+isen_interp=$cwd/isentropes_interp.ncl
+isen_params=$cwd/isentropes_params.ncl
+case ${HOSTNAME%%.*} in
+  monde*)    scratches=(/mdata2/ldavis /mdata1/ldavis) ;;
+  cheyenne*) scratches=/glade/scratch/davislu ;;
+  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+
+# Hard coded settings
+# globs=('hs_katmos?_*' 'hs_katmos?-mean*' 'hs_katmos?-anom*')
+# globs=('hs_katmos3_t42l10s*' 'hs_katmos?-mean_t42l10s*' 'hs_katmos?-anom_t42l10s*')
+# globs=('hs_base*' 'hs_tgrad*' 'hs_katmos?_*' 'hs_katmos?-mean*' 'hs_katmos?-anom*')
+globs=('hs_katmos2-anom*')
+fname=2xdaily # ignore the 4xdaily files for the time being
+pmax=10 # try to parallelize, really slow otherwise
+pmax=1
+
+# Run mode
+# get_pv=false
+get_isen=false
+get_spectra=false
+stratosphere=False # whether to include high stratospheric resolution in theta coordinates
+# [ $# -eq 0 ] && echo "Error: Need to specify which items you want to calculate." && exit 1
+while [ $# -gt 0 ]; do
+  case $1 in
+    isen)    get_isen=true ;;
+    spectra) get_spectra=true ;;
+    *) echo "Error: Unknown identifier \"$1\"." && exit 1 ;;
+  esac
+  shift
+done
+
+# Special function that splits up file into separate times,
+# interpolates them in parallel, then stiches them back together
+# Not currently used because just as efficient to process datasets
+# in background
+nclist() {
+  command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
+    | cut -d '(' -f 1 | sed 's/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs
+}
+ncin() {
+  nclist $1 | grep $2 &>/dev/null
+}
+run() {
+  if [ $pmax -eq 1 ]; then
+    # $@
+    $@ 2>&1 | tee $log
+  else
+    $@ &>$log
+  fi
+}
+nclcheck() {
+  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | egrep "^fatal:" &>/dev/null
+  [ $? -ne 0 ] # so "success" is when the above grep fails, i.e. no fatal warning messages
+}
+driver() {
+  # Isentropic coordinates
+  # NOTE: always overwrites, because I changed the levels
+  # also some files may be hanging around with bad sigma bar calculation
+  # if $get_isen && { ! [ -r $summary_isen ] || ! ncin $summary_isen pv; }; then
+  if $get_isen; then
+    # Interpolate
+    log=logs/isen_interp${i}.log
+    echo ${full_isen##*/}
+    run ncl -n -Q "stratosphere=${stratosphere}" "forcing=\"${full%/*}/../forcing.nc\"" \
+      "filename=\"$full\"" "outname=\"$full_isen\"" $isen_interp
+    ! nclcheck $log && echo "Error: Interpolation failed." && return 1
+    # Params
+    echo ${summary_isen##*/}
+    log=logs/isen_params${i}.log
+    run ncl -n -Q \
+      "filename=\"$full_isen\"" "outname=\"$summary_isen\"" $isen_params
+    ! nclcheck $log && echo "Error: Params script failed." && return 1
+  fi
+  # Conserve space, only leave the days 5000-N
+  if [ -r $full_isen ] && ! [[ "$full_isen" =~ *d5* ]]; then
+    echo "Removing ${full_isen##*/}"
+    rm $full_isen
+  fi
+
+  # Get spectral transforms for momentum and heat fluxes
+  # NOTE: also gets the QGPV, because we need the QGPV flux
+  # NOTE: skip this step if have spectral file, and it has QGPV
+  # if $get_spectra && { ! [ -r $spectral_new ] || ! ncin $spectral_new qgpv; }; then
+  if $get_spectra; then
+    echo ${archive##*/}
+    log=logs/qgpv${i}.log
+    run ncl -n -Q \
+      "filename=\"$full\"" "archive=\"$archive\"" "summary=\"$summary\"" $qgpv
+    ! nclcheck $log && echo "Error: QGPV script failed." && return 1
+
+    echo ${spectral_new##*/}
+    log=logs/spectra${i}.log
+    [ -r $spectral_old ] && echo "Removing old name." && rm $spectral_old
+    # run $spectra \
+    run $spectra \
+      "$full" "$archive" "$spectral_new"
+    [ $? -ne 0 ] && echo "Error: Spectra script failed." && return 1
+  fi
+  if [ -r $archive ]; then
+    echo "Removing ${archive##*/}"
+    rm $archive
+  fi
+  return 0
+}
+
+# Parallel
+# interp_parallel() {
+#   name1=${1%.nc}
+#   name2=${2%.nc}
+#   np=0
+#   pmax=1000
+#   nsplit=10
+#   ts=$(command ncdump -h ${name1}.nc | grep 'UNLIMITED' | sed 's/[^0-9]//g') # number of timesteps
+#   for ni in $(seq 1 $nsplit); do
+#     let np+=1
+#     t1=$(((ni - 1)*ts/nsplit)) # e.g. nsplit=10, ts=200, goes 0, 20, 40, 60
+#     t2=$((ni*ts/nsplit - 1)) # e.g. nsplit=10, ts=200, goes 19, 39, 59
+#     {
+#     ncks -O -h --no-abc -d time,$t1,$t2 ${name1}.nc ${name1}-${ni}.nc
+#     ncl -Q -n "filename=\"${name1}-${ni}.nc\"" "outname=\"${name2}-${ni}.nc\"" $isen_interp
+#     } &
+#     [ $((np % pmax)) -eq 0 ] && wait
+#   done
+#   wait
+#   glob1=$name1'-*.nc'
+#   glob2=$name2'-*.nc'
+#   ncrcat -O $glob2 ${name2}_parallel.nc
+#   rm $glob1 $glob2
+# }
+
+# Iterate through experiment folders
+# NOTE: Hold off on diagonal experiments for now
+for scratch in "${scratches[@]}"; do
+  subfolders=($scratch/. $scratch/timescales-*) # subfolders contain some older experiment series
+  for subfolder in ${subfolders[@]}; do
+    for glob in "${globs[@]}"; do
+      for dir in $subfolder/$glob; do
+        # Folder
+        echo
+        echo "Dir: ${dir##*/}"
+        unset filename
+        t=$(date +%s)
+        filenames=($dir/netcdf/$fname*full.d????-d????.nc)
+        [ ${#filenames[@]} -eq 0 ] && echo "Warning: No files found." && continue
+
+        # Loop through files, try to parallelize because very slow
+        i=0 # make sure to wait once we get here
+        unset pids
+        for full in ${filenames[@]}; do
+          # Input file names
+          let i+=1
+          dir=${full%/*}
+          summary=${full/full/summary} # YZ file
+          full_base=${full##*/} # XYZ file
+          summary_base=${summary##*/} # XYZ file
+
+          # Names for output files
+          prefix=${full_base%%.*}
+          suffix=${full_base#*.}
+          full_isen=${dir}/${prefix}_isen.${suffix}
+          archive=${full/full/qgpv} # file that only stores 2D QGPV
+          spectral_new=${full/full/spectral}
+          spectral_old=${dir}/${prefix}_spectral.${suffix}
+          prefix=${summary_base%%.*}
+          suffix=${summary_base#*.}
+          summary_isen=${dir}/${prefix}_isen.${suffix}
+
+          # Calculate isentrope stuff
+          if [ $pmax -eq 1 ]; then
+            # Just call driver
+            driver
+            [ $? -ne 0 ] && echo "Error: One of the processes failed. Crap." && exit 1
+          else
+            # Manage background processes
+            driver &
+            pids+=($!)
+            npids=${#pids[@]}
+            if [ $((npids % pmax)) -eq 0 ] || [ $i -eq ${#filenames[@]} ]; then
+              for pid in ${pids[@]}; do
+                wait $pid
+                [ $? -ne 0 ] && echo "Error: One of the processes failed. Crap." && exit 1
+              done
+              echo "Elapsed time: $(($(date +%s) - t))s."
+              i=0 # reset counter
+              t=$(date +%s)
+            fi
+          fi
+        done
+      done
+    done
+  done
+done
+echo
+
