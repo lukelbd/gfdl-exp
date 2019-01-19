@@ -76,6 +76,7 @@ tstart=0  # first day of integration; set to 0 for new run.
 tend=5500 # for new experiments just do 1200 day integrations, first 200 are spinup
 walltime=12:00
 queue=economy
+# queue=regular
 # Output settings
 outfreq=12      # every 6
 frequnits=hours # hours

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# Use this file to check contents of files, echo names of ones where
+# certain variable name is not found.
+# Uses copy of function found in .bashrc
+# NOTE: Uses hash tables, so requires bash 4+!
+#------------------------------------------------------------------------------#
+# Hostname
+case ${HOSTNAME%%.*} in
+  monde)
+    scratch=/mdata1/ldavis
+  ;; cheyenne*)
+    scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
+  ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+
+# Functions
+ncitems() { # only get text between variables: and linebreak before global attributes
+  ! [ -r "$1" ] && echo "File \"$1\" not found." && exit 1
+  command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
+    | cut -d '(' -f 1 | sed 's/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]'
+}
+# ncitems() { # much much slower!
+#   ncl -Q -n <<EOF
+# f = addfile("$1")
+# print(getfilevarnames(f))
+# EOF
+# }
+
+# Loop
+log=add_check.log
+globs=('hs*t95l60e*')
+# globs=('hs*troprad*p0020*')
+ignore='(plev|plev_bnds|lat|lon|time)[[:space:]]*' # ignore dimensions
+[ -r $log ] && rm $log
+for glob in "${globs[@]}"; do
+  for dir in $scratch/$glob; do
+    unset keys values
+    echo "Experiment: ${dir##*/}" | tee -a $log
+    filenames=($dir/netcdf/*summary.d????-d????.nc)
+    for filename in ${filenames[@]}; do
+      keys+="$(ncitems $filename | sort | xargs | tr -s ' ' | sed -E "s/$ignore//g" | tr ' ' ',') "
+      days=${filename%.nc}
+      days=${days##*.}
+      values+="$days "
+    done
+    ./add_check.py "$keys" "$values" 2>&1 | tee -a $log
+    echo | tee -a $log
+  done
+done
