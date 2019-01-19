@@ -1,0 +1,48 @@
+mdata1
+0       mdata1/hein
+0       mdata1/davet
+0       mdata1/jingyuanl
+2.3T    mdata1/ldavis
+0       mdata1/swills
+0       mdata1/yingli
+125G    mdata1/old
+75G     mdata1/syook
+3.6T    mdata1/lboljka
+6.0T    mdata1/
+
+mdata2
+0       mdata2/hein
+0       mdata2/davet
+0       mdata2/jingyuanl
+2.3T    mdata2/ldavis
+0       mdata2/swills
+3.5T    mdata2/yingli
+100G    mdata2/old
+0       mdata2/syook
+0       mdata2/lboljka
+5.8T    mdata2/
+
+mdata3
+0       mdata3/hein
+0       mdata3/davet
+2.0T    mdata3/jingyuanl
+0       mdata3/ldavis
+0       mdata3/swills
+3.3T    mdata3/yingli
+911G    mdata3/old
+0       mdata3/syook
+0       mdata3/lboljka
+6.1T    mdata3/
+
+mdata4
+0       mdata4/hein
+0       mdata4/davet
+0       mdata4/jingyuanl
+0       mdata4/ldavis
+0       mdata4/swills
+5.8T    mdata4/yingli
+96G     mdata4/old
+0       mdata4/old.mdata7
+0       mdata4/syook
+1.2T    mdata4/lboljka
+7.0T    mdata4/

@@ -111,3 +111,45 @@ begin
   dy(:,nx,:,:) = (y(:,nx,:,:) - y(:,nx-1,:,:))/(xx(nx)-xx(nx-1))
   return dy
 end
+
+; Carbon copy of above, but for vectors
+undef("uneven_finite_diff")
+function uneven_finite_diff(y:numeric, x:numeric)
+local nx, rx, sy, ry, xx, dx1, dx2, dx, dy
+begin
+  ; Check stuff
+  rx = dimsizes(dimsizes(x))
+  if (rx .ne. 1) then
+    print("fatal:Uneven finite diff accepts 1-dimensional x-coordinate only.")
+    exit
+  end if
+  nx = dimsizes(x)
+  if (nx .lt. 3) then
+    print("fatal:Uneven finite diff requires at least length-3 x-coordinates.")
+    exit
+  end if
+  sy = dimsizes(y)
+  ry = dimsizes(sy)
+  if (ry .gt. 1) .or. (sy .ne. nx) then
+    print("fatal:Uneven finite diff got array size " + tostring(sy(1)) + " on first dimension, but vector length " + tostring(nx) + ".")
+    exit
+  end if
+  sdx = sy
+  sdx(0) = nx - 2 ; match spaces
+  ; First the spacings
+  nx = nx - 1
+  xx = 1.0*x ; ensure float
+  dx = xx(2:) - xx(:nx-2) ; x2 - x0
+  dx1 = xx(1:nx-1) - xx(:nx-2) ; x1 - x0
+  dx2 = xx(2:) - xx(1:nx-1) ; x2 - x1
+  ; Then the y stuff
+  dy = y*0.0
+  dy(1:nx-1) = \
+    ((dx1/dx2)*(y(2:) - y(1:nx-1)) + \
+     (dx2/dx1)*(y(1:nx-1) - y(:nx-2))) / dx
+  ; Use simple offsets for the edges
+  dy(0) = (y(1) - y(0))/(xx(1)-xx(0))
+  dy(nx) = (y(nx) - y(nx-1))/(xx(nx)-xx(nx-1))
+  return dy
+end
+

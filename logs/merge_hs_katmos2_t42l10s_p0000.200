@@ -1,0 +1,107 @@
+Copying forcing data.
+Average phase-speed spectra.
+Between 500 and 5500, found days 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400.
+Getting average spectra.
+Elapsed time: 975s.
+Control climate.
+Between 500 and 5500, found days 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400.
+Getting time-means.
+Elapsed time: 74s.
+Isentropic control climate.
+Between 500 and 5500, found days 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400.
+Getting time-means.
+Elapsed time: 222s.
+Control 2D EOFs of energy terms.
+Merging days
+Between 500 and 5500, found days 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400.
+EOFs for region: sh
+Imports
+ * Time for imports: 5.121s
+Reading data
+ * Time for reading data: 0.283s
+Vertical average: 1
+Getting EOF information for variable: u.
+ * Time for getting u EOFs: 2.054s
+ * Time for getting u variance: 0.015s
+Getting EOF information for variable: ehf.
+ * Time for getting ehf EOFs: 0.861s
+ * Time for getting ehf variance: 0.006s
+Getting EOF information for variable: emf.
+ * Time for getting emf EOFs: 0.948s
+ * Time for getting emf variance: 0.006s
+Getting EOF information for variable: ke.
+ * Time for getting ke EOFs: 0.919s
+ * Time for getting ke variance: 0.019s
+Getting EOF information for variable: km.
+ * Time for getting km EOFs: 0.961s
+ * Time for getting km variance: 0.006s
+Saving
+ * Time for saving to disk: 4.104s
+Imports
+ * Time for imports: 1.446s
+Reading data
+ * Time for reading data: 0.087s
+Vertical average: 0
+Getting EOF information for variable: u.
+ * Time for getting u EOFs: 2.539s
+ * Time for getting u variance: 0.007s
+Getting EOF information for variable: ehf.
+ * Time for getting ehf EOFs: 0.932s
+ * Time for getting ehf variance: 0.006s
+Getting EOF information for variable: emf.
+ * Time for getting emf EOFs: 1.768s
+ * Time for getting emf variance: 0.028s
+Getting EOF information for variable: ke.
+ * Time for getting ke EOFs: 0.847s
+ * Time for getting ke variance: 0.004s
+Getting EOF information for variable: km.
+ * Time for getting km EOFs: 0.775s
+ * Time for getting km variance: 0.019s
+Saving
+ * Time for saving to disk: 2.647s
+EOFs for region: nh
+Imports
+ * Time for imports: 1.426s
+Reading data
+ * Time for reading data: 0.087s
+Vertical average: 1
+Getting EOF information for variable: u.
+ * Time for getting u EOFs: 1.085s
+ * Time for getting u variance: 0.006s
+Getting EOF information for variable: ehf.
+ * Time for getting ehf EOFs: 0.883s
+ * Time for getting ehf variance: 0.006s
+Getting EOF information for variable: emf.
+ * Time for getting emf EOFs: 0.839s
+ * Time for getting emf variance: 0.006s
+Getting EOF information for variable: ke.
+ * Time for getting ke EOFs: 0.729s
+ * Time for getting ke variance: 0.006s
+Getting EOF information for variable: km.
+ * Time for getting km EOFs: 0.743s
+ * Time for getting km variance: 0.006s
+Saving
+ * Time for saving to disk: 2.473s
+Imports
+ * Time for imports: 0.852s
+Reading data
+ * Time for reading data: 0.091s
+Vertical average: 0
+Getting EOF information for variable: u.
+ * Time for getting u EOFs: 0.710s
+ * Time for getting u variance: 0.006s
+Getting EOF information for variable: ehf.
+ * Time for getting ehf EOFs: 0.534s
+ * Time for getting ehf variance: 0.007s
+Getting EOF information for variable: emf.
+ * Time for getting emf EOFs: 0.514s
+ * Time for getting emf variance: 0.007s
+Getting EOF information for variable: ke.
+ * Time for getting ke EOFs: 0.555s
+ * Time for getting ke variance: 0.006s
+Getting EOF information for variable: km.
+ * Time for getting km EOFs: 0.512s
+ * Time for getting km variance: 0.004s
+Saving
+ * Time for saving to disk: 1.778s
+Elapsed time: 54s.

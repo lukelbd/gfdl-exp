@@ -2,14 +2,16 @@
 ################################################################################
 # This script post-processes the raw model output files generated from the
 # GFDL dry core model. Needs to be supplied with a source and destination directory.
-# ***Warning*** destination directory should really be on a backed up disk.
-# This script was recently modified, but should be fine now
+# WARNING: Destination directory should really be on a backed up disk.
+# WARNING: CDO has hard-coded maximum chained processes of 64. Horrible. Use
+# commands like 'select,key=value' to merge multiple files in one command instead
+# of constructing massive chained commands in single bash string.
 ################################################################################
 # Verify environmental variables are set
 # flags='-O'
 flags='-s -O' # overwrite, and only issue warnings
 shopt -s nullglob # will return empty if no match
-debug=false # disable sending stuff to background?
+debug=true # disable sending stuff to background?
 
 # Optional environmental variables, with defaults
 # The flag names should be descriptive enough, but feel free to read comments
@@ -20,11 +22,9 @@ control_climate=false
 control_regional_ts=false
 control_climate_isen=false
 control_regional_ts_isen=false
-control_energy_rho=false
-control_energy_ts=false
 # Objective analysis stuff, energy time series
-control_eof1d=false
-control_eof2d=false
+control_eof=false
+control_energy_ts=false
 # Spindown options
 spin_start=0
 spin_end=100000
@@ -35,24 +35,23 @@ spindown_regional_ts=false
 mode=2 # spindown mode
 while [ $# -gt 0 ]; do
   case $1 in
-    -d|--debug)                 debug=true                ;;
-    -m=*|--mode=*)              mode=${1##*=}             ;;
-    -c1=*|--climo-start=*)      climo_start=${1##*=}      ;;
-    -c2=*|--climo-end=*)        climo_end=${1##*=}        ;;
-    -s1=*|--spin-start=*)       spin_start=${1##*=}       ;;
-    -s2=*|--spin-end=*)         spin_end=${1##*=}         ;;
-    -sc|--spectral-climo)       spectral_climate=true ;;
-    -cc|--control-climo)        control_climate=true      ;;
-    -crt|--control-region-ts)   control_regional_ts=true  ;;
-    -cci|--control-climo-isen)        control_climate_isen=true      ;;
-    -crti|--control-region-ts-isen)   control_regional_ts_isen=true  ;;
-    -cer|--control-energy-rho)  control_energy_rho=true   ;;
-    -cet|--control-energy-ts)   control_energy_ts=true    ;;
-    -e1d|--control-eof1d)       control_eof1d=true        ;;
-    -e2d|--control-eof2d)       control_eof2d=true        ;;
-    -se|--spindown-ensemble-ts) spindown_ensemble_ts=true ;;
-    -sr|--spindown-region-ts)   spindown_regional_ts=true ;;
-    -st|--spindown-timescale)   spindown_timescale=true   ;;
+    -d|--debug)                     debug=true                    ;;
+    -r=*|--restart=*)               rdays=${1##*=}                ;;
+    -m=*|--mode=*)                  mode=${1##*=}                 ;;
+    -c1=*|--climo-start=*)          climo_start=${1##*=}          ;;
+    -c2=*|--climo-end=*)            climo_end=${1##*=}            ;;
+    -s1=*|--spin-start=*)           spin_start=${1##*=}           ;;
+    -s2=*|--spin-end=*)             spin_end=${1##*=}             ;;
+    -sc|--spectral-climo)           spectral_climate=true         ;;
+    -cc|--control-climo)            control_climate=true          ;;
+    -cci|--control-climo-isen)      control_climate_isen=true     ;;
+    -crt|--control-region-ts)       control_regional_ts=true      ;;
+    -crti|--control-region-ts-isen) control_regional_ts_isen=true ;;
+    -cet|--control-energy-ts)       control_energy_ts=true        ;;
+    -eof|--control-eof*)            control_eof=true              ;;
+    -se|--spindown-ensemble-ts)     spindown_ensemble_ts=true     ;;
+    -sr|--spindown-region-ts)       spindown_regional_ts=true     ;;
+    -st|--spindown-timescale)       spindown_timescale=true       ;;
     -*) echo "Error: Unknown flag \"${1}\"." && exit 1 ;;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
@@ -66,16 +65,25 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# Requirements
 if [ -z "$filename" ] || [ -z "$input" ] || [ -z "$output" ]; then
   echo "Error: Need filename prefix (e.g. 2xdaily_inst), input folder, and output folder, in that order."
+  exit 1
+fi
+# Require restart days because may have some old 5-day tests or whatever
+# in that experiment folder.
+if [ -z "$rdays" ]; then
+  echo "Error: You must specify the restart day spacing with -r=N or --restart=N."
   exit 1
 fi
 
 # File management/names
 # Prefixes for output files
-plog=log_ # log prefix; easy to change by making it a variable
+plog=$(pwd)/logs/ # log prefix; easy to change by making it a variable
 pfull=${filename}_full
 psummary=${filename}_summary # original prefix file names
+peofs=${filename}_eofs
+pseries=${filename}_series
 pspectral=${filename}_spectral
 pfull_isen=${filename}_full_isen
 psummary_isen=${filename}_summary_isen
@@ -101,18 +109,20 @@ cd $output # move here
 ts_params=ke,km,pe,pm,ehf,emf
 energy_params=ckekm,cpeke,cpmkm,cpmpe,dke,dkm,gpe,gpm,ke,km,pe,pm
 
+################################################################################
 # NetCDF utils copied from bashrc
+################################################################################
 nclist() {
   command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
     | cut -d '(' -f 1 | sed 's/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs
 }
-ncdims() { # get list of dimensions
+ncdimlist() { # get list of dimensions
   command ncdump -h "$1" | sed -n '/dimensions:/,$p' | sed '/variables:/q' \
     | cut -d '=' -f 1 -s | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs
 }
-ncvars() { # only get text between variables: and linebreak before global attributes
+ncvarlist() { # only get text between variables: and linebreak before global attributes
   local list=($(nclist "$1"))
-  local dmnlist=($(ncdims "$1"))
+  local dmnlist=($(ncdimlist "$1"))
   local varlist=() # add variables here
   for item in "${list[@]}"; do
     if [[ ! " ${dmnlist[@]} " =~ " $item " ]]; then
@@ -124,47 +134,64 @@ ncvars() { # only get text between variables: and linebreak before global attrib
 ncin() {
   nclist $1 | grep $2 &>/dev/null
 }
+ncvardump() {
+  command ncdump -v "$1" "$2" | tac | \
+    grep -E -m 1 -B100 "[[:space:]]$1[[:space:]]" | sed '1,1d' | tac | \
+    tr -d ',;'
+}
+ncdims() {
+  command ncdump -h "$1" | grep -B100 "^variables:$" | sed '1,2d;$d' | tr -d ';' | tr -s ' ' | column -t | less
+}
 
+################################################################################
 # Helper functions
+################################################################################
 # Wait for processes from array of process IDs, and check their exit statuses
-call_parallel() {
+parallel() {
   if $debug; then # don't send to background
     t=$(date +%s)
     $@ # just naked call to command
-    echo "Elapsed time: $(($(date +%s) - t))."
+    echo "Elapsed time: $(($(date +%s) - t))s."
   else
     $@ &>$log & # send to background, save logfile
   fi
 }
-check_exits() {
-  local processes=($@)
-  for process in ${processes[@]}; do
-    wait $process
-    exitnums+=($?) # if process already done, wait just mimicks its exit status
+check() {
+  local i pids exs pid ex
+  pids=($@)
+  for pid in ${pids[@]}; do
+    wait $pid
+    exs+=($?) # if process already done, wait just mimicks its exit status
   done
-  local i=0 # iterate
-  for exitnum in ${exitnums[@]}; do
-    if [ $exitnum -ne 0 ]; then
-      echo "Error: One of the background processes failed: \"$(ps -p ${processes[$i]} -o comm=)\"."
+  i=0 # iterate
+  for ex in ${exs[@]}; do
+    if [ $ex -ne 0 ]; then
+      echo "Error: One of the background processes failed: \"$(ps -p ${pids[i]} -o comm=)\"."
     fi
-    i=$(($i+1)) # forward
+    let i+=1
   done
-  unset process exitnum
 }
-region_selbox() {
+# Select region
+# Notes:
+# Newer versions of CDO fail to select on dimensions with single element;
+# use the setgrid to make artificial 'longitude' dimension length-1, and to add
+# coordinate 'lon' variable (by default summary files don't have one), then
+# select the *exact* position lon=0.
+selregion() {
   region="$1"
   case $region in
-    [nN][hH])     selregion="-sellonlatbox,-180,180,20,70"   ;; # north-hemisphere selection
-    [sS][hH])     selregion="-sellonlatbox,-180,180,-70,-20" ;; # south-hemisphere selection
-    pole[nN][hH]) selregion="-sellonlatbox,-180,180,60,90"   ;;
-    pole[sS][hH]) selregion="-sellonlatbox,-180,180,-90,-60" ;;
-    globe)        selregion=""                               ;;
+    [nN][hH])     selregion="-sellonlatbox,0,0,20,70   -setgrid,griddes.txt"   ;; # north-hemisphere selection
+    [sS][hH])     selregion="-sellonlatbox,0,0,-70,-20 -setgrid,griddes.txt" ;; # south-hemisphere selection
+    pole[nN][hH]) selregion="-sellonlatbox,0,0,60,90   -setgrid,griddes.txt"   ;;
+    pole[sS][hH]) selregion="-sellonlatbox,0,0,-90,-60 -setgrid,griddes.txt" ;;
+    globe)        selregion=" -setgrid,griddes.txt" ;;
     *) echo "Error: Invalid region ${region}." && return 1 ;;
   esac
   echo $selregion
 }
+# Print list of days given array
+# Just for convenience
 print_days() {
-  # Print list of days given array
   unset days
   for file in $@; do
     daystring=${file##*/}
@@ -179,6 +206,9 @@ print_days() {
   echo ${days[@]}
 }
 
+################################################################################
+# Get lists of files
+################################################################################
 # Climate files within day range (e.g. to ignore spinup)
 # Used for climate means and climate variability stuff
 # climate_files() {
@@ -198,9 +228,12 @@ get_files() {
     daystring=${daystring%.nc}
     daystring=${daystring#*.}
     day1=${daystring%%-*}
-    day1=${day1#d}
+    day1=$(printf "%.f" ${day1#d})
     day2=${daystring##*-}
-    day2=${day2#d}
+    day2=$(printf "%.f" ${day2#d})
+    if [ $((day2 - day1)) -ne $rdays ]; then
+      continue
+    fi
     if [ $day1 -ge $start ] && [ $day2 -le $end ]; then
       ffiles+=($file)
     fi
@@ -208,6 +241,20 @@ get_files() {
   [ ${#ffiles[@]} -eq 0 ] && echo "Error: No $prefix files found between day $start and ${end}." && exit 1
   echo "Between $start and $end, found days $(print_days ${ffiles[@]})." 1>&2
   echo ${ffiles[@]} # intended for user to capture output
+
+  # Grid description
+  # Repair issue where grid type gets labeled 'generic'
+  # 2xdaily_inst_summary.d5400-d5500.nc
+  lats="$(ncvardump lat ${ffiles[0]} | sed 's/lat/yvals/g')"
+  nlats="$(ncdims ${ffiles[0]} | grep '\blat\b' | awk '{print $3}')"
+  cat >$output/griddes.txt <<EOF
+gridtype  = gaussian
+xsize     = 1
+xfirst    = 0
+xinc      = 1
+ysize     = $nlats
+$(echo "$lats")
+EOF
 }
 
 # Spindown files grouped by initialization (branch) day
@@ -283,11 +330,12 @@ spindown_files_by_day() {
 control_climate() {
   prefix=$1
   out=$2
+  # [ -r $out ] && return 0 # TODO: uncomment! but had a bunch of incomplete saves due to segfaults in cdo
   climofiles=($(get_files $prefix))
   echo "Getting time-means."
   commands=("${climofiles[@]/#/ -timmean }")
   cdo $flags -ensmean ${commands[@]} $out
-  # TODO: CDO library issue, maybe has conflict with Dask
+  # Python version
 #   python3 <<EOF
 # import xarray as xr
 # ds = xr.open_mfdataset([$(echo ${climofiles[@]} | sed 's/[^ ][^ ]*/"&", /g')], decode_times=False, concat_dim='record', decode_cf=False, chunks={'time':40}) # 40 out of 200
@@ -305,6 +353,7 @@ control_climate() {
 spectral_climate() {
   prefix=$pspectral
   out=$fspectral
+  [ -r $out ] && return 0 # TODO: re-comment out?
   climofiles=($(get_files $prefix))
   echo "Getting average spectra."
   # Merge with ncecat
@@ -312,11 +361,27 @@ spectral_climate() {
   # ncea ${climofiles[@]} $out
   # Merge with xarray and Dask
   # The fancy sed transforms 'a b c d' to '"a", "b", "c", "d", '
+  [ -r $out ] && rm $out
   python3 <<EOF
+# Timer
+import time
+t1 = time.time()
+t0 = t1
+def timer(message):
+    global t1
+    t2 = time.time()
+    print(f'{message}: {t2-t1:.3f}s')
+    t1 = t2
+# Go
 import xarray as xr
-ds = xr.open_mfdataset([$(echo ${climofiles[@]} | sed 's/[^ ][^ ]*/"&", /g')], concat_dim='record', decode_cf=False)
+print("Averaging spectra")
+ds = xr.open_mfdataset([$(echo ${climofiles[@]} | sed 's/[^ ][^ ]*/"&", /g')],
+     concat_dim='record', chunks={'f':25}, parallel=True, decode_cf=False)
+timer(" * Read time")
 ds = ds.mean(dim='record', keep_attrs=True) # by default attrs thrown out for all computations, which makes sense
+timer(" * Mean time")
 ds.to_netcdf("$out")
+timer(" * Save time")
 EOF
 }
 
@@ -331,8 +396,8 @@ control_regional_ts() {
   out=$2
   allfiles=($(get_files $prefix 0 100000)) # full record
   echo "Getting time series of hemisphere means."
-  for region in SH NH; do
-    selregion=$(region_selbox $region)
+  for region in sh nh; do
+    selregion=$(selregion $region)
     commands=("${allfiles[@]/#/ -fldmean -selname,$ts_params $selregion }")
     # cdo -v -O ${commands[0]} test.nc; echo ${commands[0]}; echo Region $region; exit 1
     cdo $flags -mergetime ${commands[@]} ${out%.nc}${region}.nc # merge the means
@@ -343,33 +408,58 @@ control_regional_ts() {
 # For this we use "all files", i.e. include spinup before climo_start and any
 # days after climo_end; use these files to monitor spinup progress
 control_energy_ts() {
+  # Initial stuff
+  # commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$energy_params }")
   prefix=$psummary # has to be this
   allfiles=($(get_files $prefix 0 100000)) # full record
   echo "Getting time series of energy budget."
-  commands=("${allfiles[@]/#/ -mulc,101325 -vertmean -fldmean -selname,$energy_params }")
-  cdo $flags -mergetime ${commands[@]} $fenergy # merge the means
+  for region in globe nh sh; do # NOTE: do multiple regions so we can get meaningful autocorrelation stats on hemispheres!
+    # Iterate over files, because 128 parallel process limit
+    i=0
+    pmax=8
+    for i in $(seq 1 ${#allfiles[@]}); do
+      echo "File: $i"
+      file=${allfiles[i-1]}
+      out=${fenergy%.nc}-${i}.nc
+      cdo $flags -mulc,101325 -vertmean $(selregion $region) -setgrid,griddes.txt \
+        -selname,$energy_params $file $out &
+      [ $((i % pmax)) -eq 0 ] && wait
+    done
+    wait
+
+    # Merge
+    if [ "$region" != globe ]; then
+      out=${fenergy%.nc}_${region}.nc
+    else
+      out=$fenergy
+    fi
+    cdo $flags -mergetime ${fenergy%.nc}-*.nc $out # merge the means
+    rm ${fenergy%.nc}-*.nc 2>/dev/null
+  done
 }
 
-# Lag-1 autocorrelation for North et al. estimates
-control_energy_rho() {
-  prefix=$psummary
-  climofiles=($(get_files $prefix)) # full record
-  echo "Getting time series of energy terms."
-  commands=("${climofiles[@]/#/ -selname,$energy_params }")
-  cdo $flags -mergetime ${commands[@]} tmp.nc # merge the means
+################################################################################
+# EOFs with xarray and climpy
+################################################################################
+control_eof_climpy() {
+  # Concatenate and select
+  # if true; then #! [ -r ${pseries}.nc ]; then
+  [ -r ${peofs}_nh.nc ] && return 0
+  if ! [ -r ${pseries}.nc ]; then
+    # Initial stuff
+    echo "Merging days"
+    prefix=$psummary
+    climofiles=($(get_files $prefix)) # full record
+    cdo $flags -select,name='ke,km,u,emf,ehf,t' ${climofiles[@]} ${pseries}.nc
+  fi
 
-  # Get the autocorrelation
-  # Have to be clever here -- no builtin function, but there is a builtin
-  # timcor function; so select timesteps mismatched by one
-  echo "Getting lag-1 autocorrelation from the time series."
-  ntime=$(cdo ntime tmp.nc 2>/dev/null)
-  timesteps=$(seq 1 $ntime | xargs | tr ' ' ',') # list of timesteps
-  timesteps1=${timesteps#*,} # trim first timestep
-  timestepsN=${timesteps%,*} # trim last one
-  t=$(date +%s)
-  cdo $flags -timcor -seltimestep,$timesteps1 tmp.nc \
-    -seltimestep,$timestepsN tmp.nc $fautocorr
-  rm tmp.nc # remove file
+  # Get EOFs for each region
+  export PYTHONUNBUFFERED=1
+  for region in sh nh; do
+    echo "EOFs for region: $region" # will be 20N to 70N
+    python3 $cwd/mergedays_eofs.py $region 1 ${pseries}.nc ${peofs}_${region}_vert.nc
+    python3 $cwd/mergedays_eofs.py $region 0 ${pseries}.nc ${peofs}_${region}.nc
+  done
 }
 
 ################################################################################
@@ -383,25 +473,26 @@ control_energy_rho() {
 # Helper function that gets EOFs for single region and parameter
 # In the future may want to interpolate to some standard low-horizontal
 # resolution first. Consider this. Or don't, whatever.
-eof2d_helper() {
+eof_helper() {
   # Input
   [ $# -ne 2 ] && echo "Error: Bad arguments." && return 1
   region=$1
   param=$2
   neof=10              # number of EOFs
   tfilter="-daymean"   # consider using -selhour,0 or -daymean
-  pfilter="-sellevidx" # filter pressure levels according to Thompson et al. methods
-  selregion=$(region_selbox $region)
+  selregion=$(selregion $region)
   plevs="$(cdo showlevel -selname,t ${climofiles[0]} 2>/dev/null)" # plev list
   ilev=1 # initialize
+  unset pfilter
   for plev in $plevs; do # check em out
     if [ $(echo "$plev >= 200" | bc) -eq 1 ]; then
       pfilter+=",$ilev" # filter em yo
     fi
-    ilev=$(($ilev+1))
+    let ilev=$ilev+1
   done
+  pfilter=${pfilter:1}
   # Message and determine filenames
-  echo "Region ${region}." # echo level
+  echo "Region ${selregion} ($region), pfilter ${pfilter}." # echo level
   fseries=series${region}${param}.nc # name of time series
   feval=evals${region}${param}.nc # here, time dimension is EOF
   fevec=evecs${region}${param}.nc # here, time dimension
@@ -410,11 +501,17 @@ eof2d_helper() {
 
   # First create complete time series of energy during 'climatology' timesteps
   # Note the pressure-level filter will preserve level bounds, because CDO is cool
-  # if [ ! -r $fseries ]; then # do this once for NH and SH
-  echo "Getting time series."
-  commands=("${climofiles[@]/#/ $selregion $pfilter $tfilter -selname,$param }") # don't interpolate; keep it pure
-  cdo $flags -mergetime ${commands[@]} $fseries
-  # else echo "Time series for parameter ${param} already created."
+  # if ! [ -r $fseries ]; then # do this once for NH and SH
+  #   echo "Getting time series."
+  # commands=("${climofiles[@]/#/ $selregion $tfilter -selname,$param }") # don't interpolate; keep it pure
+  # cdo $flags -mergetime ${commands[@]} $fseries
+  echo "Command -select,param=$param,levidx=$pfilter"
+  cdo $flags -select,name=$param,levidx=$pfilter ${climofiles[@]} $fseries
+  [ $? -ne 0 ] && echo "Error: Failed to make series." && exit 1
+  cdo $flags $selregion $fseries tmp.nc
+  mv tmp.nc $fseries
+  # else
+  #   echo "Time series for parameter ${param} already created."
   # fi
 
   # Next weight by pressure level thickness
@@ -481,38 +578,38 @@ eof2d_helper() {
   return 0 # nice return value if got here
 }
 
-control_eof2d() {
+control_eof() {
   # Get files
   prefix=$psummary
   climofiles=($(get_files $prefix)) # full record
   # Next execute EOF function for a bunch of levels
   # Get the eigenvectors, eigenalues, PCs, and EOFs in physical units
   processes=() # check if shit went okay
-  for region in NH SH; do
+  for region in nh sh; do
     # Get all EOF params
     logfiles=() # start here
-    for param in KM KE; do # barotropic and baroclinic modes
+    for param in km ke; do # barotropic and baroclinic modes
       logfile=${log}2d${param}${region}
       echo "Getting ${param} EOFs and PCs for ${region}." | tee $logfile
       if $debug; then # no background stuff!
-        eof2d_helper $region $param
+        eof_helper $region $param
       else
-        eof2d_helper $region $param &>$logfile & # send to background, every time
+        eof_helper $region $param &>$logfile & # send to background, every time
       fi
       processes+=($!) # save process ID
       logfiles+=($logfile)
     done
   done # wait out here
-  check_exits ${processes[@]}
-  cp ${logfiles[0]} ${log}2deofs_get; rm ${logfiles[@]}
+  check ${processes[@]}
+  cp ${logfiles[0]} ${log}eofs_get; rm ${logfiles[@]}
 
   # Do post-processing; this will have 4 threads running in parallel,
   # which is a decent number. Merges stuff.
   # * TODO: Consider using taskset to assign specific cores; maybe it really
   #   is faster. Gotta do it. Really.
   logfiles=()
-  for region in NH SH; do
-    # Merge the KM and KE files; variables will have different names
+  for region in nh sh; do
+    # Merge the km and ke files; variables will have different names
     for prefix in evecs evals pcs eofs; do
       mergelog=${plog}2d${prefix}${region}
       outfile=${filename}_2d${prefix}${region}.nc
@@ -524,134 +621,11 @@ control_eof2d() {
       logfiles+=($mergelog)
     done
   done # wait out here
-  check_exits ${processes[@]}
-  cat ${logfiles[@]} > ${plog}2deofs_merge
+  check ${processes[@]}
+  cat ${logfiles[@]} > ${plog}eofs_merge
   rm ${logfiles[@]}
 
   # Cleanup
-  rm series*.nc evecs*.nc evals*.nc pcs*.nc eofs*.nc # delete dummy files
-}
-
-################################################################################
-# Get EOFs and PCs of zonal-mean data
-################################################################################
-# Declare helper function that gets EOF from individual level
-eof1d_helper() {
-  # Initial stuff
-  tfilter=-daymean # consider using -selhour,0 or -daymean
-  neof=10 # number of EOFs
-  region=$1 # the region
-  level=$2 # the level
-  param=$3 # parameter to EOFize
-  selregion=$(region_selbox $region)
-
-  # Message and determine filenames
-  echo "Region ${region}; Level ${level}." # echo level
-  printlevel=$(printf "%04d" $level)
-  fseries=series${region}${printlevel}.nc # name of time series
-  feval=evals${region}${printlevel}.nc # here, time dimension is EOF
-  fevec=evecs${region}${printlevel}.nc # here, time dimension
-  feof=eofs${region}${printlevel}.nc # mean projection of standardized PC onto data
-  fpc=pcs${region}${printlevel}.nc # here, 
-
-  # First create complete time series of wind during our 'climatology' timesteps (after spinup)
-  # Just selects name, interpolates to single level, *then* interpolates in space
-  if [ ! -r $fseries ]; then # do this once for NH and SH
-    echo "Getting time series."
-    if [ ${#climofiles[@]} -gt 1 ]; then mergetime="-mergetime"; else unset $mergetime; fi
-    commands=("${climofiles[@]/#/ $selregion -intlevel,$level $tfilter -selname,$param }")
-    cdo $flags $mergetime ${commands[@]} $fseries
-  else echo "Time series for level $level already created."
-  fi
-
-  # Next get the PCs from the eigenvectors; eofcoeff not needed because computation is simple
-  # Get dot product of area-weighted time series grid with EOF grid, then standardize time series
-  # Creates one file for each EOF, then merge them
-  echo "Getting PCs."
-  pccommands=() # initialize
-  for ieof in $(seq 1 $neof); do # see: https://stackoverflow.com/a/169517/4970632
-    icommand="-setname,${param}_pc$(printf '%02d' $ieof) -fldsum \
-      -mul \
-        -mul $fseries -gridweights $fevec \
-        -seltimestep,$ieof $fevec" # gets dot-product of weighted data with eigenvector
-    pccommands+=("$icommand") # add to list
-  done
-  cdo $flags -merge ${pccommands[@]} $fpc # merge results of the multiplications
-  cdo $flags -setname,$param -div -sub $fpc -timmean $fpc -timstd $fpc \
-      ${fpc%.nc}std.nc; mv ${fpc%.nc}std.nc $fpc # sub mean, divide by std
-      # important not to name something like tmp.nc or other background processes
-      # may overwrite it in process
-  [ ! -r $fpc ] && echo "Error: PC time series not produced." && return 1
-
-  # Finally, get EOFs in physical units by multiplying the standardized
-  # values by the original data; result is "anomaly associated with 1 stdev
-  # variation of the PC time series"
-  echo "Projecting standardized PCs onto data."
-  eofcommands=() # initialize
-  for ieof in $(seq 1 $neof); do # see: https://stackoverflow.com/a/169517/4970632
-    icommand="-timmean -mul -enlarge,$fevec $fpc $fseries"
-    icommand="-setname,eof$param$(printf '%02d' $ieof) -fldsum \
-      -mul \
-        -mul $fseries -gridweights $fevec \
-        -seltimestep,$ieof $fevec" # gets dot-product of weighted data with eigenvector
-    eofcommands+=("$icommand") # add to list
-  done
-  cdo $flags -timmean -mul -enlarge,$fevec $fpc $fseries \
-    $feof # mean projection of standardized PC onto data
-  [ ! -r $feof ] && echo "Error: Projection not created." && return 1
-  return 0 # nice return value always
-}
-
-control_eof1d() {
-  # Initial stuff
-  climofiles=($(get_files $psummary)) # full record
-  # levels=({5..10}00) # range of pressure levels in mb
-  levels=(50 100 150 200 250 300 350 400 450 500 550 600 650 700 750 800 850 900 950 1000)
-
-  # Next execute EOF function for a bunch of levels
-  # Get the eigenvectors, eigenalues, PCs, and EOFs in physical units
-  for param in u KM KE; do
-    for region in NH SH; do
-      # Get EOF for ***each level***
-      # Will generate logfiles for each process, but only save ***one*** of them
-      # as a sample
-      # Will also check exit statuses of each process
-      processes=()
-      logfiles=()
-      for level in ${levels[@]}; do
-        logfile=${plog}eofs${region}$(printf "%04d" $level)
-        echo "Getting EOFs and PCs for ${region}; ${level}mb." | tee $logfile
-        eof1d_helper $region $level $param &>$logfile & # send to background, every time
-        processes+=($!) # save process ID
-        logfiles+=($logfile) # add to list of logfiles
-      done #; wait
-      check_exits ${processes[@]}
-      # cat ${logfiles[@]} >${plog}eofs${region}; rm ${logfiles[@]}
-      cp ${logfiles[0]} ${plog}eofs_get; rm ${logfiles[@]}
-
-      # ***Merge separate eof levels*** into single file
-      # CDO by default will combine vars with identical names along level axis, if
-      # their levels differ.
-      logfiles=()
-      for prefix in evecs evals pcs eofs; do
-        logfile=${plog}merge-${prefix}${region}
-        outfile=${filename}_${prefix}${region}.nc
-        echo "Merging ${prefix%s} files." | tee $logfile
-        mergefiles=(${prefix}${region}[0-9][0-9][0-9][0-9].nc) 
-        [ ${#mergefiles[@]} -eq 0 ] && echo "Error: Couldn't find any ${prefix%s} files." && exit 1
-        cdo $flags -merge ${mergefiles[@]} $outfile &>$logfile &
-        processes+=($!) # save process ID
-        logfiles+=($logfile)
-      done; wait # then wait
-      check_exits ${processes[@]}
-      # mv ${logfiles[0]} ${plog}eofs${region}; rm ${logfiles[@]}
-      cat ${logfiles[@]} >${plog}eofs_merge; rm ${logfiles[@]}
-    done
-  done
-
-  # Cleanup
-  # tail -vn +1 ${plog}eof?* &>${plog}eof # from https://stackoverflow.com/a/7816490/4970632
-  # rm ${plog}eof?* # remove inidivudal logfiles after combining them
   rm series*.nc evecs*.nc evals*.nc pcs*.nc eofs*.nc # delete dummy files
 }
 
@@ -721,7 +695,7 @@ spindown_regional_mean_ts() {
       #   and normal latitude-slice variables)
       # * Beware very strange issue; if combine selgrid with sellevidx/seltimestep, with the
       #   latter coming after sellonlatbox, get error 'longitude dimension is too small'; BUG
-      selregion=$(region_selbox $region)
+      selregion=$(selregion $region)
       outfile=$input/spindown${spindownday#d}${region}.nc
       commands=("${spindowngroup[@]/#/ -fldmean $selregion -selgrid,1 }") # average
       cdo $flags -mergetime ${commands[@]} $outfile &>/dev/null & # log not necessary here
@@ -762,7 +736,7 @@ dynamical_timescale() {
   ! [ -r $fspindownpoles ] && echo "Error: Spindown file over poles $fspindownpoles is not available."
   ! [ -r $fclimate ] && echo "Error: The climate file $fclimate is not available."
   # Python approach due to illegible ensemble data
-  # python3 -c | tee ${plog}timescale << EOF
+  # python3 -c | tee ${plog}timescale.log << EOF
   import=postprocess_funcs # name of module
   python3 << EOF
 import os
@@ -786,76 +760,65 @@ EOF
 # Main function for applying post-processing
 driver() {
   # Climate means
-  if $spectral_climate; then
-    echo "Average phase-speed spectra."
-    log=${plog}control_climate
-    call_parallel spectral_climate
-  fi
   if $control_climate; then
     echo "Control climate."
-    log=${plog}control_climate
-    call_parallel control_climate $psummary $fclimate
+    log=${plog}control_climate.log
+    parallel control_climate $psummary $fclimate
   fi
   if $control_climate_isen; then
     echo "Isentropic control climate."
-    log=${plog}control_climate
-    call_parallel control_climate $psummary_isen $fclimate_isen
+    log=${plog}control_climate.log
+    parallel control_climate $psummary_isen $fclimate_isen
   fi
+  if $spectral_climate; then
+    echo "Average phase-speed spectra."
+    log=${plog}control_climate.log
+    parallel spectral_climate
+  fi
+
   # NH/SH regional means, no averaging in pressure-space
   if $control_regional_ts; then
     echo "Control regional-mean time series."
-    log=${plog}timeseries
-    call_parallel control_regional_ts $psummary
+    log=${plog}timeseries.log
+    parallel control_regional_ts $psummary
   fi
   if $control_regional_ts_isen; then
     echo "Isentropic control regional-mean time series."
-    log=${plog}timeseries
-    call_parallel control_regional_ts $psummary_isen
-  fi
-  # Climate autocorrelation
-  if $control_energy_rho; then
-    echo "Control global energy budget autocorrelation."
-    log=${plog}control_energy_rho
-    call_parallel control_energy_rho
-  fi
-  # Climate time series
-  if $control_energy_ts; then
-    echo "Control global energy budget time series."
-    log=${plog}control_energy_ts
-    call_parallel control_energy_ts
+    log=${plog}timeseries.log
+    parallel control_regional_ts $psummary_isen
   fi
 
-  # Climate variability: single-level zonal wind EOF
-  if $control_eof1d; then
-    echo "Control EOFs of zonal wind."
-    log=${plog}eofs
-    call_parallel control_eof1d
+  # Energy time series, EOFs
+  if $control_energy_ts; then
+    echo "Control global energy budget time series."
+    log=${plog}control_energy_ts.log
+    parallel control_energy_ts
   fi
-  # Climate variability: energy EOF
-  if $control_eof2d; then
+  if $control_eof; then
     echo "Control 2D EOFs of energy terms."
-    log=${plog}2deofs
-    call_parallel control_eof2d
+    log=${plog}eofs.log
+    # parallel control_eof
+    parallel control_eof_climpy
   fi
 
   # Spindown processing
   # Get the full cross-section
   if $spindown_ensemble_ts; then
     echo "Spindown ensemble mean time series."
-    log=${plog}spindown${mode}
-    call_parallel spindown_ensemble_mean_ts
+    log=${plog}spindown${mode}.log
+    parallel spindown_ensemble_mean_ts
   fi
   # Preserve each record but take area averages
   if $spindown_regional_ts; then
     echo "Spindown regional average time series for each branch."
-    log=${plog}spindown$mode
-    call_parallel spindown_regional_mean_ts
+    log=${plog}spindown${mode}.log
+    parallel spindown_regional_mean_ts
   fi
   # Timescale
   if $spindown_timescale; then
     echo "Spindown dynamical timescale."
-    log=${plog}spindown$mode
-    call_parallel dynamical_timescale
+    log=${plog}spindown${mode}.log
+    parallel dynamical_timescale
   fi
 }
 # Call driver!

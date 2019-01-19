@@ -20,6 +20,7 @@ v   = f->v
 z   = f->z ; can only be calculated in pressure space; should have been interpolated
 tdt = f->tdt
 slth = f->slth
+slp = f->slp ; should be a scalar!
 ; udt = f->udt
 ; vdt = f->vdt
 ; Coordinates
@@ -33,7 +34,34 @@ o->time = time
 o->thlev = thlev
 o->lat = lat
 o->latb = latb
+; Indices for surface potential temp percentile array, see below
+nlon = dimsizes(lon)
+x = ispan(0, nlon-1, 1)
+x!0 = "x"
+x&x = x
+x@long_name = "zonal distribution index"
+x@units = "none"
+x@axis = "X"
+o->x = x
 timer(" * Time for reading data")
+
+;------------------------------------------------------------------------------;
+; Surface treatment
+; cf. Held and Schneider, 1999, appendix
+; We assume constant streamfunction for points 'below' the surface
+;------------------------------------------------------------------------------;
+; Keep it simple -- fill points below surface with *zero* geopotential
+; height, and points.
+; NOTE: Where statement preserve attributes.
+p = where(ismissing(p) .or. (p .gt. slp), slp, p) ; fill with the *scalar* "slp", which is actually the pressure at center of lowest layer
+z = where(ismissing(z) .or. (z .lt. 0.0), 0.0, z)
+; Fix u, v, and tdt
+; NOTE: Since these only appear in mass-weighted averages, can simply set
+; missing values to zero!
+u = where(ismissing(u), 0.0, u)
+v = where(ismissing(v), 0.0, v)
+tdt = where(ismissing(tdt), 0.0, tdt)
+timer(" * Time for surface treatment")
 
 ;------------------------------------------------------------------------------;
 ; Initial stuff, e.g. pseudo density
@@ -47,46 +75,71 @@ cp = 1004.0 ; heat capacity
 omega = 7.292e-5 ; radians per second
 rlat = 4*atan(1.0)*lat/180.0 ; radians
 dx = a*4*atan(1.0)*(lon(1)-lon(0))/180.0 ; radians times average Earth radius
-t = conform(p, thlev, 1)*(p/p0)^kappa
-copy_VarCoords(p, t)
+cor = conform(u, 2*omega*sin(rlat), 2) ; Coriolis force
 
 ; Pseudo density
-; sigma = -center_finite_diff_n(p*100.0, thlev, False, 0, 1)/g ; mass weighting
-; TODO: this is off by factor of 2!
-sigma = -uneven_finite_diff_1(p*100.0, thlev)/g ; my custom function for uneven spacing
+; Is -(1/g)*dp/dtheta; we apply scalar corrections to the vector for efficiency sake
+; pressure from hPa to Pa (divide by 0.01 or multiply by 100), and apply g
+; NOTE: centered diff saves a lot of time! not perfectly accurate, but good
+; enough, seriously.
+sigma = -center_finite_diff_n(p, 0.01*thlev*g, False, 0, 1) ; mass weighting
+; sigma = -uneven_finite_diff_1(p, 0.01*thlev*g) ; my custom function for uneven spacing
+sigma = where((sigma .lt. 0.0), 0.0, sigma) ; make sure sigma is never negative!
 sigma@long_name = "pseudo-density"
 sigma@units = "kg/m2*K"
+; Zonal mean
 sigma_bar = dim_avg_n(sigma, 3)
 copy_VarAtts(sigma, sigma_bar)
 o->sigma = fix_coords(p, sigma_bar)
-
-; Coriolis
-cor = conform(u, 2*omega*sin(rlat), 2)
-
-; Montgomery potential
-m = cp*t + g*z
-m@long_name = "Montgomery potential"
-m@units = "m2/s2"
+timer(" * Time for sigma calculation")
+; Weights
+; NOTE: In layers *entirely* beneath surface for the whole latitude band, will
+; get sigma bar exactly zero. Also means sigma is zero, so numerator will be
+; zero -- therefore, just fill with a dummy number.
+sigma_bar = where((sigma_bar .eq. 0.0), 1.0, sigma_bar)
 
 ; Potential vorticity (very simple on isentropes)
 ; NOTE: Cannot use Gaussian or Fixed grid global algorithms, because they don't
-; allow for missing values. Must use centered finite diff one isntead.
-; vor = uv2vrG(u, v)
-; vor = uv2vrF(u, v)
+; allow for missing values. Must use centered finite diff one instead.
+; NOTE: Inverse sigma spells trouble. Idea is, PV fluxes don't matter near surface,
+; so we ignore in the bottom 10% of atmosphere, where we are also likely to get
+; very small but non-zero sigma due to pressures very close to surface pressure.
 vor = uv2vr_cfd(u, v, lat, lon, 3) ; 3 indicates cyclic longitudes, and we want 1-sided differentiation at lat boundaries
-pv = (cor + vor)/sigma
+filter = ((p .ge. 900.0) .or. (sigma .eq. 0.0))
+denom = where(filter, 1.0, sigma)
+pv = (cor + vor)/denom ; for some reason cannot put this formula directly as 3rd argument in where(), get divide by zero error
+pv = where(filter, 0.0, pv)
 pv@long_name = "potential vorticity"
 pv@units = "K*m2/s*kg"
-timer(" * Time for initial stuff")
+timer(" * Time for vorticity")
+
+;------------------------------------------------------------------------------;
+; Surface theta
+; Want to get *percentiles* and average; then can just average percentiles
+; in time to get instantaneous average distributions of surfaces, which
+; captures more variability/is more relevant to these flux terms than getting
+; distribution of zonal mean.
+;------------------------------------------------------------------------------;
+; Sort along longitude dimension (last 2), in increasing order and
+; sorting x *in-place* (first 2, which is a flag). Return value are ids.
+; WARNING: The sort function will move around contents of array, but will
+; not change coordinates! So coordinates are now wrong! This is
+; documented by one of the examples.
+delete(slth&lon)
+_ = dim_pqsort_n(slth, 2, 2) ; now slth has been sorted in place!
+slth!2 = "x"
+slth&x = x
+slth@long_name = "surface layer potential temperature zonal distribution"
+slth@units = "K"
+o->slth = slth
+timer(" * Time for surface theta")
 
 ;------------------------------------------------------------------------------;
 ; Means
 ;------------------------------------------------------------------------------;
 ; Save a bunch of zonal means
-; vars = [/p, u, v, z, m, pv, tdt, udt, vdt/]
-; names = (/"p", "u", "v", "z", "m", "pv", "tdt", "udt", "vdt"/)
-vars = [/p, u, v, z, m, pv, tdt/]
-names = (/"p", "u", "v", "z", "m", "pv", "tdt"/)
+vars = [/p, u, v, z, pv, tdt/]
+names = (/"p", "u", "v", "z", "pv", "tdt"/)
 do i=0,ListCount(vars)-1
   ; Calculate mass-weighted mean
   name := names(i)
@@ -102,24 +155,20 @@ do i=0,ListCount(vars)-1
     v_bar = var_bar
   else if (name .eq. "tdt") then
     tdt_bar = var_bar
-  ; else if (name .eq. "m")
-  ;   m_bar = var_bar
-  ; end if end if end if end if end if
   end if end if end if end if
   ; NOTE: When you use assignment operator, you make a copy! So the following
   ; doesn't delete those saved values.
   delete(var_bar)
 end do
-; And the theta bar at surface
-slth_bar = dim_avg_n(slth, 2)
-copy_VarAtts(slth, slth_bar)
-o->slth = fix_coords(slth, slth_bar)
-timer(" * Time for getting zonal means")
+timer(" * Time for zonal means")
 
 ; The wind variance
+; Anoamlies
 u_star = u - conform(u, u_bar, (/0, 1, 2/))
 v_star = v - conform(v, v_bar, (/0, 1, 2/))
-pv_star = pv - conform(pv, pv_bar, (/0, 1, 2/))
+delete(u)
+delete(v)
+; Calculate
 uvar = dim_avg_n(sigma*(u_star^2), 3)/sigma_bar
 uvar@long_name = "eddy zonal wind variance"
 uvar@units = "m2/s2"
@@ -130,8 +179,9 @@ vvar@long_name = "eddy meridional wind variance"
 vvar@units = "m2/s2"
 o->vvar = fix_coords(p, vvar)
 delete(vvar)
-
 ; The eddy potential vorticity variance
+pv_star = pv - conform(pv, pv_bar, (/0, 1, 2/))
+delete(pv)
 pvvar = dim_avg_n(sigma*(pv_star^2), 3)/sigma_bar
 pvvar@long_name = "eddy potential vorticity variance"
 pvvar@units = "K2*m4/s2*kg2"
@@ -139,42 +189,55 @@ o->pvvar = fix_coords(p, pvvar)
 delete(pvvar)
 timer(" * Time for eddy variances")
 
-; Now the potential vorticity flux
+; The potential vorticity flux
 epvf = dim_avg_n(sigma*v_star*pv_star, 3)/sigma_bar
 epvf@long_name = "eddy potential vorticity flux"
 epvf@units = "K*m3/s2*kg"
 o->epvf = fix_coords(p, epvf)
 delete(epvf)
+delete(pv_star)
 
 ; And components of the EP flux, from Thomas' and Dave's notes
-; NOTE: Normalize by sigma and call *those* the saved properties
+; NOTE: Normalize by sigma and call *those* the saved properties, so that
+; when getting EP flux, don't have a hanging sigma bar term
 ; The momentum flux
 emf = dim_avg_n(sigma*v_star*u_star, 3)/sigma_bar
 emf@long_name = "eddy momentum flux"
 emf@units = "m2/s2"
 o->emf = fix_coords(p, emf)
 delete(emf)
+delete(v_star)
+
 ; The heat flux equivalent
+; Anomaly
 tdt_star = tdt - conform(tdt, tdt_bar, (/0, 1, 2/))
+delete(tdt)
+; Calculate
 eqf = dim_avg_n(sigma*u_star*tdt_star, 3)/sigma_bar
 eqf@long_name = "zonal eddy heating flux"
 eqf@units = "K*m/s2"
 o->eqf = fix_coords(p, eqf)
 delete(eqf)
+
 ; The form stress term
-; NOTE: This one takes un-mass-weighted means
-; NOTE: Dave points out (Thomas doesn't do this) that temperature part of
-; Montgomery potential vanishes in zonal mean. So we just use z.
-p_bar = dim_avg_n(p, 3) ; no weight
-p_star = p - conform(p, p_bar, (/0, 1, 2/))
-z_bar = dim_avg_n(z, 3) ; no weight
-z_star = z - conform(z, z_bar, (/0, 1, 2/))
-dzdx_star = center_finite_diff_n(z_star, dx, True, 0, 3) ; get *cyclic* (the 'True') zonal derivative
-stress = 100.0*dim_avg_n(p_star*dzdx_star, 3)/sigma_bar
-; m_bar = dim_avg_n(m, 3) ; no weight
-; m_star = m - conform(m, m_bar, (/0, 1, 2/))
-; dmdx_star = center_finite_diff_n(m_star, dx, True, 0, 3) ; get *cyclic* (the 'True') zonal derivative
-; stress = 100.0*dim_avg_n(p_star*dmdx_star, 3)/(g*sigma_bar)
+; NOTE: Units are Pa*(m/m) / ((Pa/K) / (m/s2)) = K*m/s2
+; NOTE: For surfaces *entirely* below ground, Montgomery gradient and pressure
+; perturbations are zero everywhere, so doesn't matter what denominator is.
+; Anomalies
+p_star = p - conform(p, dim_avg_n(p, 3), (/0, 1, 2/))
+; With geopotential height, somewhat inaccurate?
+; z_bar = dim_avg_n(z, 3) ; no weight
+; z_star = z - conform(z, z_bar, (/0, 1, 2/))
+; dzdx_star = center_finite_diff_n(z_star, dx, True, 0, 3) ; get *cyclic* (the 'True') zonal derivative
+; stress = 100.0*dim_avg_n(p_star*dzdx_star, 3)/sigma_bar
+; With Montgomery streamfunction
+m = cp*conform(p, thlev, 1)*(p/p0)^kappa + g*z
+m_bar = dim_avg_n(m, 3) ; no weight
+m_star = m - conform(m, m_bar, (/0, 1, 2/))
+dmdx_star = center_finite_diff_n(m_star, dx, True, 0, 3) ; get *cyclic* (the 'True') zonal derivative
+delete(z)
+delete(m)
+stress = 100.0*dim_avg_n(p_star*dmdx_star, 3)/(g*sigma_bar)
 stress@long_name = "form stress"
 stress@units = "K*m/s2"
 o->stress = fix_coords(p, stress)

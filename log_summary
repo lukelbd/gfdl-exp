@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Get the days run for experiments matching glob patterns
+# List the NetCDF files stored in every single
+# experiment directory.
 shopt -s nullglob
 names=($@) # remember $@ is special, nothing gets expanded
 [ -z "$1" ] && names=("hs*")
@@ -28,7 +29,7 @@ day_range() {
 # Iterate
 echo
 prefix=2xdaily_inst # then there are _full, _summary, _summary_isen, _full_isen, and _spectral
-log=$(pwd)/summary.log
+log=${0}.log
 eday=5500
 series=''
 rm $log 2>/dev/null

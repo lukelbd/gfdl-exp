@@ -193,7 +193,11 @@ case ${HOSTNAME%%.*} in
   euclid)
     storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
   ;; monde)
-    scratch=/mdata2/ldavis # WARNING: change this as folders fill up!
+    case $reso in
+      t42l10s) scratch=/mdata2/ldavis ;;
+      t42l20s) scratch=/mdata1/ldavis ;;
+      *) echo "Error: Unknown scratch destination for experiment with resolution ${reso}." ;;
+    esac
   ;; cheyenne*)
     storage=/glade/u/home/davislu
     scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
@@ -213,7 +217,6 @@ cp $bindir/mppnccombine.x ./ # location of executables
 # Array membership
 array_in() {
   [[ " ${@:2} " =~ " ${1} " ]]
-  return $?
 }
 
 # Add to arrays storing namelist parameters. Fugly but works.
@@ -278,12 +281,26 @@ exp_name() {
       opt=${opt##*[a-z]} # get the option
       sweep_out=$sweep_in # by default, will be same
       case $sweep_in in
+        # 1D paramter sweeps
         katmos[123])
           [[ $p1 == 40 ]] && sweep_out=base p1=
           ;; # base is 40 day zonal-mean or anomaly damping
         katmos[123]-fixed)
           [[ $p1 == 40 ]] && sweep_out=base-fixed p1=
           ;; # no 'base' because background damping always huge
+        tgrad)
+          [[ $p1 == 60 ]] && sweep_out=base p1=
+          ;; # base is 60K contrast
+        tshift)
+          [[ $p1 == 0 ]] && sweep_out=base p1=
+          ;; # zero just means no shift
+        kfric)
+          [[ $p1 == 1  ]] && sweep_out=base p1=
+          ;;
+        kstrat[01])
+          [[ $p1 == 40 ]] && sweep_out=base p1=
+          ;;
+        # 2D paameter spaces
         katmos[123]-tgrad)
           [[ $p1 == 40 && $p2 == 60 ]] && sweep_out=base p1= p2=
           [[ $p1 == 40 ]] && sweep_out=tgrad p1=$p2 p2=
@@ -294,19 +311,15 @@ exp_name() {
           [[ $p1 == 40 ]] && sweep_out=tshift p1=$p2 p2=
           [[ $p2 == 0 ]] && sweep_out=katmos$opt p2=
           ;;
+        tgrad-tshift)
+          [[ $p1 == 60 && $p2 == 0 ]] && sweep_out=base p1= p2=
+          [[ $p1 == 60 ]] && sweep_out=tshift p1=$p2 p2=
+          [[ $p2 == 0 ]] && sweep_out=tgrad p2=
+          ;;
         katmos[123]-kfric)
           [[ $p1 == 40 && $p2 == 1 ]] && sweep_out=base p1= p2=
           [[ $p1 == 40 ]] && sweep_out=kfric p1=$p2 p2=
           [[ $p2 == 1 ]] && sweep_out=katmos$opt p2=
-          ;;
-        kstrat[01])
-          [[ $p1 == 40 ]] && sweep_out=base p1=
-          ;;
-        tgrad)
-          [[ $p1 == 60 ]] && sweep_out=base p1=
-          ;; # base is 60K contrast
-        kfric)
-          [[ $p1 == 1  ]] && sweep_out=base p1=
           ;;
         *)
           echo "Error: Unknwon experiment \"${sweep_in}\"."
@@ -355,7 +368,19 @@ exp_setup() {
         kbl="$fixed,-4"
       fi
 
-    # Tropospheric damping
+    # The equator-pole equilibrium difference
+    ;; tgrad) # temp gradient experiments
+      delh=${p_values[0]}
+
+    # Perturb the equator-pole temp gradient
+    ;; tshift)
+      exph=${p_values[0]}
+
+    # Friction
+    ;; kfric) # friction experiments
+      kfric=-${p_values[0]}
+
+    # Damp full atmosphere
     # Also includes diagonal experiments where multiple params changed
     ;; katmos[123]*)
       # First set mean and anomaly components of troposphere damping
@@ -402,7 +427,7 @@ exp_setup() {
         kbl="$fixed,$kbl"
       fi
 
-    # Stratosphere damping
+    # Damp stratosphere
     ;; kstrat[01]) # stratosphere damping experiments
       # Parse the depth and stuff
       prefix=${exp_sweep%-*}
@@ -433,18 +458,6 @@ exp_setup() {
         echo "Error: Unknown suffix option ${suffix}." 1>&2
         exit 1
       fi
-
-    # The equator-pole equilibrium difference
-    ;; tgrad) # temp gradient experiments
-      delh=${p_values[0]} # easy peasy!
-
-    # Perturb the equator-pole temp gradient
-    ;; tshift)
-      exph=${p_values[0]}
-
-    # Friction
-    ;; kfric) # friction experiments
-      kfric=-${p_values[0]}
 
     # Unknown
     ;; *) echo "Error: Unknown experiment series \"$exp_sweep\"." 1>&2
@@ -599,7 +612,7 @@ for param2 in ${params2[@]}; do
     [ ! -d "$exp_dir" ] && mkdir "$exp_dir"
     log=logs/${exp_dir##*/}.log # e.g use the testing name
     echo "Experiment name: ${exp_name}." | tee $log
-    echo "Log file: tail -f $log" # so can copy paste this
+    echo "Log file: log $log" # so can copy paste this
     echo "Run flags: $flags_global"
 
     # Prepare namelist, diag table, and flags for experiment

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
+#------------------------------------------------------------------------------#
 # Add the top-level 'forcing.nc' file to all experiment directories
+#------------------------------------------------------------------------------#
 shopt -s nullglob
 cwd=$(pwd)
 cmd=$cwd/drycore_run

@@ -189,6 +189,7 @@ dir_setup() {
     rm -r $wdir
   elif $resume; then
     # Resume interrupted run
+    # Option 1) Test contents of working directory.
     # if compgen -G "$wdir/*.nc" &>/dev/null; then
     #   echo "Working directory ${wdir##*/} contains failed processing step. Deleting..."
     # elif [ -z "$(\ls $wdir/RESTART)" ]; then # need to check *contents*; don't care about empty one
@@ -197,6 +198,7 @@ dir_setup() {
     #     echo "Working directory ${wdir##*/} contains completed integration. Cancelling..."
     #   return 1 # breaks out of if statement
     # fi
+    # Option 2) Test contents of netcdf folder
     if compgen -G "$wdir/../netcdf/*${wdir##*/}.nc" &>/dev/null; then
       echo "NetCDF files already exist for block ${wdir##*/}. Cancelling..."
       return 1 # breaks out of if statement
