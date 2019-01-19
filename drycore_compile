@@ -29,7 +29,7 @@
 execdir=./drycore-${HOSTNAME%%.*}   # where code is compiled and executable is created
 flags_optimization='-O3'            # O2 or O3? more optimization can actually be *slower*, but GFDL default was O3 so maybe not; https://stackoverflow.com/a/19985801/4970632
 flags_float='-Ktrap=fp'             # add =flag1,flag2,... for options; controls floating point exceptions; http://www.dartmouth.edu/~rc/HPC/man/pgf90.html
-flags_nc='-lnetcdff -lnetcdf'       # include netcdf libs
+flags_nc='-lnetcdff -lnetcdf -lhdf5 -lhdf5_hl' # include netcdf libs
 flags_mp='-Mmpi=mpich'              # special 'pgflags', adds flags -L$MPILIB -lfmpich -lmpich; http://www.dartmouth.edu/~rc/HPC/man/pgf90.html
 cppdefs='-Duse_libMPI -Duse_netCDF' # not sure what this does
 

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
+# dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
+# to logarithmically sweep space. Existing directories have been moved to their
+# closest values in this new spacing. White lie, but probably insignificant differences.
+#------------------------------------------------------------------------------#
+# Processes files in directories matching some glob pattern
+shopt -s nullglob
+cwd=$(pwd)
+dryrun=false
+runmode=0 # 0 is control run, the rest are different spindown modes:
+filename=2xdaily_inst
+merge=$cwd/mergedays_run
+$dryrun && merge="echo $merge"
+
+# Stuff to retrieve
+# climo_start=100
+# climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
+flags="$@" # --eof2d
+climo_start=500
+climo_end=5500
+spin_start=0
+spin_end=100000 # just get all of them
+
+# Host-specific settings
+netcdf=netcdf
+storage=$HOME/data
+case ${HOSTNAME%%.*} in
+  monde*)    scratches=(/mdata2/ldavis /mdata1/ldavis) ;;
+  cheyenne*) scratches=/glade/scratch/davislu ;;
+  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+! [ -d $storage ] && mkdir $storage
+storage="$storage/timescales" # put in this subdirectory
+! [ -d $storage ] && mkdir $storage
+flags="$flags -m=$runmode -s1=$spin_start -s2=$spin_end -c1=$climo_start -c2=$climo_end"
+
+# Parallel
+pmax=1
+# globs=('hs*')
+# globs=('hs_katmos2-mean_t42l20s*' 'hs_katmos2-anom_t42l20s*') # TODO: spectral and EOFs
+# globs=('hs_base_t42l20s*' 'hs_katmos2_t42l20s*') # TODO: spectral and EOFs
+# globs=('hs_base_t42l20s*' 'hs_tgrad_t42l20s*') # for summary and energy
+globs=('hs_tgrad_t42l20s_p0040.000*') # for summary and energy
+# globs=('*t42l10s*')
+# Iterate
+# NOTE: May get 'different parameter names' cdo warnings; this generally means
+# the order of parameters or something is different, and cdo has to shuffle
+# them around, but files all have same variables.
+t=$(date +%s)
+counter=0
+for scratch in ${scratches[@]}; do
+  subfolders=($scratch/. $scratch/timescales-*) # subfolders contain some older experiment series
+  for subfolder in ${subfolders[@]}; do
+    for glob in "${globs[@]}"; do
+      unset folder
+      for folder in $subfolder/$glob; do
+        # Run stuff; will generate individual logs for each 'type' of
+        # post-process, and a bigger log that indicates what processes are running
+        echo
+        echo "Experiment: \"${folder##*/}\"."
+        # sleep 1
+        dest="$storage/${folder##*/}" # saving processed data
+        ! [ -d "$dest" ] && mkdir $dest
+
+        # Opionally run in parallel, or just linearly
+        log=logs/merge_${dest##*/}
+        echo "Log file: tail -f $log"
+        echo "Flags: $flags"
+        if [ $pmax -eq 1 ]; then
+          $merge "$filename" "$folder/$netcdf" "$dest" $flags --debug
+        else
+          # $merge "$filename" "$folder/$netcdf" "$dest" $flags &>$log &
+          $merge "$filename" "$folder/$netcdf" "$dest" $flags --debug &
+        fi
+        pids+=($!) # record process
+
+        # Crude parallelization across multiple experiments
+        let counter+=1
+        if [ $((counter % pmax)) -eq 0 ]; then
+          echo "Waiting for processes: ${pids[@]}."
+          for pid in ${pids[@]}; do
+            wait $pid
+            [ $? -ne 0 ] && echo "Error: A post-processing step failed." && exit 1
+          done
+          echo "Elapsed time: $(($(date +%s) - t))s."
+          t=$(date +%s)
+          unset pids # reset tracked process ids
+        fi
+      done
+    done
+  done
+done

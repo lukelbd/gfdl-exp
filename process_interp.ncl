@@ -10,7 +10,8 @@ load "~/timescales-model/header.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; read data from here, write later
-o = addfile(output, "c") ; output
+system("rm " + output + " 2>/dev/null") ; remove file
+o = addfile(output, "c")
 filedimdef(o, "time", -1, True) ; set unlimited
 copy_VarAtts(f, o) ; also works for files; see: https://www.ncl.ucar.edu/Support/talk_archives/2013/0556.html
 
@@ -43,14 +44,22 @@ zbot = tbot(0,:,:) ; indexing makes a copy in NCL
 zbot(:,:) = 0 ; zero surface geopotential
 
 ; Explicitly copy these!
-; NOTE: This controls the order they appear in ncdump!!! Important for my OCD!!!
-o->time = f->time
-o->plev = poutm
-o->plev_bnds = pouti_edges ; will rename later and add atributes
-o->lat = f->lat
-o->latb = f->latb
-o->lon = f->lon
-o->lonb = f->lonb
+; NOTE: This controls the order they appear in ncdump!!!
+; Extract
+time = f->time
+plev = poutm
+plev_bnds = pouti_edges
+lat  = f->lat
+latb = f->latb
+lon  = f->lon
+lonb = f->lonb
+o->time = time
+o->plev = plev
+o->plev_bnds = plev_bnds ; will rename later and add atributes
+o->lat  = lat
+o->latb = latb
+o->lon  = lon
+o->lonb = lonb
 ; Print message
 timer("  * Time for NCL reading and setup")
 
@@ -93,6 +102,55 @@ do i=0,dimsizes(varnames)-1
     delete(ivar)
   end if
 end do
+
+; Standardize *after* variables assigned (otherwise, attributes on their
+; coordinate variable vectors override this stuff)
+; First horizontal coordinates
+lon@axis = "X"
+lon@cartesian_axis = "X"
+lon@standard_name = lon@long_name
+lonb@axis = "X"
+lonb@cartesian_axis = "X"
+lonb@standard_name = lon@long_name
+if isatt(lon, "edges")
+  delete(lon@edges) ; because some programs expect an N by 2 array of boundaries, instead of N + 1 vector
+end if
+lat@axis = "Y"
+lat@cartesian_axis = "Y"
+lat@standard_name = lat@long_name
+latb@axis = "Y"
+latb@cartesian_axis = "Y"
+latb@standard_name = lat@long_name
+if isatt(lat, "edges")
+  delete(lat@edges)
+end if
+; Vertical roods
+plev@axis = "Z"
+plev@cartesian_axis = "Z"
+plev@long_name = "pressure level"
+plev@units = "mb"
+plev@bounds = "plev_bnds"
+plev_bnds@axis = "Z"
+plev_bnds@cartesian_axis = "Z"
+plev_bnds@long_name = "pressure level bounds"
+plev_bnds@units = "mb"
+; Time
+time@axis = "T"
+time@cartesian_axis = "T"
+time@long_name = "time"
+time@standard_name = "time"
+time@calendar = "360_day" ; so programs will stop bugging me about unknown calendar name 'no_calendar'
+if isatt(time, "calendar_type")
+  delete(time@calendar_type)
+end if
+; Then apply
+o->time = time
+o->plev = plev
+o->plev_bnds = plev_bnds ; will rename later and add atributes
+o->lat = lat
+o->latb = latb
+o->lon = lon
+o->lonb = lonb
 
 ; Exit message
 delete(f)

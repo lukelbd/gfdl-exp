@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Get logs for a given experiment
+# name=hs_base_t106l60e
+name="$1"
+[ -z "$1" ] && name="*t95l60e*"
+globs=(~/scratch/$name)
+for dir in ${globs[@]}; do
+  cd $dir
+  echo "Dir: $dir"
+  sleep 3
+  # Parse model runtimes
+  folders=(d????-d????)
+  for folder in ${folders[@]}; do
+    if [ -e $folder/log.model ]; then
+      tmodel=$(cat $folder/log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
+      [ -z "$tmodel" ] && tmodel="XXX (interrupted)"
+      echo $folder model time: $tmodel
+    fi
+  done
+  # And processing times
+  for folder in ${folders[@]}; do
+    if [ -e $folder/log.process ]; then
+      tprocess=$(tail -1 $folder/log.process | sed 's/[^0-9]*//g')
+      [ -z "$tprocess" ] && tprocess="XXX (interrupted)"
+      echo $folder processing time: $tprocess
+    fi
+  done
+done

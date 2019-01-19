@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# Interpolate from frequency-wavenumber space to phase speed-wavenumber
+# space, using python script. We do this on data that has already been
+# averaged in time.
+#------------------------------------------------------------------------------#
+# Patterns
+shopt -s nullglob
+globs=('hs*')
+root=$HOME/data/timescales
+
+# Run on each file
+for glob in "${globs[@]}"; do
+  for dir in $root/$glob; do
+    echo "Dir: ${dir##*/}"
+    file=($dir/*spectral.nc)
+    if ! [ ${#file[@]} -eq 0 ]; then
+      # Run function
+      # Easy as pi!
+      out=${file%.nc}_phase.nc
+      if ! [ -r $out ]; then
+        rm $out
+      fi
+      t=$(date +%s)
+      stdbuf -oL -eL python3 f2c.py $file $out
+      [ $? -ne 0 ] && echo "Error: Interpolation failed." && exit 1
+      echo "Elapsed time: $(($(date +%s) - t))s."
+    fi
+    echo
+  done
+done
