@@ -1,6 +1,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; This file adds various parameters to NetCDF file that are difficult or impossible
-; to do with NCO/CDO tools... actually maybe NCO could work but this is probably easier
+; This file adds various parameters to NetCDF file
+; WARNING: Have been using this to process parallel-produced model files, but
+; there are meridional finite diffs! Will introduce slight errors since ends
+; are treated with different differencing scheme.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; How to find source code for some complex functions?
 ; * Go to base library directory in <which ncl>/../lib/ncarg/nclscripts, and
@@ -30,6 +32,7 @@ print("Reading initial file...")
 load "~/timescales-model/header.ncl"
 exists("filename")
 exists("output")
+exists("means")
 f = addfile(filename, "r") ; the data, on parallel cores
 o = addfile(output, "c") ; destination for this output
 filedimdef(o, "time", -1, True) ; set unlimited
@@ -40,7 +43,6 @@ o->time = f->time
 o->plev = f->plev
 o->plev_bnds = f->plev_bnds
 o->lat = f->lat
-o->latb = f->latb
 
 ; Constants
 p = 100.0*f->plev
@@ -74,8 +76,10 @@ ave_dims = dims(:2)
 timer("  * Time for reading and setup")
 
 ; Means
-exists("suffix")
-m = addfile("means" + "." + suffix, "r") ; the means, in a merged file
+; WARNING: This part very specialized! We interpolate to pressure levs, get
+; zonal means in parallel, so can take *global* mean needed for some Lorenz
+; energy budget terms!
+m = addfile(means, "r") ; the means, in a merged file
 t_bar   = conform_dims(dims, m->t(:,:,:,0), (/0, 1, 2/))
 u_bar   = conform_dims(dims, m->u(:,:,:,0), (/0, 1, 2/))
 v_bar   = conform_dims(dims, m->v(:,:,:,0), (/0, 1, 2/))

@@ -1,18 +1,19 @@
-;------------------------------------------------------------------------------;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Calculate fluxes and whatnot in isentropic coordinates
-;------------------------------------------------------------------------------;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 load "~/timescales-model/header.ncl"
+exists("filename")
+exists("output")
 
 ;------------------------------------------------------------------------------;
 ; Read files
 ;------------------------------------------------------------------------------;
 print("Reading data...")
-exists("filename")
-exists("outname")
 f = addfile(filename, "r") ; just read data from here
-system("rm " + outname + " 2>/dev/null") ; remove file
-o = addfile(outname, "c")
+system("rm " + output + " 2>/dev/null") ; remove file
+o = addfile(output, "c")
 filedimdef(o, "time", -1, True) ; unlimited dimension
+copy_VarAtts(f, o) ; also works for files; see: https://www.ncl.ucar.edu/Support/talk_archives/2013/0556.html
 ; Variables
 p   = f->p
 u   = f->u
@@ -20,7 +21,7 @@ v   = f->v
 z   = f->z ; can only be calculated in pressure space; should have been interpolated
 tdt = f->tdt
 slth = f->slth
-slp = f->slp ; should be a scalar!
+slp = f->slp ; could be scalar (case of interpolation from isobars), or array (interpolation from hybrid coords)
 ; udt = f->udt
 ; vdt = f->vdt
 ; Coordinates
@@ -28,12 +29,10 @@ time  = f->time
 thlev = f->thlev
 lat   = f->lat
 lon   = f->lon
-latb  = f->latb
 ; Save coords first so they appear at top of ncdump
 o->time = time
 o->thlev = thlev
 o->lat = lat
-o->latb = latb
 ; Indices for surface potential temp percentile array, see below
 nlon = dimsizes(lon)
 x = ispan(0, nlon-1, 1)
@@ -53,7 +52,10 @@ timer(" * Time for reading data")
 ; Keep it simple -- fill points below surface with *zero* geopotential
 ; height, and points.
 ; NOTE: Where statement preserve attributes.
-p = where(ismissing(p) .or. (p .gt. slp), slp, p) ; fill with the *scalar* "slp", which is actually the pressure at center of lowest layer
+if (dimsizes(dimsizes(slp)) .gt. 1) then
+  slp := conform(p, slp, (/0, 2, 3/)) ; got 3D variable for slp
+end if
+p = where(ismissing(p) .or. (p .gt. slp), slp, p)
 z = where(ismissing(z) .or. (z .lt. 0.0), 0.0, z)
 ; Fix u, v, and tdt
 ; NOTE: Since these only appear in mass-weighted averages, can simply set
@@ -80,7 +82,7 @@ cor = conform(u, 2*omega*sin(rlat), 2) ; Coriolis force
 ; Pseudo density
 ; Is -(1/g)*dp/dtheta; we apply scalar corrections to the vector for efficiency sake
 ; pressure from hPa to Pa (divide by 0.01 or multiply by 100), and apply g
-; NOTE: centered diff saves a lot of time! not perfectly accurate, but good
+; NOTE: Centered diff saves a lot of time! not perfectly accurate, but good
 ; enough, seriously.
 sigma = -center_finite_diff_n(p, 0.01*thlev*g, False, 0, 1) ; mass weighting
 ; sigma = -uneven_finite_diff_1(p, 0.01*thlev*g) ; my custom function for uneven spacing

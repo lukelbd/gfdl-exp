@@ -3,7 +3,7 @@ FC = mpiifort
 LD = mpiifort
 CPPFLAGS =
 FFLAGS = -r8 -pc 64  -O3
-LDFLAGS = -L/glade/u/apps/ch/opt/netcdf/4.6.1/intel/17.0.1//lib -lnetcdff -lnetcdf -qopenmp
+LDFLAGS = -L/glade/u/apps/ch/opt/netcdf/4.6.1/intel/17.0.1//lib -lnetcdff -lnetcdf -lhdf5 -lhdf5_hl -qopenmp
 LIST = -Mlist
 # this makefile template recognizes fortran sourcefiles with extensions
 # .f, .f90, .F, .F90. Given a sourcefile <file>.<ext>, where <ext> is one of

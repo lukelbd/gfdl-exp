@@ -29,7 +29,7 @@ tend=0
 run=mpirun # for running in parallel
 fms=$cwd/fms.x # location of executables
 process=$cwd/process # *process the parallel-output nc files directly before merging*
-interp_ncl=$cwd/process_interp.ncl # we direclty invoke this sometimes
+interp=$cwd/pressure_interp.ncl # for forcing data
 [ ! -x $fms ]     && echo "Error: The executable $fms is missing."                 && exit 1
 [ ! -x $process ] && echo "Error: The bash script for processing data is missing." && exit 1
 ! which $run &>/dev/null && echo "Error: $run not found in \$PATH." && exit 1
@@ -112,9 +112,9 @@ exit_check() {
     echo "Error: Exit status $estatus from post-processing previous block..."
     case $estatus in
       1) echo "NetCDF files missing. Check log.model." ;;
-      2) echo "Something failed during pressure level interpolation. Check log.interp." ;;
-      3) echo "Something failed while getting basic terms. Check log.means." ;;
-      4) echo "Something failed while getting param terms. Check log.params." ;;
+      2) echo "Something failed during plev or isen interpolation. Check log.process." ;;
+      3) echo "Something failed while getting plev zonal means. Check log.process." ;;
+      4) echo "Something failed while getting plev or isen params. Check log.process." ;;
       *) echo "Check log.process; other/miscellaneous failure." ;;
     esac
     exit 1
@@ -324,13 +324,15 @@ egrep 'EXIT CODE: [1-9]|FATAL from PE|WARNING from PE' log.model &>/dev/null && 
 # NOTE: The boundary layer stuff depends on sigma, which depends on the surface
 # pressure, a boundary layer quantity... but we assume effect is negligible
 # when terrain is zero. So ignore it.
-ncrename -h -d pfull,mlev -d phalf,ilev forcing.nc &>/dev/null # mlev is the ECHAM convention, needed for CDO interpolation
-ncrename -h -v pfull,mlev -v phalf,ilev forcing.nc &>/dev/null # -d renames dimensions, -v renames variables of same name
+ncrename -h -d pfull,mlev forcing.nc
+ncrename -h -d phalf,ilev forcing.nc
+ncrename -h -v pfull,mlev forcing.nc
+ncrename -h -v phalf,ilev forcing.nc
 ncatted -h -O -a bounds,mlev,o,c,"ilev" forcing.nc
 [ -r ../forcing.nc ] && rm ../forcing.nc
-ncl -n -Q 'filename="forcing.nc"' 'output="../forcing.nc"' $interp_ncl &>forcing.log
+ncl -n -Q 'filename="forcing.nc"' 'output="../forcing.nc"' $interp &>forcing.log
 if nclcheck forcing.log || ! [ -r ../forcing.nc ]; then
-  echo "Error: Something failed during NCL interpolation." && exit 1
+  echo "Error: Something failed during NCL interpolation of forcin gdata." && exit 1
 fi
 # Exit if user *only* wanted to get initial conditions
 $forcing && exit 0
@@ -356,6 +358,7 @@ case $mode in
     # Message and reset timer/flagS
     # Skip this time (optionally)
     if [ $cday -lt $tstart ]; then
+      unset rdir_override # important! for 'resume' experiments, generally just want to use rdir_override as cold start alternative
       pday=$cday # previous day
       cday=$((pday + days))
       nday=$((cday + days))
@@ -367,15 +370,17 @@ case $mode in
     # Optionally use the end of other control runs to reduce spinup time
     rdir=$expdir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
     cdir=$expdir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
-    if [ ! -z $rdir_override ]; then coldstart=false
-      if [[ ! $rdir_override =~ d.*-d.* ]]; then
+    if [ -n "$rdir_override" ]; then
+      coldstart=false
+      if ! [[ $rdir_override =~ d.*-d.* ]]; then
         echo "Override: Using final day from \"$rdir_override\" for restart files."
         rdir_override=($rdir_override/d*-d*); rdir="${rdir_override[-1]}" # pick last one; should be sorted
       else
         echo "Override: Using restart files from \"$rdir_override\"."
         rdir="$rdir_override" # use specific day sequence
-      fi; unset rdir_override # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
-      [ ! -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
+      fi
+      unset rdir_override # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
+      ! [ -d $rdir ] && echo "Error: Override restart directory \"$rdir\" does not exist." && exit 1
     fi
     unset pflags_day
     array_in $cday ${t_nodata[@]} && pflags_day+=" -q" && echo "Will delete output netcdf files."
