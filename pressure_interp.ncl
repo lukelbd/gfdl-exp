@@ -21,11 +21,12 @@ hybi   = f->hybi
 nedges = dimsizes(hyai) ; is 1D, so this is scalar
 hyam = (hyai(0:nedges-2) + hyai(1:nedges-1))/2 ; the middle A coefs
 hybm = (hybi(0:nedges-2) + hybi(1:nedges-1))/2 ; the middle B coefs
-p0   = 101325. ; reference pressure
+p0   = 101325.0 ; reference pressure
 p0mb = 1013.25 ; in mb for function input
 pouti = (hyai + hybi*p0) / 100. ; back to mb
 poutm = (pouti(1:nedges-1) + pouti(0:nedges-2)) / 2.
 poutm!0 = "plev"
+poutm&plev = poutm
 
 ; Add bounds to file
 ; This replicates behavior of genlevelbounds in CDO
@@ -50,16 +51,12 @@ time = f->time
 plev = poutm
 plev_bnds = pouti_edges
 lat  = f->lat
-latb = f->latb
 lon  = f->lon
-lonb = f->lonb
 o->time = time
 o->plev = plev
 o->plev_bnds = plev_bnds ; will rename later and add atributes
 o->lat  = lat
-o->latb = latb
 o->lon  = lon
-o->lonb = lonb
 ; Print message
 timer("  * Time for NCL reading and setup")
 
@@ -94,6 +91,8 @@ do i=0,dimsizes(varnames)-1
     end if end if
 
     ; Interpolate the variable and save it
+    ; Old coordinates are also copied and applied, which means we will have to
+    ; edit their attributes *after* this loop.
     ivar = vinth2p_ecmwf(var, hyam_norm, hybm, poutm, slp, 1, p0mb, 1, True, varflag, tbot, zbot)
     ivar!1 = "plev" ; rename dimension; simple as that
     copy_VarAtts(var, ivar)
@@ -109,18 +108,12 @@ end do
 lon@axis = "X"
 lon@cartesian_axis = "X"
 lon@standard_name = lon@long_name
-lonb@axis = "X"
-lonb@cartesian_axis = "X"
-lonb@standard_name = lon@long_name
 if isatt(lon, "edges")
   delete(lon@edges) ; because some programs expect an N by 2 array of boundaries, instead of N + 1 vector
 end if
 lat@axis = "Y"
 lat@cartesian_axis = "Y"
 lat@standard_name = lat@long_name
-latb@axis = "Y"
-latb@cartesian_axis = "Y"
-latb@standard_name = lat@long_name
 if isatt(lat, "edges")
   delete(lat@edges)
 end if
@@ -148,9 +141,7 @@ o->time = time
 o->plev = plev
 o->plev_bnds = plev_bnds ; will rename later and add atributes
 o->lat = lat
-o->latb = latb
 o->lon = lon
-o->lonb = lonb
 
 ; Exit message
 delete(f)

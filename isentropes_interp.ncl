@@ -1,17 +1,26 @@
-;------------------------------------------------------------------------------;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Interpolate from pressure levels to isentropic coordinates
-;------------------------------------------------------------------------------;
+; If you don't have tdt (diabatic heating) data, you can pass the
+; variable "forcing" to this script (calculate from Newtonian damping and
+; the damping/equilbrium params).
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 load "~/timescales-model/header.ncl"
 qq = integertochar(34) ; a double quote; only way to put inside string! yuck.
 exists("filename")
 exists("outname")
 exists("forcing")
 
+;------------------------------------------------------------------------------;
 ; Read file
-; print("filename")
-; print(filename)
+;------------------------------------------------------------------------------;
 print("Reading data...")
 f = addfile(filename, "r") ; just read data from here
+system("rm " + output + " 2>/dev/null") ; remove file
+o = addfile(output, "c") ; create new file; don't want to read old values or anything
+filedimdef(o, "time", -1, True) ; unlimited dimension
+copy_VarAtts(f, o) ; also works for files; see: https://www.ncl.ucar.edu/Support/talk_archives/2013/0556.html
+; Coordinates
+fvars = getfilevarnames(f)
 time = f->time
 if .not. isvar("slice") then
   time = f->time
@@ -20,10 +29,35 @@ end if
 time := time(slice(0):slice(1))
 plev = f->plev
 lat  = f->lat
-latb = f->latb
 lon  = f->lon
-lonb = f->lonb
+; Get multi-dimensional pressure array
+t = f->t ; need this down the line anyway
+slp = (f->slp)/100.0 ; convert to Pa (note we also need slp for geopotential height calculation)
+if any(fvars .eq. "hyai") then
+  ; Calculate changing pressure
+  hybrid = True
+  hyai = (f->hyai)/100.0 ; to hPa
+  hybi = f->hybi
+  nedges = dimsizes(hyai) ; is 1D, so this is scalar
+  hyam = (hyai(0:nedges-2) + hyai(1:nedges-1))/2 ; the middle A coefs
+  hybm = (hybi(0:nedges-2) + hybi(1:nedges-1))/2 ; the middle B coefs
+  ; Get 4D pressure array
+  np = dimsizes(hybm)
+  shape = (/dimsizes(time), dimsizes(hybm), dimsizes(lat), dimsizes(lon)/)
+  p = conform_dims(shape, hyam, 1) + \
+      conform_dims(shape, hybm, 1)*conform_dims(shape, slp, (/0, 2, 3/))
+  copy_VarCoords(t, p)
+; Get pressure level vector
+else
+  hybrid = False
+  p = f->plev
+  np = dimsizes(p)
+end if
+timer(" * Time for reading data")
 
+;------------------------------------------------------------------------------;
+; Standardize and create coordinates
+;------------------------------------------------------------------------------;
 ; The theta coordinates. Should go in *same order* as pressure coordinates.
 ; Option 0)
 ; ERA-Interim archive
@@ -49,26 +83,39 @@ thlev = array_append_record(array_append_record( \
 if isvar(stratosphere) then ; add 50K resolution levels at top
   thlev := array_append_record(thlev, fspan(650.0, 1500.0, 17), 0)
 end if
-; Attributes
 thlev = thlev(::-1)
 thlev!0 = "thlev"
 thlev&thlev = thlev ; this is apparently necessary
 thlev@long_name = "potential temperature level"
 thlev@units = "K"
 thlev@axis = "Z"
-
-; Output file
+; Horizontal coordinates
+lon@axis = "X"
+lon@cartesian_axis = "X"
+lon@standard_name = lon@long_name
+if isatt(lon, "edges")
+  delete(lon@edges) ; because some programs expect an N by 2 array of boundaries, instead of N + 1 vector
+end if
+lat@axis = "Y"
+lat@cartesian_axis = "Y"
+lat@standard_name = lat@long_name
+if isatt(lat, "edges")
+  delete(lat@edges)
+end if
+; Time
+time@axis = "T"
+time@cartesian_axis = "T"
+time@long_name = "time"
+time@standard_name = "time"
+time@calendar = "360_day" ; so programs will stop bugging me about unknown calendar name 'no_calendar'
+if isatt(time, "calendar_type")
+  delete(time@calendar_type)
+end if
 ; Add coordinates first so they appear at top of ncdump
-system("rm " + outname + " 2>/dev/null") ; remove file
-o = addfile(outname, "c") ; create new file; don't want to read old values or anything
-filedimdef(o, "time", -1, True) ; unlimited dimension
 o->time = time
 o->thlev = thlev
 o->lat = lat
-o->latb = latb
 o->lon = lon
-o->lonb = lonb
-timer(" * Time for reading data")
 
 ;------------------------------------------------------------------------------;
 ; Interpolate
@@ -84,8 +131,32 @@ kappa = 0.286
 t = f->t(slice(0):slice(1),:,:,:)
 pt = t*conform(t, (p0/plev)^kappa, 1) ; calculate potential temperature
 p = conform(t, plev, 1) ; only dimension 1 matches
+
+; Potential temp, pressure, and 'surface layer' quantities
+; Also store surface pressure
+if hybrid then
+  psurf = p(:,np-1,:,:)
+  pt = t*(p0/p)^kappa ; both are 4D, have same shape
+else
+  psurf = p(np-1)
+  psurf!0 = "ncl_scalar" ; magic (example: https://www.ncl.ucar.edu/Document/Functions/Built-in/filevardef.shtml )
+  pt = t*conform(t, (p0/p)^kappa, 1) ; calculate potential temperature
+end if
 p@long_name = "pressure"
 p@units = "hPa"
+; Since have no 'surface' layer in this model, we just use the potential
+; temperature at the lowest model level center
+; Pressure
+psurf@long_name = "surface layer pressure"
+psurf@units = "hPa"
+o->slp = psurf
+; Potential temp
+copy_VarCoords(t, pt)
+slth = pt(:,np-1,:,:)
+slth@long_name = "surface layer potential temperature"
+slth@units = "K"
+o->slth = slth
+
 ; Loop
 names = (/"p", "u", "v", "z", "tdt"/)
 print("Interpolating to isentropes...")
@@ -104,7 +175,7 @@ do i=1,dimsizes(names)
     np = dimsizes(plev)
     dp = 0.0*p
     dp(:,:np-2,:,:) = p(:,1:,:,:) - p(:,:np-2,:,:) ; pressure is *ascending* along axis
-    dp(:,np-1,:,:) = slp(:,:,:)/100.0 - p(:,np-1,:,:) ; the offset from surface pressure
+    dp(:,np-1,:,:) = slp - p(:,np-1,:,:) ; the offset from surface pressure
     rho = p/(Rd*t) ; p = rho*R*T
     x = dim_cumsum_n(dp(:,::-1,:,:)/(g*rho(:,::-1,:,:)), 1, 1) ; resulting units are meters
     x = x(:,::-1,:,:) ; top-to-bottom
@@ -153,29 +224,6 @@ do i=1,dimsizes(names)
   delete(y)
   timer(" * Time for interpolating " + qq + name + qq)
 end do
-
-; Tack on the 'sea-level theta'
-; Since have no 'surface' layer in this model, we just use the potential
-; temperature at the lowest model level center
-np = dimsizes(plev)
-slth = pt(:,np-1,:,:)
-slth!0 = "time"
-slth!1 = "lat"
-slth!2 = "lon"
-slth&time = time
-slth&lat = lat
-slth&lon = lon
-slth@long_name = "surface layer potential temperature"
-slth@units = "K"
-o->slth = slth
-; Also tack on 'sea-level pressure', which since we have no way of knowing
-; temperature at the "surface" and have hence used the lowest layer temperature,
-; should be equal to the lowest layer mid-level pressure.
-psurf = plev(np-1) ; dimensionless scalar
-psurf@long_name = "surface layer pressure"
-psurf@units = "hPa"
-psurf!0 = "ncl_scalar" ; magic (example: https://www.ncl.ucar.edu/Document/Functions/Built-in/filevardef.shtml )
-o->slp = psurf
 
 delete(f)
 delete(o)

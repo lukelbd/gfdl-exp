@@ -80,6 +80,7 @@ tstart=0  # first day of integration; set to 0 for new run.
 tend=5500 # for new experiments just do 1200 day integrations, first 200 are spinup
 walltime=12:00
 queue=economy
+# queue=regular
 # Output settings
 outfreq=12      # every 6
 frequnits=hours # hours
@@ -87,7 +88,7 @@ filename=2xdaily_inst # name for output files
 ktstart=3500 # first day we keep XYZ data (can't keep all, too much data)
 ktend=5500 # last day we keep XYZ data
 # Test settings
-testmode=0
+testmode=false
 testname=test # default name of directory
 initname=init
 testdays=5
@@ -102,7 +103,7 @@ unset series_name flags_global
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
     -h|--help) echo "$doc" && exit 0 ;;
-    -t|--test) testmode=1 ;;
+    -t|--test) testmode=true ;;
     -d|--dryrun) dryrun=true ;; # just print function calls?
     -dt=*|--timestep=*) dt=${1#*=} ;;
     -d=*|--days=*)      days=${1#*=} ;;
@@ -142,16 +143,14 @@ reso="${reso#*_}"
 reso="${reso%%_*}"
 
 # Run really fast test run
-case $testmode in
-1)
+if $testmode; then
   unset flags_global # no resume or new days
-  rdir="${force}_base_t95l60e" # override previous directory
-  rdays=d0450-d0500 # set restart directory days (leave empty to just use the last subfolder in directory)
-  pflags+=" -d" # don't move/delete anything; also implies flags="--keep-xyz "
+  # rdir="${force}_base_t95l60e" # override previous directory
+  # rdays=d0450-d0500 # set restart directory days (leave empty to just use the last subfolder in directory)
+  # pflags+=" -d" # don't move/delete anything; also implies flags="--keep-xyz "
   outfreq=12
   frequnits=hours
   filename=test
-  dt=600
   days=$testdays
   tstart=0
   tend=$((testdays * testblocks))
@@ -159,21 +158,7 @@ case $testmode in
   ktend=$tend
   walltime=01:00 # real quick test
   queue=regular
-# Initial conditions, for sanity checks
-;; 2)
-  unset flags_global # no resume or new days
-  cores=1 # easier for debugging, otherwise print statements executed simultaneously
-  pflags+=" -q" # do nothing
-  outfreq=1
-  frequnits=seconds
-  filename=init
-  dt=1
-  days=0
-  secs=1
-  tstart=0
-  tend=0
-  queue=priority
-;; esac
+fi
 # Days for keeping
 txyzdata=$(seq $ktstart $days $ktend | tr $'\n' ',') # for saving
 
@@ -233,7 +218,7 @@ array_in() {
 array_add() {
   while [ $# -ne 0 ]; do
     if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
-      [ "${2:0:1}" != v ] && echo "Error: Values must be input as v<value>." 1>&2 && exit 1
+      [ "${2:0:1}" != v ] && err "Error: Values must be input as v<value>."
       nml_params+=("$1")
       nml_values+=("${2#v}")
     fi
@@ -327,8 +312,7 @@ exp_name() {
           [[ $p2 == 1 ]] && sweep_out=katmos$opt p2=
           ;;
         *)
-          echo "Error: Unknwon experiment \"${sweep_in}\"."
-          exit 1
+          err "Error: Unknwon experiment \"${sweep_in}\"."
           ;;
       esac
       [ "$p1" == na ] && unset p1
@@ -559,7 +543,8 @@ exp_setup() {
   # Set up diag table; so far this is kept very simple
   #------------------------------------------------------------------------#
   diag="$exp_dir/diag_table"
-  [ $testmode -eq 2 ] && diag_default=$f90dir/diag_table_init || diag_default=$f90dir/$diag_table
+  # $testmode  && diag_default=$f90dir/diag_table_init || diag_default=$f90dir/$diag_table
+  diag_default=$f90dir/$diag_table
   cp $diag_default $diag
   sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' $diag
   sed -i 's/#.*$//g;/^[ \t]*$/d' $diag # remove comments, empty lines, for clarity
@@ -606,12 +591,12 @@ for param2 in ${params2[@]}; do
       continue
     fi
     exp_names+=($exp_name) # record in list
-    case $testmode in
-      0) exp_dir="$scratch/$exp_name" ;; # running model
-      1) exp_dir="$scratch/$testname" ;;
-      2) exp_dir="$scratch/$initname" ;;
-    esac
-    [ ! -d "$exp_dir" ] && mkdir "$exp_dir"
+    if $testmode; then
+      exp_dir="$scratch/$testname"
+    else
+      exp_dir="$scratch/$exp_name"
+    fi
+    ! [ -d "$exp_dir" ] && mkdir "$exp_dir"
     log=logs/${exp_dir##*/}.log # e.g use the testing name
     echo "Experiment name: ${exp_name}." | tee $log
     echo "Log file: log $log" # so can copy paste this

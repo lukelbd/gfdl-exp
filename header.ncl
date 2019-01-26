@@ -153,3 +153,10 @@ begin
   return dy
 end
 
+; Considered this, but cannot modify variables in place I think, so inefficient
+; undef("standardize_coords")
+; function standardize_coords(time:numeric, plev_bnds:numeric, plev:numeric, latb:numeric, lat:numeric, lonb:numeric, lon:numeric)
+; local
+; begin
+; end
+

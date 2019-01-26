@@ -47,19 +47,21 @@ $_debug && _keepxyz=true
 $_resume && _keepxyz=true # we are *reading* from existing XYZ files so definitely don't delete them!
 
 # Global vars
+# interp_cdo=$bin/process_interp.cdo # interpolate with CDO
 t0=$(date +%s) # starting time
 bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from right
 run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
-interp_cdo=$bin/process_interp.cdo # interpolate with CDO
-interp_ncl=$bin/process_interp.ncl # interpolate with NCL, automatic iteration
 mppnccombine=$bin/mppnccombine.x # combine; needs to have been compiled here
-process=$bin/process_params.ncl  # eddy and mean Lorenz energy cycle terms with NCL
-means=$bin/process_zonmean.ncl   # just gets zonal means
+plev_interp=$bin/pressure_interp.ncl  # interpolate with NCL, automatic iteration
+plev_params=$bin/pressure_params.ncl # eddy and mean Lorenz energy cycle terms with NCL
+plev_means=$bin/pressure_zonmean.ncl # just gets zonal means
+isen_interp=$bin/isentropes_interp.ncl
+isen_params=$bin/isentropes_params.ncl
 cd $_dir # optionally pass dir argument
 
 # Double check some stuff
-[ ! -r $process ]       && echo "Error: The script \"$process\" is missing."          && exit 127
-[ ! -r $interp_ncl ]    && echo "Error: The script \"$interp_ncl\" is missing."       && exit 127
+[ ! -r $plev_params ]       && echo "Error: The script \"$plev_params\" is missing."          && exit 127
+[ ! -r $plev_interp ]    && echo "Error: The script \"$plev_interp\" is missing."       && exit 127
 [ ! -x $mppnccombine ]  && echo "Error: The executable \"$mppnccombine\" is missing." && exit 127
 ! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                         && exit 127
 ! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                         && exit 127
@@ -70,47 +72,60 @@ cd $_dir # optionally pass dir argument
 # Stdout of following lines is overview; view separate logfiles for specifics
 ################################################################################
 # Function for interpolating model levels
-hybrid_to_press() {
+interp() {
   # Interplolate to pressure levels from model levels
-  local t log filename output suffix
+  local t log filename plevout isenout suffix
   filename="$1"
   suffix="$2"
-  output=${filename%%.*}_interp.$suffix
-  log=LOGS/log.interp.${suffix%.nc}
-  t=$(date +%s)
+  plevout=interp_plev.$suffix
+  isenout=interp_isen.$suffix
 
   # Apply some simple modifications to attributes
   # NOTE: Use -h to prevent appending history
-  ncrename -h -d pfull,mlev -d phalf,ilev $filename &>/dev/null # mlev/ilev is the ECHAM convention, needed for CDO interpolation
-  ncrename -h -v pfull,mlev -v phalf,ilev $filename &>/dev/null # -d renames dimensions, -v renames variables of same name
+  # WARNING: Some NCO distos seem to have fatal issue with using multiple
+  # ncrename instructions in same command! Fails on cheyenne when we try to
+  # do it in one line.
+  ncrename -h -d pfull,mlev $filename # -d renames dimensions, -v renames variables of same name
+  ncrename -h -d phalf,ilev $filename # mlev/ilev is the ECHAM convention, needed for CDO interpolation
+  ncrename -h -v pfull,mlev $filename
+  ncrename -h -v phalf,ilev $filename
   ncatted -h -O -a bounds,mlev,o,c,"ilev" $filename
 
-  # Interpolation
-  echo "Interpolating with NCL..." # -Q = no banner, -n = do not enumerate print statements
-  [ -r "$output" ] && rm "$output"
-  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" $interp_ncl &>$log #2> /dev/null
-  if nclcheck $log || ! [ -r $output ]; then
+  # Interpolation to pressure
+  t=$(date +%s)
+  log=LOGS/log.pinterp.${suffix%.nc}
+  echo "Interpolating to pressure levs..." # -Q = no banner, -n = do not enumerate print statements
+  [ -r "$plevout" ] && rm "$plevout"
+  ncl -n -Q "filename=\"$filename\"" "output=\"$plevout\"" $plev_interp &>$log #2> /dev/null
+  if nclcheck $log || ! [ -r $plevout ]; then
     echo "Error: Something failed during NCL interpolation." && exit 2
   fi
+  echo "  * Time for plev interpolation: $(($(date +%s) - t))s."
 
-  # Add back global attribute
-  ncatted -h -O -a NumFilesInSet,global,o,l,$numfiles
-  ! $_debug && mv $output $filename # move old file on top of new file
-  echo "  * Time for interpolation: $(($(date +%s) - t))s."
+  # Interpolation to isentropes
+  t=$(date +%s)
+  log=LOGS/log.iinterp.${suffix%.nc}
+  echo "Interpolating to isentropes..."
+  [ -r "$isenout" ] && rm "$isenout"
+  ncl -n -Q "filename=\"$filename\"" "output=\"$isenout\"" "stratosphere=False" $isen_interp &>$log #2> /dev/null
+  if nclcheck $log || ! [ -r $isenout ]; then
+    echo "Error: Something failed during NCL interpolation." && exit 2
+  fi
+  echo "  * Time for isen interpolation: $(($(date +%s) - t))s."
 }
 
 # Means
-means() {
+plev_means() {
   # Get the zonal means
-  local t log filename output suffix
+  local t log filename out suffix
   filename="$1"
   suffix="$2"
-  output=means.${suffix}
+  out=means.${suffix}
   log=LOGS/log.means.${suffix%.nc}
   t=$(date +%s)
   echo "Getting zonal means..."
-  [ -r "$output" ] && rm "$output"
-  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" $means &>$log
+  [ -r "$out" ] && rm "$out"
+  ncl -n -Q "filename=\"$filename\"" "output=\"$out\"" $plev_means &>$log
   if nclcheck $log; then
     echo "Error: Something failed while getting zonal means." && exit 4
   fi
@@ -121,19 +136,32 @@ means() {
 # some approaches for testing if file has averaged data
 params() {
   # Ouput file names
-  local t log filename output suffix
-  filename="$1"
-  suffix="$2"
-  output=params.${suffix}
-  log=LOGS/log.params.${suffix%.nc}
+  local t log plevout isenout suffix
+  suffix="$1"
+  plevout=params_plev.${suffix}
+  isenout=params_isen.${suffix}
+
+  # Pressure lev params
   t=$(date +%s)
+  log=LOGS/log.pparams.${suffix%.nc}
   echo "Getting other params..."
-  [ -r "$output" ] && rm "$output"
-  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" "means=\"means.$suffix\"" $process &>$log
+  [ -r "$plevout" ] && rm "$plevout"
+  ncl -n -Q "filename=\"interp_plev.$suffix\"" "output=\"$plevout\"" "means=\"means.$suffix\"" $plev_params &>$log
   if nclcheck $log; then
-    echo "Error: Something failed while getting other params." && exit 4
+    echo "Error: Something failed while getting plev params." && exit 4
   fi
-  echo "  * Time for getting other params: $(($(date +%s) - t))s."
+  echo "  * Time for plev params: $(($(date +%s) - t))s."
+
+  # Isentropic params
+  t=$(date +%s)
+  log=LOGS/log.iparams.${suffix%.nc}
+  echo "Getting other params..."
+  [ -r "$isenout" ] && rm "$isenout"
+  ncl -n -Q "filename=\"interp_isen.$suffix\"" "output=\"$isenout\"" $isen_params &>$log
+  if nclcheck $log; then
+    echo "Error: Something failed while getting isen params." && exit 4
+  fi
+  echo "  * Time for isen params: $(($(date +%s) - t))s."
 }
 
 # Check exit codes
@@ -186,9 +214,9 @@ for file in ${files[@]}; do
     ncfiles=(${base}.*.nc)
   fi
   echo Files: ${ncfiles[@]}
-  numfiles=${#ncfiles[@]}
   xyzfile="${base}_full.${PWD##*/}.nc"   # original data
-  yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
+  plev_yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
+  isen_yzfile="${base}_summary_isen.${PWD##*/}.nc" # isentropic coords
   # Just want to combine files and exit?
   if $_combine; then
     [ -r ${base}.nc ] && rm ${base}.nc
@@ -199,7 +227,7 @@ for file in ${files[@]}; do
   ##############################################################################
   # 1) Interpolate to pressure, get means in parallel
   ##############################################################################
-  unset pids
+  unset pids suffixes
   tp=$(date +%s)
   echo "Interpolating and getting means..."
   ! [ -d LOGS ] && mkdir LOGS
@@ -208,20 +236,22 @@ for file in ${files[@]}; do
       # Just get means
       num=0000
       suffix=nc # dummy value
-      means "$ncfile" "nc" &>LOGS/log.$num &
+      plev_means "$ncfile" "nc" &>LOGS/log.$num &
     else
       # Number
       num=${ncfile%.nc}
       num=${num#*.}
       suffix=${num}.nc
       # Interpolate and get means
-      $_debug && mfile=${ncfile%%.*}_interp.$suffix || mfile=$ncfile
-      { hybrid_to_press "$ncfile" "$suffix"; means "$mfile" "$suffix"; } &>LOGS/log.$num &
+      { interp "$ncfile" "$suffix"
+        plev_means "interp_plev.$suffix" "$suffix"
+      } &>LOGS/log.$num &
       pids+=($!)
     fi
+    suffixes+=($suffix)
   done; pidcheck ${pids[@]}
-  $_debug && ncfiles=(${base}_interp.*.nc) # we didn't overwrite them
   echo "  * Time for interpolating and getting zonal means in parallel: $(($(date +%s) - tp))s."
+
   # Merge zonal means
   # NOTE: Use mppnccombine -h to print help info; the -r removes files after
   # run was successful
@@ -242,17 +272,10 @@ for file in ${files[@]}; do
   unset pids
   tp=$(date +%s)
   echo "Getting other params..."
-  for ncfile in ${ncfiles[@]}; do
-    # Number
-    if $_resume && ! $_debug; then
-      num=0000
-      suffix=nc # dummy value
-    else
-      num=${ncfile%.nc}
-      num=${num#*.}
-      suffix=${num}.nc
-    fi
-    params "$ncfile" "$suffix" &>>LOGS/log.${num} &
+  for suffix in ${suffixes[@]}; do
+    num=${suffix%.nc}
+    [ "$suffix" == "nc" ] && num=0000
+    params "$suffix" &>>LOGS/log.${num} &
     pids+=($!)
   done; pidcheck ${pids[@]}
   echo "  * Time for getting params in parallel: $(($(date +%s) - tp))s."
@@ -264,93 +287,119 @@ for file in ${files[@]}; do
     # Merge params
     echo "Combining YZ files..."
     t=$(date +%s)
-    [ -r params.nc ] && rm params.nc
-    $mppnccombine params.nc params.*.nc &
-    wait
-    echo "  * Time for combining params: $(($(date +%s) - t))s."
+    [ -r params_plev.nc ] && rm params_plev.nc
+    $mppnccombine params_plev.nc params_plev.*.nc
+    echo "  * Time for combining plev params: $(($(date +%s) - t))s."
+    # And isentropic params
+    t=$(date +%s)
+    [ -r params_isen.nc ] && rm params_isen.nc
+    $mppnccombine params_isen.nc params_isen.*.nc
+    echo "  * Time for combining isen params: $(($(date +%s) - t))s."
   fi
+
   # Append params to file; want them to show up at end of ncdump ideally
-  # ncks -h --no-abc -A means.nc params.nc
-  ncks -h --no-abc -A params.nc means.nc
+  # ncks -h --no-abc -A params_plev.nc means.nc
+  ncks -h --no-abc -A means.nc params_plev.nc
   if $_debug; then
-    cp means.nc $yzfile
+    cp params_plev.nc $plev_yzfile
+    cp params_isen.nc $isen_yzfile
   else
-    mv means.nc $yzfile
-    rm params.nc means.*.nc params.*.nc
+    mv params_plev.nc $plev_yzfile
+    mv params_isen.nc $isen_yzfile
+    rm means.nc means.*.nc params_plev.*.nc params_isen.*.nc
   fi
 
   ##############################################################################
-  # 3) Optionally merge the pressure-interpolated files
+  # 3) Optionally merge the full-resolution pressure-interpolated files
   # TODO: Consider reducing to a standard horizontal resolution at least, if
   # not vertical? This could save considerable space.
   # NOTE: Had error on Cheyenne where mppnccombine failed for sufficiently
   # big files (threshold was somewhere between 60-80 timesteps at T106 resolution)
   # To fix this, we take time hyperslabs, merge each half, then re-combine
   ##############################################################################
-  # Delete the old file
+  # Delete the old files
+  if ! $_debug; then
+    rm ${ncfiles[@]} # original data in model coords
+    rm interp_isen.*.nc # do not archive, because can be rebuilt from archived pressure level data
+  fi
   if ! $_keepxyz; then
     echo "Removing XYZ files..."
-    ! $_debug && rm ${ncfiles[@]} # simple
+    ! $_debug && rm interp_plev.*.nc
   # Merge files
   # Will drop variables in parallel before merging
   elif ! $_resume; then
+    # Message
     t=$(date +%s)
     unset interp # empty array
     echo "Keeping XYZ files..."
-    keep=plev_bnds,latb,lonb,slp,u,v,t
-    # Without splitting in half
+    keep=plev_bnds,slp,u,v,t
+
+    # Without splitting in parts
     if ! $_splitxyz; then
-      for ncfile in ${ncfiles[@]}; do
-        $_debug && out=${ncfile%%.*}_x.${ncfile#*.} || out=$ncfile
-        ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $ncfile $out &
+      # Delete some vars
+      for suffix in ${suffixes[@]}; do
+        file=interp_plev.${suffix}
+        out=$file
+        $_debug && out=interp_plev_x.${suffix}
+        ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $file $out &
         interp+=($out)
-      done; wait
+      done
+      wait
       echo "  * Time for trimming variables: $(($(date +%s) - t))s."
+
+      # Combine
       t=$(date +%s)
       echo "Combine full files."
       [ -r $xyzfile ] && rm $xyzfile
-      $mppnccombine -r $xyzfile ${interp[@]}
+      $mppnccombine $xyzfile ${interp[@]}
       [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
       echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+      ! $_debug && rm interp_plev*.nc
+
     # Split into files of *n* timesteps
     else
-      # First a simple test
-      ts=$(ncdump -h ${ncfiles[0]} | grep 'UNLIMITED' | sed 's/[^0-9]//g')
-      [ -z "$ts" ] && echo "Error: Unknown timesteps for file ${ncfiles[0]}." && exit 127
+      ts=$(ncdump -h interp_plev.0000.nc | grep 'UNLIMITED' | sed 's/[^0-9]//g')
+      [ -z "$ts" ] && echo "Error: Unknown timesteps for file interp_plev.0000.nc." && exit 127
       [ $((ts % nsplit)) -eq 1 ] && echo "Error: Incompatible number of timesteps ${ts} for ${nsplit} splits." && exit 127
       # Bugfix; had issues with lost memory even on 109GB nodes, maybe has
       # to do with hardware architecture or something
       for ni in $(seq 1 $nsplit); do
         unset outs
-        for ncfile in ${ncfiles[@]}; do
-          out=${ncfile%%.*}_x${ni}.${ncfile#*.}
+        for suffix in ${suffixes[@]}; do
+          file=interp_plev.${suffix}
+          out=interp_plev_x${ni}.${suffix}
           t1=$(((ni - 1)*ts/nsplit)) # e.g. nsplit=10, ts=200, goes 0, 20, 40, 60
           t2=$((ni*ts/nsplit - 1)) # e.g. nsplit=10, ts=200, goes 19, 39, 59
-          ncks -O -h --no-abc -d time,$t1,$t2 -v $keep $ncfile $out &
+          ncks -O -h --no-abc -d time,$t1,$t2 -v $keep $file $out &
           outs+=" $out"
         done
         interp+=("$outs")
-      done; wait
+      done
+      wait
       echo "  * Time for trimming variables: $(($(date +%s) - t))s."
       t=$(date +%s)
-      # Combine groups of half-files
-      i=1
+
+      # Combine groups of half-files in parallel
       unset pids xyzfiles
       echo "Combine pieces..."
+      i=1
       for group in "${interp[@]}"; do
         ixyzfile=${xyzfile%.nc}_${i}.nc
-        $mppnccombine -r $ixyzfile $group &
+        $mppnccombine $ixyzfile $group &
         xyzfiles+=($ixyzfile)
         pids+=($!)
         let i+=1
       done; pidcheck ${pids[@]}
       echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
-      # Put back together
+
+      # Put time blocks back together
       t=$(date +%s)
       echo "Put back together..."
       ncrcat -O ${xyzfiles[@]} $xyzfile
-      ! $_debug && rm ${xyzfiles[@]} ${ncfiles[@]}
       echo "  * Time for putting XYZ files back together: $(($(date +%s) - t))s."
+
+      # Delete
+      ! $_debug && rm interp_plev*.nc ${xyzfiles[@]}
     fi
   fi
 
@@ -359,7 +408,8 @@ for file in ${files[@]}; do
   ##############################################################################
   if ! $_debug; then
     ! [ -d ../netcdf ] && mkdir ../netcdf
-    [ -r $yzfile ]  && mv $yzfile ../netcdf
+    [ -r $plev_yzfile ] && mv $plev_yzfile ../netcdf
+    [ -r $isen_yzfile ] && mv $isen_yzfile ../netcdf
     [ -r $xyzfile ] && mv $xyzfile ../netcdf
   fi
 done

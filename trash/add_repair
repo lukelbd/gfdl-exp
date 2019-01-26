@@ -17,18 +17,22 @@ case ${HOSTNAME%%.*} in
   ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
 esac
 # Loop
-globs=('hs_troprad3_t95l60e*1000*' 'hs_tgrad_t95l60e*')
+globs=('*t95l60e*')
+# globs=('*troprad3*p0020*')
+dayglob='3600'
 for glob in "${globs[@]}"; do
   for dir in $scratch/$glob; do
     echo "Dir: ${dir##*/}"
     filenames=($dir/netcdf/*summary.d????-d????.nc)
     for filename in ${filenames[@]}; do
       echo "File: ${filename##*/}"
-      # output=${filename%.nc}_tmp.nc # try again
-      # [ -r $output ] && rm $output
-      ncl -n -Q "filename=\"$filename\"" $repair 2>&1 | tee log.fix #2> /dev/null
-      nclcheck log.fix
-      [ $? -eq 0 ] && echo "Error: Failed." && exit 1
+      if [ -z "$dayglob" ] || [[ ${filename##*/} =~ "$dayglob" ]]; then
+        # output=${filename%.nc}_tmp.nc # try again
+        # [ -r $output ] && rm $output
+        ncl "filename=\"$filename\"" $repair 2>&1 | tee log.fix #2> /dev/null
+        nclcheck log.fix
+        [ $? -eq 0 ] && echo "Error: Failed." && exit 1
+      fi
     done
   done
 done
