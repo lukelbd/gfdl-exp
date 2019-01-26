@@ -82,8 +82,8 @@ cor = conform(u, 2*omega*sin(rlat), 2) ; Coriolis force
 ; pressure from hPa to Pa (divide by 0.01 or multiply by 100), and apply g
 ; NOTE: centered diff saves a lot of time! not perfectly accurate, but good
 ; enough, seriously.
-sigma = -center_finite_diff_n(p, 0.01*thlev*g, False, 0, 1) ; mass weighting
 ; sigma = -uneven_finite_diff_1(p, 0.01*thlev*g) ; my custom function for uneven spacing
+sigma = -center_finite_diff_n(p, 0.01*thlev*g, False, 0, 1) ; mass weighting
 sigma = where((sigma .lt. 0.0), 0.0, sigma) ; make sure sigma is never negative!
 sigma@long_name = "pseudo-density"
 sigma@units = "kg/m2*K"

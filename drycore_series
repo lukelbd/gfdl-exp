@@ -214,6 +214,12 @@ cp $bindir/mppnccombine.x ./ # location of executables
 #------------------------------------------------------------------------------#
 # Helper functions
 #------------------------------------------------------------------------------#
+# Error message for functions from which we want to capture stdout
+err() {
+  echo $@ 1>&2
+  exit 1
+}
+
 # Array membership
 array_in() {
   [[ " ${@:2} " =~ " ${1} " ]]
@@ -256,8 +262,7 @@ exp_name() {
   # Detect whether this is a 'base' experiment. Experiment series can
   # 'intersect' each other, and this ensures we aren't duplicating model runs
   if [ -n "$rparam1" ] && [ -n "$rparam2" ]; then
-    echo "Error: Cannot do 'diagonal' continuation experiments." 1>&2
-    exit 1
+    err "Error: Cannot do 'diagonal' continuation experiments."
   fi
   # This loop will be through only 1 or 2 params, since we enforce at least
   # rparam1 or rparam2 are empty. Idea is restarts should be taken from the
@@ -344,7 +349,7 @@ exp_name() {
 exp_setup() {
   # Parse the experiment name, figure out what needs to be written
   # The 'p values' are values specified in experiment name as pXXXpYYYpZZZ
-  unset kbl ktrop kstrat kmeso kdepth stratdamp delh exph
+  unset kbl ktrop kstrat kmeso kdepth kfric blopt stratdamp delh exph
   local nml_params nml_values p_values message
   local exp_name=$1
   exp_sweep=${exp_name#*_}
@@ -369,8 +374,16 @@ exp_setup() {
       fi
 
     # The equator-pole equilibrium difference
-    ;; tgrad) # temp gradient experiments
+    ;; tgrad*) # temp gradient experiments
       delh=${p_values[0]}
+      prefix=${exp_sweep%-*}
+      suffix=${exp_sweep#*-}
+      if [ $exp_sweep == "tgrad-tshift" ]; then
+        exph=${p_values[1]}
+        [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
+      elif [ $exp_sweep != "tgrad" ]; then
+        err "Error: Unknown sweep ${exp_sweep}."
+      fi
 
     # Perturb the equator-pole temp gradient
     ;; tshift)
@@ -389,20 +402,19 @@ exp_setup() {
       ktrop=-${p_values[0]}
       if [[ $exp_sweep =~ katmos[123]-kfric ]]; then
         kfric=-${p_values[1]} # diagaonal experiment
-        [ -z "$kfric" ] && echo "Error: Need second param for diagonal experiment." && exit 1
+        [ -z "$kfric" ] && err "Error: Need second param for diagonal experiment."
       elif [[ $exp_sweep =~ katmos[123]-tgrad ]]; then
         delh=${p_values[1]} # diagaonal experiment
-        [ -z "$delh" ] && echo "Error: Need second param for diagonal experiment." && exit 1
+        [ -z "$delh" ] && err "Error: Need second param for diagonal experiment."
       elif [[ $exp_sweep =~ katmos[123]-tshift ]]; then
         exph=${p_values[1]} # diagaonal experiment
-        [ -z "$exph" ] && echo "Error: Need second param for diagonal experiment." && exit 1
+        [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
       elif [ "$suffix" == anom ]; then
         ktrop="-40,$ktrop"
       elif [ "$suffix" == mean ]; then
         ktrop="$ktrop,-40"
       elif [ "$suffix" != fixed ] && [ "$suffix" != "$exp_sweep" ]; then
-        echo "Error: Unknown suffix option ${suffix}." 1>&2
-        exit 1
+        err "Error: Unknown sweep ${exp_sweep}."
       fi
       kstrat=$ktrop # if hs forcing, will not change anything
       kmeso=$ktrop
@@ -414,9 +426,7 @@ exp_setup() {
           [01]) ikbl=-4 ;; # hold boundary layer value constant
           2) ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at 10
           3) ikbl=-$(bc -l <<< "scale=3; (4^-1 + (${iktrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
-          *)
-            echo "Error: Unknown blopt ${blopt}." 1>&2
-            exit 1 ;;
+          *) err "Error: Unknown blopt ${blopt}." ;;
         esac
         kbl=$kbl,$ikbl # mean and anomaly components
       done
@@ -435,8 +445,7 @@ exp_setup() {
       kstrat=-${p_values[0]}
       kdepth=${p_values[1]} # param 2 is depth of transition region
       if [ -z "$kdepth" ]; then
-        echo "Error: Need to specify transition depth as second parameter." 1>&2
-        exit 1
+        err "Error: Need to specify transition depth as second parameter."
       fi
       stratdamp=${prefix##*[0-9]}
       if [ "$stratdamp" == 0 ]; then
@@ -444,8 +453,7 @@ exp_setup() {
       elif [ "$stratdamp" == 1 ]; then
         stratdamp=linear
       else
-        echo "Error: Unknown stratosphere damping option ${stratdamp}." 1>&2
-        exit 1
+        err "Error: Unknown stratosphere damping option ${stratdamp}."
       fi
       # Detect other options
       if [ "$suffix" == anom ]; then
@@ -455,13 +463,11 @@ exp_setup() {
       elif [ "$suffix" == mean ]; then
         kstrat="$kstrat,-40"
       elif [ -n "$suffix" ]; then
-        echo "Error: Unknown suffix option ${suffix}." 1>&2
-        exit 1
+        err "Error: Unknown suffix option ${suffix}."
       fi
 
     # Unknown
-    ;; *) echo "Error: Unknown experiment series \"$exp_sweep\"." 1>&2
-          exit 1
+    ;; *) err "Error: Unknown experiment series \"$exp_sweep\"."
   ;; esac
 
   #----------------------------------------------------------------------------#
@@ -485,8 +491,7 @@ exp_setup() {
     95)  nlat=144 ;; # for 36-core Cheyenne nodes
     106) nlat=160 ;;
     170) nlat=256 ;;
-    *) echo "Error: Invalid truncation number \"$ntrunc\"." 1>&2
-       exit 1 ;;
+    *) err "Error: Invalid truncation number \"$ntrunc\"." ;;
   esac
   nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
   nlon=$(($nlat * 2)) # always twice the res
@@ -498,8 +503,7 @@ exp_setup() {
     *e) coord=input;      nlev=60;        levels=$f90dir/levels_era.nml ;; # ERA-Interim coordinates
     *p) coord=pk_sigma;   nlev=${vert%p}; levels= ;;
     *s) coord=even_sigma; nlev=${vert%s}; levels= ;;
-    *) echo "Error: Unknown vertical coordinate identifier \"${vert}\"." 1>&2
-       exit 1 ;;
+    *) err "Error: Unknown vertical coordinate identifier \"${vert}\"." ;;
   esac
   array_add num_levels v$nlev vert_coord_option v\'$coord\'
 
@@ -523,29 +527,26 @@ exp_setup() {
   # Add forcing namelist
   nml_forcing=$f90dir/forcing_default.nml
   if [ ! -r "$nml_forcing" ]; then
-    echo "Error: File \"$nml_forcing\" not found." 2>&1
-    exit 1
+    err "Error: File \"$nml_forcing\" not found."
   fi
   cat $nml_forcing >>$nml # append that shit
   # Add coordinate namelist, potentially
   if [ -n "$levels" ]; then
     if ! [ -r "$levels" ]; then 
-      echo "Error: File \"$levels\" not found." 2>&1
-      exit 1
+      err "Error: File \"$levels\" not found."
     fi
     cat $levels >>$nml
   fi
   # Now loop through variables and assign them
   # Only modify the parameter sweep variables, resolution variables, and
   # timing variables. For others, just change in the namelist file directly.
-  [ ${#nml_params[@]} -ne ${#nml_values[@]} ] && echo "Error: One of the batch script namelist params is unset." && exit 1
+  [ ${#nml_params[@]} -ne ${#nml_values[@]} ] && err "Error: One of the batch script namelist params is unset."
   for i in $(seq 0 $((${#nml_params[@]}-1))); do
     key=${nml_params[$i]}
     val=${nml_values[$i]}
     [ -z "$key" ] && continue # e.g. stratosphere timescale should be empty
     if ! grep '^[ \t]*\b'${key}'\b' $nml &>/dev/null; then
-      echo "Error: Param \"${key}\" not found in namelist." 2>&1
-      exit 1
+      err "Error: Param \"${key}\" not found in namelist."
     fi
     space='\([ \t]*\)' # space atom; more readable to set it as a variable
     sed -i 's/^'"${space}${key}${space}"'='"${space}"'.*$/\1'${key}'\2=\3'${val}',/g' $nml
@@ -578,7 +579,8 @@ if [[ $sweep =~ base ]]; then
   params1=(na)
   params2=(na)
 elif [ -z "$params1" ]; then
-  echo "Error: You must define an array of parameters with e.g. --1=10,20,30" && exit 1
+  echo "Error: You must define an array of parameters with e.g. --1=10,20,30"
+  exit 1
 elif [ -z "$params2" ]; then
   case $sweep in
     katmos[123]-kfric|katmos[123]-tgrad|katmos[123]-tshift|kstrat[01])

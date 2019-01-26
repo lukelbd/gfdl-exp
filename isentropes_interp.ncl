@@ -6,7 +6,6 @@ qq = integertochar(34) ; a double quote; only way to put inside string! yuck.
 exists("filename")
 exists("outname")
 exists("forcing")
-exists("stratosphere")
 
 ; Read file
 ; print("filename")
@@ -14,6 +13,11 @@ exists("stratosphere")
 print("Reading data...")
 f = addfile(filename, "r") ; just read data from here
 time = f->time
+if .not. isvar("slice") then
+  time = f->time
+  slice = (/0, dimsizes(time)-1/)
+end if
+time := time(slice(0):slice(1))
 plev = f->plev
 lat  = f->lat
 latb = f->latb
@@ -42,8 +46,8 @@ thlev = array_append_record(array_append_record( \
   fspan(345.0, 380.0, 8), 0), \ ; every 5K
   fspan(400.0, 600.0, 11), 0) ; every 20K (really don't need much up here)
 ; thlev = array_append_record(fspan(260.0, 340.0, 41), fspan(350.0, 540.0, 20), 0)
-if stratosphere then ; add 50K resolution levels at top
-  thlev = array_append_record(thlev, fspan(650.0, 1500.0, 17), 0)
+if isvar(stratosphere) then ; add 50K resolution levels at top
+  thlev := array_append_record(thlev, fspan(650.0, 1500.0, 17), 0)
 end if
 ; Attributes
 thlev = thlev(::-1)
@@ -77,7 +81,7 @@ p0 = 1000.0 ; most common to make this the reference pressure
 Rd = 287.0
 kappa = 0.286
 ; Potential temp and pressure
-t = f->t
+t = f->t(slice(0):slice(1),:,:,:)
 pt = t*conform(t, (p0/plev)^kappa, 1) ; calculate potential temperature
 p = conform(t, plev, 1) ; only dimension 1 matches
 p@long_name = "pressure"
@@ -87,11 +91,16 @@ names = (/"p", "u", "v", "z", "tdt"/)
 print("Interpolating to isentropes...")
 do i=1,dimsizes(names)
   name = names(i-1)
-  if (name .eq. "z") then
+  ; Get variable
+  if (name .eq. "p") then
+    x = p
+  else if (name .eq. "t") then
+    x = t
+  else if (name .eq. "z") then
     ; Geopotential height using hypsometric equation
     ; NOTE: The mb cancel each other out, so don't need Pa
     ; NOTE: SLP is stored in Pa for some reason, must fix
-    slp = f->slp
+    slp = f->slp(slice(0):slice(1),:,:)
     np = dimsizes(plev)
     dp = 0.0*p
     dp(:,:np-2,:,:) = p(:,1:,:,:) - p(:,:np-2,:,:) ; pressure is *ascending* along axis
@@ -104,38 +113,25 @@ do i=1,dimsizes(names)
     delete(rho)
     delete(slp)
     timer(" * Time for geopotential and stuff")
-  else if (name .eq. "tdt") then
+  else if (name .eq. "tdt") .and. isvar("forcing") then
     ; Heating and damping terms (very important for isentropic coords)
-    ; NOTE: We here assume the damping rates may have been decomposed, apply
-    ; them separately. But makes no difference.
-    if .not. isvar("forcing")
-      x = f->tdt ; expect it to exist!
-    else
-      ; Load data
-      fc = addfile(forcing, "r")
-      teq = conform(t, fc->teq(0,:,:,:), (/1, 2, 3/)) ; conform singleton time dimension
-      n_mean = conform(t, fc->ndamp_mean(0,:,:,:), (/1, 2, 3/))
-      n_anom = conform(t, fc->ndamp_anom(0,:,:,:), (/1, 2, 3/))
-      ; Calculate diabatic terms
-      t_mean = conform(t, dim_avg_n(t, 3), (/0, 1, 2/))
-      x = -n_mean*(t_mean - teq) + -n_anom*(t - t_mean)
-      x@long_name = "diabatic heating"
-      x@units = "K/s"
-      delete(fc)
-      delete(teq)
-      delete(n_mean)
-      delete(n_anom)
-      timer(" * Time for getting diabatic terms")
+    ; Load data and apply Newtonian cooling
+    fc = addfile(forcing, "r")
+    teq = conform(t, fc->teq(0,:,:,:), (/1, 2, 3/)) ; conform singleton time dimension
+    n_mean = conform(t, fc->ndamp_mean(0,:,:,:), (/1, 2, 3/))
+    n_anom = conform(t, fc->ndamp_anom(0,:,:,:), (/1, 2, 3/))
+    if all(n_anom .eq. 0) then
+      print("Setting anomalous damping to mean damping")
+      n_anom = n_mean
     end if
-  else if (name .eq. "p") then
-    ; Is just tiled 'plev' vector
-    x = p
-  else if (name .eq. "t") then
-    ; Already loaded from disk!
-    x = t
+    t_mean = conform(t, dim_avg_n(t, 3), (/0, 1, 2/))
+    x = -n_mean*(t_mean - teq) + -n_anom*(t - t_mean)
+    x@long_name = "diabatic heating"
+    x@units = "K/s"
+    delete(fc)
+    timer(" * Time for getting diabatic terms")
   else
-    ; Load from disk
-    x = f->$name$
+    x = f->$name$(slice(0):slice(1),:,:,:) ; apparently this is actually valid syntax!
   end if end if end if end if
 
   ; Interpolate

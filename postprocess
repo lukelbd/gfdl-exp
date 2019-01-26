@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# Calculate stuff on the 'full' model output files by looping through experiment
+# directories. Generally use this for repairing stuff failed to get earlier.
+# Also gets spectral data (which we only want to save sometimes, due to
+# space constraints).
+# NOTE: For debugging/generating small spectral files use:
+# ncwa -O -d plev,500.0,600.0 -d lat,0.0,90.0 -a f,k spectral.nc tmp.nc
+# NOTE: To check status of isentropic files use:
+#  for d in hs*; do for f in $d/netcdf/*isen*; do echo ${d}; echo ${f#*.}; ncvardump thlev $f | xargs; ncvars $f | xargs; done; done
+# NOTE: Use 'y' (operation tYpe) to do arbitrary transformations with
+# ncwa, e.g. variance, sum, and stuff.
+# NOTE: To make sure average over longitudes/times equals average over
+# frequencies/wavenumbers use:
+# ncvardump t 2xdaily_inst_spectral.d0500-d0600.nc | xargs
+# ncvardump tvar 2xdaily_inst_full.d0500-d0600.nc | xargs
+#------------------------------------------------------------------------------#
+# Initial stuff
+shopt -s nullglob
+cwd=$(pwd)
+# qgpv_ncl=$cwd/qgpv.ncl
+spectral=false
+repair=false
+repair_isen=false
+isen=false
+cleanup=false
+spectra_py=$cwd/spectra.py
+repair_ncl=$cwd/repair.ncl
+repair_isen_ncl=$cwd/repair_isen.ncl
+isen_interp_ncl=$cwd/isentropes_interp.ncl
+isen_params_ncl=$cwd/isentropes_params.ncl
+while [ $# -gt 0 ]; do
+  case $1 in
+    -p=*|--pmax=*)     pmax=${1#*=}     ;;
+    -i|--isen)         isen=true        ;;
+    -s|--spectra*)     spectral=true    ;;
+    -c|--cleanup)      cleanup=true     ;;
+    -r|--repair)       repair=true      ;;
+    -ri|--repair-isen) repair_isen=true ;;
+    *) echo "Error: Unknown identifier \"$1\"." && exit 1 ;;
+  esac
+  shift
+done
+[ -z "$pmax" ] && echo "Error: Must specify parallelization." && exit 1
+
+# Files and experiment folders over which we iterate
+case ${HOSTNAME%%.*} in
+  monde*)    scratches=(/mdata1/ldavis /mdata2/ldavis) ;; # mdata1 has t42l20s
+  cheyenne*) scratches=/glade/scratch/davislu ;;
+  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+esac
+fname=2xdaily # ignore the 4xdaily files for the time being
+# globs=('hs_base*' 'hs_katmos?_*' 'hs_tgrad_*') # most important experiments
+# globs=('hs_base_t42l10s*') # for testing
+# globs=('hs_katmos?-tshift*') # fix unfinished run
+globs=('*tshift*' '*katmos[23]-tgrad*') # TODO: run this, not yet done
+globs=('hs_base*' 'hs_katmos?_*' 'hs_tgrad*' 'hs_tshift*' 'hs_katmos?-*' 'hs_tgrad-*')
+
+#------------------------------------------------------------------------------#
+# Helper functions
+#------------------------------------------------------------------------------#
+# Get first two numbers in a vector
+ncvardump() {
+  command ncdump -v "$1" "$2" | tac | egrep -m 1 -B100 "[[:space:]]$1[[:space:]]" \
+    | sed '1,1d' | tac | tr -dc '[ 0-9]' | xargs | cut -d' ' -f1-2
+}
+# Generally just check for contents of NetCDF file
+nclist() {
+  command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
+    | cut -d '(' -f 1 | sed 's/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs
+}
+ncdims() { # just dimensions and their numbers
+  command ncdump -h "$1" | sed -n '/dimensions:/,$p' | sed '/variables:/q'  | sed '1d;$d' \
+      | tr -d ';' | tr -s ' ' | column -t
+}
+ncin() {
+  nclist $1 | grep $2 &>/dev/null
+}
+# Check logs
+logcheck() { # WARNING: NCL adds '^M' before fatal: messages, so a search for ^fatal: will fail!
+  cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | grep -E "fatal:|Error" &>/dev/null
+  [ $? -ne 0 ] # so "success" is when the above grep fails, i.e. no fatal warning messages
+}
+# Background manager
+background() {
+  # Receives 2 args:
+  # 1) comma-separated list of pids
+  # 2) comma-separated list of lgos
+  # Wait, and run ncl check
+  pids=($(echo $1 | tr ',' ' ' | xargs))
+  logs=($(echo $2 | tr ',' ' ' | xargs))
+  npids=${#pids[@]}
+  t=$(date +%s) # time before waiting
+  for j in $(seq 1 $npids); do
+    wait ${pids[j-1]}
+    logcheck ${logs[j-1]}
+    [ $? -ne 0 ] && echo "Error: One of the processes failed. Crap." && exit 1
+  done
+  echo "Elapsed time: $(($(date +%s) - t))s."
+}
+
+#------------------------------------------------------------------------------#
+# Main functions
+#------------------------------------------------------------------------------#
+# 2D spectral decomposition
+spectra() {
+  echo ${spectral##*/}
+  stdbuf -oL -eL $spectra_py "$full" "$spectral"
+  return 0
+}
+
+# Run 'repair' files. Fucked up diabatic heating for a bunch of runs. Ugh.
+repair_parallel() {
+  # Message
+  local script full summary
+  script="$1"
+  full="$2"
+  summary="$3"
+  echo $script
+  echo ${full##*/}
+  echo ${summary##*/}
+  # nplev=$(ncdims $full | grep plev | awk '{print $3}')
+  # Loop through segments
+  unset rlogs rpids
+  rm tmp.*.nc 2>/dev/null # make sure already removed!
+  nt=$(ncdims $full | grep time | cut -d'(' -f2 | cut -d' ' -f1) # hard due to UNLIMITED thing
+  lprefix=${script##*/}
+  lprefix=${lprefix%.ncl}
+  for ii in $(seq 1 $pmax); do
+    # NCL times
+    t1=$(((ii - 1)*nt/pmax)) # e.g. pmax=10, nt=200, goes 0, 20, 40, 60
+    t2=$((ii*nt/pmax - 1)) # e.g. pmax=10, nt=200, goes 19, 39, 59
+    rlog=logs/${lprefix}${ii}.log
+    echo "Log file: log $rlog"
+    {
+      ncl -n -Q "slice=(/$t1,$t2/)" "out=\"tmp.${ii}.nc\"" \
+        "full=\"$full\"" "forcing=\"${full%/*}/../forcing.nc\"" $script
+    } &>$rlog &
+    rpids+=",$!"
+    rlogs+=",$rlog"
+  done
+  # Wait
+  background $rpids $rlogs
+  # Merge summaries
+  t=$(date +%s)
+  tmps=(tmp.*.nc)
+  if [ ${#tmps[@]} -eq 0 ]; then
+    echo "No files created."
+  else
+    echo "Merging to ${summary##*/}."
+    ncrcat -O ${tmps[@]} tmp.nc
+    ncks --no-abc -A tmp.nc $summary # overwrite old values
+    # Keep full files if after day 5000, because why not
+    rm tmp*.nc 2>/dev/null
+    echo "Elapsed time: $(($(date +%s) - t))s."
+  fi
+}
+
+# Isentropic interpolation and summary statistics
+isen_parallel() {
+  # Message
+  echo ${full_isen##*/}
+  echo ${summary_isen##*/}
+  # Loop through segments
+  unset ilogs ipids
+  rm full.*.nc isen1.*.nc isen2.*.nc 2>/dev/null # make sure deleted
+  nt=$(ncdims $full | grep time | cut -d'(' -f2 | cut -d' ' -f1) # hard due to UNLIMITED thing
+  # nplev=$(ncdims $full | grep plev | awk '{print $3}')
+  for ii in $(seq 1 $pmax); do
+    # NCL times
+    # NOTE: Pass stratosphere=1 for stratosphere layers
+    t1=$(((ii - 1)*nt/pmax)) # e.g. pmax=10, nt=200, goes 0, 20, 40, 60
+    t2=$((ii*nt/pmax - 1)) # e.g. pmax=10, nt=200, goes 19, 39, 59
+    ilog=logs/isen${ii}.log
+    {
+      ncl -n -Q "forcing=\"${full%/*}/../forcing.nc\"" \
+        "slice=(/$t1,$t2/)" "filename=\"${full}\"" "outname=\"isen1.${ii}.nc\"" \
+        $isen_interp_ncl
+      ncl -n -Q "filename=\"isen1.${ii}.nc\"" "outname=\"isen2.${ii}.nc\"" \
+        $isen_params_ncl
+    } &>$ilog &
+    ipids+=",$!"
+    ilogs+=",$ilog"
+  done
+  # Wait
+  background $ipids $ilogs
+  # Merge summaries
+  t=$(date +%s)
+  echo "Merging ${summary_isen##*/}."
+  ncrcat -O isen2.*.nc $summary_isen
+  # Keep full files if after day 5000, because why not
+  if [[ "$full_isen" =~ d5[01]00-d[12]00 ]]; then
+    echo "Merging ${full_isen##*/}."
+    ncrcat -O isen1.*.nc $full_isen
+  fi
+  rm full.*.nc isen1.*.nc isen2.*.nc 2>/dev/null
+  echo "Elapsed time: $(($(date +%s) - t))s."
+}
+
+#------------------------------------------------------------------------------#
+# Iterate through experiment folders
+#------------------------------------------------------------------------------#
+for scratch in "${scratches[@]}"; do
+  subfolders=($scratch/. $scratch/timescales-*) # subfolders contain some older experiment series
+  for subfolder in ${subfolders[@]}; do
+    for glob in "${globs[@]}"; do
+      for dir in $subfolder/$glob; do
+        # Folder
+        echo
+        echo "Dir: ${dir##*/}"
+        unset filename
+        t=$(date +%s)
+        filenames=($dir/netcdf/$fname*full.d????-d????.nc)
+        [ ${#filenames[@]} -eq 0 ] && echo "Warning: No files found." && continue
+
+        # Loop through files, try to parallelize because very slow
+        for full in ${filenames[@]}; do
+          # Input file names
+          let i+=1
+          dir=${full%/*}
+          summary=${full/full/summary} # YZ file
+          full_base=${full##*/} # XYZ file
+          summary_base=${summary##*/} # XYZ file
+
+          # Names for output files
+          # full_qgpv=${full/full/qgpv} # file that only stores 2D QGPV
+          prefix=${full_base%%.*}
+          suffix=${full_base#*.}
+          full_isen=${dir}/${prefix}_isen.${suffix}
+          full_spectral=${full/full/spectral}
+          prefix=${summary_base%%.*}
+          suffix=${summary_base#*.}
+          summary_isen=${dir}/${prefix}_isen.${suffix}
+
+          # Cleanup
+          # Remove the screwed up attempts at PV calculation
+          if $cleanup; then
+            if ncin $summary qgpv; then
+              t=$(date +%s)
+              echo "Cleanup: ${summary##*/}"
+              ncks --no-abc -O -x -v qgpv,eqgpvf,qgpvvar,pv,epvf,pvvar $summary $summary
+              echo "Elapsed time: $(($(date +%s) - t))s."
+            fi
+            if ncin $full_spectral qgpv; then
+              echo "Cleanup: ${full_spectral##*/}"
+              t=$(date +%s)
+              ncks --no-abc -O -x -v qgpv,eqgpvf,pv,epvf $full_spectral $full_spectral
+              echo "Elapsed time: $(($(date +%s) - t))s."
+            fi
+          fi
+
+          # Isentropic coords
+          # if $isen && { ! [ -r $summary_isen ] || ! ncin $summary_isen stress; }; then
+          if $isen; then
+            isen_parallel
+          fi
+          # Fix screwed up data
+          if $repair; then
+            repair_parallel $repair_ncl $full $summary
+          fi
+          if $repair_isen; then
+            nums=($(ncvardump thlev $summary_isen))
+            if [[ ${nums[0]} -lt ${nums[1]} ]]; then
+              echo thlev: ${nums[@]}
+              repair_parallel $repair_isen_ncl $full $summary_isen
+            fi
+          fi
+
+          # Spectra (the isen() function can be parallelized in same way)
+          # TODO: Parallelize on pressure levels maybe
+          if $spectral && { ! [ -r $full_spectral ] || ! ncin $full_spectral ehf; }; then
+            [ -z "$is" ] && is=1 # start loop
+            slog=logs/spectra${is}.log
+            spectra 2>&1 | tee $slog &
+            spids+=",$!"
+            slogs+=",$slog"
+            let is+=1
+            if [ $is -gt $pmax ]; then
+              background $spids $slogs
+              unset spids slogs
+              is=1
+            fi
+          fi
+        done
+      done
+    done
+  done
+done
+echo
+

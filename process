@@ -129,7 +129,7 @@ params() {
   t=$(date +%s)
   echo "Getting other params..."
   [ -r "$output" ] && rm "$output"
-  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" "suffix=\"$suffix\"" $process &>$log
+  ncl -n -Q "filename=\"$filename\"" "output=\"$output\"" "means=\"means.$suffix\"" $process &>$log
   if nclcheck $log; then
     echo "Error: Something failed while getting other params." && exit 4
   fi

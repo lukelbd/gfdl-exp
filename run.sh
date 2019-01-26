@@ -30,35 +30,45 @@
 # Repair
 #------------------------------------------------------------------------------#
 # Fix base expeirment (60), and some messed up tgrad ones
+# TODO: Run these
 # NOTE: The 100K experiment starts at 1200 days, will need to re-run isentropic
 # interpolation and spectral transform fun on that one.
-# Need to finish last 1300 days
-./drycore_series -dt=1200 -c=8 -d=100 -ts=4200 \
-  -te=5500 -kts=500 -kte=5500 --1=40 \
-  hs_tgrad_t42l20s
-# First 1200 days messed up
-./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
-  -te=1200 -kts=500 -kte=5500 --1=100 \
-  hs_tgrad_t42l20s
-# First 500 days messed up
-./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
-  -te=500 -kts=500 -kte=5500 --1=80
-  hs_tgrad_t42l20s
+# # Need to finish last 1300 days
+# ./drycore_series -dt=1200 -c=8 -d=100 -ts=4200 \
+#   -te=5500 -kts=500 -kte=5500 --1=40 \
+#   hs_tgrad_t42l20s
+# # First 1200 days messed up
+# ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
+#   -te=1200 -kts=500 -kte=5500 --1=100 \
+#   hs_tgrad_t42l20s
+# # First 500 days messed up
+# ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
+#   -te=500 -kts=500 -kte=5500 --1=80
+#   hs_tgrad_t42l20s
 
 #------------------------------------------------------------------------------#
 # New series
 #------------------------------------------------------------------------------#
-# # Run tshift experiments for base state (originals failed)
-# ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
+# Run tshift experiments for base state (originals failed)
+# ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
 #   -te=5500 -kts=500 -kte=5500 --1=-2,2 \
 #   hs_tshift_t42l10s
-# # And run for gradient shift experiments for different absolute equilibrium
-# # temp differences
-# ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
+
+# And run for gradient shift experiments for different absolute equilibrium
+# temp differences
+# ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
 #   -te=5500 -kts=500 -kte=5500 \
 #   --1=20,60,100,140 --2=-2,2 \
 #   hs_tgrad-tshift_t42l10s
-# ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
+# ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
 #   -te=5500 -kts=500 -kte=5500 \
 #   --1=40,80,120,160 --2=-2,2 \
 #   hs_tgrad-tshift_t42l10s
+
+# Run 'global warming' experiments
+# Changing temperature gradient with different damping rate environments
+./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
+  -te=5500 -kts=500 -kte=5500 \
+  --1=4,40:400 --2=20,40,60,80,100,120,140,160 \
+  hs_katmos2-tgrad_t42l20s
+  # --1=4,40:400 --2=30,60,90,120,150 \

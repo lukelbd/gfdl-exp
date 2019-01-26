@@ -3,6 +3,8 @@
 # Interpolate from frequency-wavenumber space to phase speed-wavenumber
 # space, using python script. We do this on data that has already been
 # averaged in time.
+# NOTE: Now do this at the same time as getting spectral means in
+# the mergedays function.
 #------------------------------------------------------------------------------#
 # Patterns
 shopt -s nullglob
