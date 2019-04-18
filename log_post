@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 shopt -s nullglob
-
+#------------------------------------------------------------------------------#
 # Show files currently available
+#------------------------------------------------------------------------------#
 log=${0}.log
 root=~/data/timescales
 prefix=2xdaily

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-#------------------------------------------------------------------------------#
+################################################################################
 # NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
 # dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
 # to logarithmically sweep space. Existing directories have been moved to their
 # closest values in this new spacing. White lie, but probably insignificant differences.
-#------------------------------------------------------------------------------#
+################################################################################
 # Processes files in directories matching some glob pattern
 shopt -s nullglob
 cwd=$(pwd)
 dryrun=false
 runmode=0 # 0 is control run, the rest are different spindown modes:
 filename=2xdaily_inst
-merge=$cwd/mergedays
+merge=$cwd/post_run
 $dryrun && merge="echo $merge"
 
 # Stuff to retrieve
@@ -34,19 +34,20 @@ esac
 ! [ -d $storage ] && mkdir $storage
 storage="$storage/timescales" # put in this subdirectory
 ! [ -d $storage ] && mkdir $storage
-flags="$flags -m=$runmode -s1=$spin_start -s2=$spin_end -c1=$climo_start -c2=$climo_end"
+# Defaults
+[[ "$flags" =~ "-m" ]]  || flags="$flags -m=$runmode"
+[[ "$flags" =~ "-s1" ]] || flags="$flags -s1=$spin_start"
+[[ "$flags" =~ "-s2" ]] || flags="$flags -s2=$spin_end"
+[[ "$flags" =~ "-c1" ]] || flags="$flags -c1=$climo_start"
+[[ "$flags" =~ "-c2" ]] || flags="$flags -c2=$climo_end"
+echo "Using flags: $flags"
+sleep 3
 
 # Parallel
-pmax=1
-# globs=('hs_tshift*') # forgot about this one
 # TODO: isentropic stuff for katmos?- experiments! skipped it because too much load on server
+pmax=1
 globs=('hs_base*' 'hs_katmos?_*' 'hs_katmos?-m*' 'hs_tgrad_*' 'h_katmos?-a*' 'hs_tshift*' 'hs_tgrad-*' 'hs_katmos?-t*') # everything
-# globs=('hs_base_t42l20s*' 'hs_katmos2_t42l20s*' 'hs_tgrad_t42l20s*') # TODO: spectral and EOFs!
-# globs=('hs_base_t42l20s*') # TODO: spectral and EOFs!
-# globs=('hs_katmos2_t42l20s_p0020.000*') # repair spectral data!
-# globs=('hs_tgrad_t42l20s_p0040.000*') # repair climate data!
-# globs=('hs_katmos2-mean_t42l20s_p0400.000*') # repair climate data!
-globs=('hs_tgrad_t42l20s_p0140.000*') # repair spectral data
+globs=('hs_tgrad[12]_t42l20s*') # tgrad updates
 # Iterate
 # NOTE: May get 'different parameter names' cdo warnings; this generally means
 # the order of parameters or something is different, and cdo has to shuffle
@@ -54,7 +55,7 @@ globs=('hs_tgrad_t42l20s_p0140.000*') # repair spectral data
 t=$(date +%s)
 counter=0
 for scratch in ${scratches[@]}; do
-  subfolders=($scratch/. $scratch/timescales-*) # subfolders contain some older experiment series
+  subfolders=($scratch $scratch/timescales-*) # subfolders contain some older experiment series
   for subfolder in ${subfolders[@]}; do
     for glob in "${globs[@]}"; do
       unset folder

@@ -2,9 +2,9 @@
 #------------------------------------------------------------------------------#
 # Use this file to check contents of files, echo names of ones where
 # certain variable name is not found.
+#------------------------------------------------------------------------------#
 # Uses copy of function found in .bashrc
 # NOTE: Uses hash tables, so requires bash 4+!
-#------------------------------------------------------------------------------#
 # Hostname
 case ${HOSTNAME%%.*} in
   monde)

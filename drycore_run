@@ -38,15 +38,15 @@ interp=$cwd/pressure_interp.ncl # for forcing data
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
-    -n|--new)         new=true ;;    # use this to *exit* if experiment folder already exists
-    -r|--resume)      resume=true ;; # use this to *autodetect* last day of existing run, continue from there
-    -fc|--forcing)    forcing=true ;;   # *only* save forcing scheme data to file?
-    -f|--fix)         fix=true ;;
-    -ss|--slow-start) slowstart=true ;;
-    -ts=*|--tstart=*) tstart=${1#*=} ;; # use this to continue from *particular* day of existing run
-    -te=*|--tend=*)   tend=${1#*=} ;;   # ending day
-    -c=*|--cores=*)   cores=${1#*=} ;;
-    -m=*|--mode=*)    mode=${1#*=} ;;   # 0 is control, 1 is spindown, 2...
+    -n|--new)          new=true ;;    # use this to *exit* if experiment folder already exists
+    -r|--resume)       resume=true ;; # use this to *autodetect* last day of existing run, continue from there
+    -fc|--forcing)     forcing=true ;;   # *only* save forcing scheme data to file?
+    -f|--fix)          fix=true ;;
+    -ss|--slow-start)  slowstart=true ;;
+    -ts=*|--tstart=*)  tstart=${1#*=} ;; # use this to continue from *particular* day of existing run
+    -te=*|--tend=*)    tend=${1#*=} ;;   # ending day
+    -c=*|--cores=*)    cores=${1#*=} ;;
+    -m=*|--mode=*)     mode=${1#*=} ;;   # 0 is control, 1 is spindown, 2...
     -p=*|--process=*)  pflags_global="${1#*=}" ;; # flags for processing script
     -rd=*|--restart=*) rdir_override=${1#*=} ;;   # manual override restart directory
     -ds=*|--days-spindown=*)  t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
@@ -90,7 +90,7 @@ nml_parse() {
 }
 # Replace namelist value for a *local* spindown experiment
 nml_replace() { # first argument is param name, second argument is value
-  quiet=false
+  local quiet=false
   while [ $# -gt 0 ]; do
     case "$1" in
       -q) quiet=true; shift; continue ;;

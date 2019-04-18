@@ -55,8 +55,8 @@ timer(" * Time for reading data")
 if (dimsizes(dimsizes(slp)) .gt. 1) then
   slp := conform(p, slp, (/0, 2, 3/)) ; got 3D variable for slp
 end if
-p = where(ismissing(p) .or. (p .gt. slp), slp, p)
-z = where(ismissing(z) .or. (z .lt. 0.0), 0.0, z)
+p = where((ismissing(p) .or. (p .gt. slp)), slp, p)
+z = where((ismissing(z) .or. (z .lt. 0.0)), 0.0, z)
 ; Fix u, v, and tdt
 ; NOTE: Since these only appear in mass-weighted averages, can simply set
 ; missing values to zero!
@@ -89,6 +89,7 @@ sigma = -center_finite_diff_n(p, 0.01*thlev*g, False, 0, 1) ; mass weighting
 sigma = where((sigma .lt. 0.0), 0.0, sigma) ; make sure sigma is never negative!
 sigma@long_name = "pseudo-density"
 sigma@units = "kg/m2*K"
+filter = (sigma .eq. 0.0) ; use this later on
 ; Zonal mean
 sigma_bar = dim_avg_n(sigma, 3)
 copy_VarAtts(sigma, sigma_bar)
@@ -98,19 +99,16 @@ timer(" * Time for sigma calculation")
 ; NOTE: In layers *entirely* beneath surface for the whole latitude band, will
 ; get sigma bar exactly zero. Also means sigma is zero, so numerator will be
 ; zero -- therefore, just fill with a dummy number.
-sigma_bar = where((sigma_bar .eq. 0.0), 1.0, sigma_bar)
+filter_bar = (sigma_bar .eq. 0.0)
+sigma_bar = where(filter_bar, 1.0, sigma_bar)
 
 ; Potential vorticity (very simple on isentropes)
 ; NOTE: Cannot use Gaussian or Fixed grid global algorithms, because they don't
 ; allow for missing values. Must use centered finite diff one instead.
-; NOTE: Inverse sigma spells trouble. Idea is, PV fluxes don't matter near surface,
-; so we ignore in the bottom 10% of atmosphere, where we are also likely to get
-; very small but non-zero sigma due to pressures very close to surface pressure.
+; NOTE: PV is (cor + vor)/sigma, but we will only save sigma-weighted zonal
+; mean and sigma-weighted flux, so don't divide!
 vor = uv2vr_cfd(u, v, lat, lon, 3) ; 3 indicates cyclic longitudes, and we want 1-sided differentiation at lat boundaries
-filter = ((p .ge. 900.0) .or. (sigma .eq. 0.0))
-denom = where(filter, 1.0, sigma)
-pv = (cor + vor)/denom ; for some reason cannot put this formula directly as 3rd argument in where(), get divide by zero error
-pv = where(filter, 0.0, pv)
+pv = (cor + vor)
 pv@long_name = "potential vorticity"
 pv@units = "K*m2/s*kg"
 timer(" * Time for vorticity")
@@ -139,29 +137,29 @@ timer(" * Time for surface theta")
 ;------------------------------------------------------------------------------;
 ; Means
 ;------------------------------------------------------------------------------;
-; Save a bunch of zonal means
-vars = [/p, u, v, z, pv, tdt/]
-names = (/"p", "u", "v", "z", "pv", "tdt"/)
-do i=0,ListCount(vars)-1
-  ; Calculate mass-weighted mean
-  name := names(i)
-  var_bar = dim_avg_n(vars[i]*sigma, 3)/sigma_bar
-  copy_VarAtts(vars[i], var_bar)
-  o->$name$ = fix_coords(p, var_bar)
-  ; Keep a few for calculating fluxes
-  if (name .eq. "pv") then
-    pv_bar = var_bar
-  else if (name .eq. "u") then
-    u_bar = var_bar
-  else if (name .eq. "v") then
-    v_bar = var_bar
-  else if (name .eq. "tdt") then
-    tdt_bar = var_bar
-  end if end if end if end if
-  ; NOTE: When you use assignment operator, you make a copy! So the following
-  ; doesn't delete those saved values.
-  delete(var_bar)
-end do
+; Weighted means
+tdt_bar = dim_avg_n(tdt*sigma, 3)/sigma_bar
+p_bar = dim_avg_n(p*sigma, 3)/sigma_bar
+u_bar = dim_avg_n(u*sigma, 3)/sigma_bar
+v_bar = dim_avg_n(v*sigma, 3)/sigma_bar
+z_bar = dim_avg_n(z*sigma, 3)/sigma_bar
+pv_bar = dim_avg_n(pv, 3)/sigma_bar
+pv_bar = where(filter_bar, 0.0, pv_bar)
+; Save files and copy attrs
+copy_VarAtts(tdt, tdt_bar)
+copy_VarAtts(p, p_bar)
+copy_VarAtts(u, u_bar)
+copy_VarAtts(v, v_bar)
+copy_VarAtts(z, z_bar)
+copy_VarAtts(pv, pv_bar)
+o->tdt = fix_coords(p, tdt_bar)
+o->p = fix_coords(p, p_bar)
+o->u = fix_coords(p, u_bar)
+o->v = fix_coords(p, v_bar)
+o->z = fix_coords(p, z_bar)
+o->pv = fix_coords(p, pv_bar)
+delete(z_bar)
+delete(p_bar)
 timer(" * Time for zonal means")
 
 ; The wind variance
@@ -182,17 +180,23 @@ vvar@units = "m2/s2"
 o->vvar = fix_coords(p, vvar)
 delete(vvar)
 ; The eddy potential vorticity variance
+; NOTE: Try to avoid divide by zero errors here
 pv_star = pv - conform(pv, pv_bar, (/0, 1, 2/))
-delete(pv)
-pvvar = dim_avg_n(sigma*(pv_star^2), 3)/sigma_bar
+denom = where(filter, 1.0, sigma)
+pvvar  = (pv_star^2)/denom
+pvvar  = where(filter, 0.0, pvvar)
+pvvar := dim_avg_n(pvvar, 3)/sigma_bar
 pvvar@long_name = "eddy potential vorticity variance"
 pvvar@units = "K2*m4/s2*kg2"
 o->pvvar = fix_coords(p, pvvar)
+delete(pv)
 delete(pvvar)
 timer(" * Time for eddy variances")
 
 ; The potential vorticity flux
-epvf = dim_avg_n(sigma*v_star*pv_star, 3)/sigma_bar
+; NOTE: The inverse sigma in PV cancels here
+epvf = dim_avg_n(v_star*pv_star, 3)/sigma_bar
+epvf = where(filter_bar, 0.0, epvf)
 epvf@long_name = "eddy potential vorticity flux"
 epvf@units = "K*m3/s2*kg"
 o->epvf = fix_coords(p, epvf)

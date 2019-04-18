@@ -31,7 +31,7 @@ echo
 cwd=$(pwd)
 unset series
 prefix=2xdaily_inst # then there are _full, _summary, _summary_isen, _full_isen, and _spectral
-log=$cwd/${0##*/}.log
+log=$cwd/${0##*log_}.log
 echo $log
 eday=5500
 rm $log 2>/dev/null

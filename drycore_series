@@ -14,7 +14,7 @@ Force specification:
   hs,pk,dbt - Held-Suarez 1994, Polvani-Kushner 2004, or Davis, Birner, and Thompson (TBD) parameterization
 
 Sweep specifications:
-     base               just run forcing scheme with default settings, once
+     base[12]           just run forcing scheme with default settings, once
      katmos[123]        change tropospheric damping; number is boundary layer option
      kstrat[01]         change stratospheric damping; number if troposphere-stratosphere damping transition option
      kfric              change friction
@@ -85,8 +85,8 @@ queue=economy
 outfreq=12      # every 6
 frequnits=hours # hours
 filename=2xdaily_inst # name for output files
-ktstart=3500 # first day we keep XYZ data (can't keep all, too much data)
-ktend=5500 # last day we keep XYZ data
+ktstart=1 # first day we keep XYZ data (can't keep all, too much data)
+ktend=0 # last day we keep XYZ data
 # Test settings
 testmode=false
 testname=test # default name of directory
@@ -105,7 +105,7 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     -h|--help) echo "$doc" && exit 0 ;;
     -t|--test) testmode=true ;;
     -d|--dryrun) dryrun=true ;; # just print function calls?
-    -dt=*|--timestep=*) dt=${1#*=} ;;
+    -dt=*|--timestep=2*) dt=${1#*=} ;;
     -d=*|--days=*)      days=${1#*=} ;;
     -ts=*|--tstart=*)   tstart=${1#*=} ;; # model start time?
     -te=*|--tend=*)     tend=${1#*=} ;;
@@ -128,9 +128,8 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
 done
 # Default experiment series
 if [ -z "$series_name" ]; then
-  echo "Warning: No experiment name specified. Running default experiment hs_base_t42l40s."
-  sleep 5 # give user time to cancel
-  series_name='hs_base_t42l40s'
+  echo "Warning: No experiment name specified. Running default experiment hs_base2_t42l20s."
+  series_name='hs_base2_t42l20s'
 fi
 # Parse experiment series name
 # Also echo the critical parallelization info
@@ -145,7 +144,7 @@ reso="${reso%%_*}"
 # Run really fast test run
 if $testmode; then
   unset flags_global # no resume or new days
-  # rdir="${force}_base_t95l60e" # override previous directory
+  # rdir="${force}_base2_t95l60e" # override previous directory
   # rdays=d0450-d0500 # set restart directory days (leave empty to just use the last subfolder in directory)
   # pflags+=" -d" # don't move/delete anything; also implies flags="--keep-xyz "
   outfreq=12
@@ -179,7 +178,7 @@ case ${HOSTNAME%%.*} in
     storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
   ;; monde)
     case $reso in
-      t42l10s) scratch=/mdata2/ldavis ;;
+      # t42l20s) scratch=/mdata2/ldavis ;;
       t42l20s) scratch=/mdata1/ldavis ;;
       *) echo "Error: Unknown scratch destination for experiment with resolution ${reso}." ;;
     esac
@@ -267,52 +266,57 @@ exp_name() {
       fi
       # Get experiment sweep name, *ensuring that we avoid duplicating runs
       # by deferring to different names when possible*
+      # TODO: Add to these.
       opt=${sweep_in%-*}
       opt=${opt##*[a-z]} # get the option
       sweep_out=$sweep_in # by default, will be same
       case $sweep_in in
         # 1D paramter sweeps
-        katmos[123])
-          [[ $p1 == 40 ]] && sweep_out=base p1=
+        # NOTE: The fixed experiments and katmos1 experiments do not
+        # have the same 'base'.
+        base[12])
+          sweep_out=$sweep_in p1= p2=
+          ;;
+        katmos[123]|katmos[123]-mean|katmos[123]-anom)
+          [[ $p1 == 40 ]] && sweep_out=base${opt} p1=
           ;; # base is 40 day zonal-mean or anomaly damping
-        katmos[123]-fixed)
-          [[ $p1 == 40 ]] && sweep_out=base-fixed p1=
-          ;; # no 'base' because background damping always huge
-        tgrad)
-          [[ $p1 == 60 ]] && sweep_out=base p1=
+        tgrad[12])
+          [[ $p1 == 60 ]] && sweep_out=base${opt} p1=
           ;; # base is 60K contrast
-        tshift)
-          [[ $p1 == 0 ]] && sweep_out=base p1=
+        tshift[12])
+          [[ $p1 == 0 ]] && sweep_out=base${opt} p1=
           ;; # zero just means no shift
-        kfric)
-          [[ $p1 == 1  ]] && sweep_out=base p1=
+        kfric[12])
+          [[ $p1 == 1  ]] && sweep_out=base${opt} p1=
           ;;
-        kstrat[01])
-          [[ $p1 == 40 ]] && sweep_out=base p1=
-          ;;
+        kstrat[12])
+          [[ $p1 == 40 ]] && sweep_out=base2 p1=
+          ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
         # 2D paameter spaces
         katmos[123]-tgrad)
-          [[ $p1 == 40 && $p2 == 60 ]] && sweep_out=base p1= p2=
-          [[ $p1 == 40 ]] && sweep_out=tgrad p1=$p2 p2=
-          [[ $p2 == 60 ]] && sweep_out=katmos$opt p2=
+          num=${sweep_in#katmos}
+          num=${sweep_in%-*}
+          [[ $p1 == 40 && $p2 == 60 ]] && sweep_out=base${opt} p1= p2=
+          [[ $p1 == 40 ]] && sweep_out=tgrad${opt} p1=$p2 p2=
+          [[ $p2 == 60 ]] && sweep_out=katmos${opt} p2=
           ;;
         katmos[123]-tshift)
-          [[ $p1 == 40 && $p2 == 0 ]] && sweep_out=base p1= p2=
+          [[ $p1 == 40 && $p2 == 0 ]] && sweep_out=base${opt} p1= p2=
           [[ $p1 == 40 ]] && sweep_out=tshift p1=$p2 p2=
-          [[ $p2 == 0 ]] && sweep_out=katmos$opt p2=
+          [[ $p2 == 0 ]] && sweep_out=katmos${opt} p2=
           ;;
         tgrad-tshift)
-          [[ $p1 == 60 && $p2 == 0 ]] && sweep_out=base p1= p2=
+          [[ $p1 == 60 && $p2 == 0 ]] && sweep_out=base${opt} p1= p2=
           [[ $p1 == 60 ]] && sweep_out=tshift p1=$p2 p2=
           [[ $p2 == 0 ]] && sweep_out=tgrad p2=
           ;;
         katmos[123]-kfric)
-          [[ $p1 == 40 && $p2 == 1 ]] && sweep_out=base p1= p2=
-          [[ $p1 == 40 ]] && sweep_out=kfric p1=$p2 p2=
-          [[ $p2 == 1 ]] && sweep_out=katmos$opt p2=
+          [[ $p1 == 40 && $p2 == 1 ]] && sweep_out=base${opt} p1= p2=
+          [[ $p1 == 40 ]] && sweep_out=kfric${opt} p1=$p2 p2=
+          [[ $p2 == 1 ]] && sweep_out=katmos${opt} p2=
           ;;
         *)
-          err "Error: Unknwon experiment \"${sweep_in}\"."
+          err "Error: Unknown experiment \"${sweep_in}\"."
           ;;
       esac
       [ "$p1" == na ] && unset p1
@@ -333,12 +337,12 @@ exp_name() {
 exp_setup() {
   # Parse the experiment name, figure out what needs to be written
   # The 'p values' are values specified in experiment name as pXXXpYYYpZZZ
-  unset kbl ktrop kstrat kmeso kdepth kfric blopt stratdamp delh exph
-  local nml_params nml_values p_values message
+  unset kbl ktrop kstrat kmeso kdepth kfric blopt damp delh exph
+  unset nml_params nml_values p_values message
   local exp_name=$1
   exp_sweep=${exp_name#*_}
   exp_sweep=${exp_sweep%%_*}
-  if ! [ $exp_sweep == base ]; then
+  if [[ "$exp_name" =~ _p[0-1] ]]; then # i.e. has param values on end
     p_values=${exp_name##*_}
     p_values=${p_values%c}
     p_values=($(echo $p_values | tr -t p ' ' | xargs printf "%.3f "))
@@ -348,66 +352,47 @@ exp_setup() {
   #----------------------------------------------------------------------------#
   # Add to this as you design new experiment series
   #----------------------------------------------------------------------------#
-  fixed="-0.1" # timescale used to 'fix' temperature field; difficult to prevent model blowup!
   case $exp_sweep in
     # Base
-    base*)
-      if [[ $exp_sweep =~ -fixed$ ]]; then
-        ktrop="$fixed,-40"
-        kbl="$fixed,-4"
-      fi
-
-    # The equator-pole equilibrium difference
-    ;; tgrad*) # temp gradient experiments
-      delh=${p_values[0]}
-      prefix=${exp_sweep%-*}
-      suffix=${exp_sweep#*-}
-      if [ $exp_sweep == "tgrad-tshift" ]; then
-        exph=${p_values[1]}
-        [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
-      elif [ $exp_sweep != "tgrad" ]; then
-        err "Error: Unknown sweep ${exp_sweep}."
-      fi
-
-    # Perturb the equator-pole temp gradient
-    ;; tshift)
-      exph=${p_values[0]}
+    base1)
+      kbl=-40
+    ;; base2)
 
     # Friction
-    ;; kfric) # friction experiments
+    ;; kfric[12]*) # friction experiments
       kfric=-${p_values[0]}
 
     # Damp full atmosphere
     # Also includes diagonal experiments where multiple params changed
     ;; katmos[123]*)
-      # First set mean and anomaly components of troposphere damping
+      # Check experiments with 'dash' in name, make sure enough params were
+      # specified or set the other param ourselves.
       prefix=${exp_sweep%-*}
       suffix=${exp_sweep#*-}
       ktrop=-${p_values[0]}
-      if [[ $exp_sweep =~ katmos[123]-kfric ]]; then
+      if [ "$suffix" == kfric ]; then
         kfric=-${p_values[1]} # diagaonal experiment
         [ -z "$kfric" ] && err "Error: Need second param for diagonal experiment."
-      elif [[ $exp_sweep =~ katmos[123]-tgrad ]]; then
+      elif [ "$suffix" == tgrad ]; then
         delh=${p_values[1]} # diagaonal experiment
         [ -z "$delh" ] && err "Error: Need second param for diagonal experiment."
-      elif [[ $exp_sweep =~ katmos[123]-tshift ]]; then
+      elif [ "$suffix" == tshift ]; then
         exph=${p_values[1]} # diagaonal experiment
         [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
       elif [ "$suffix" == anom ]; then
-        ktrop="-40,$ktrop"
+        ktrop=-40,$ktrop
       elif [ "$suffix" == mean ]; then
-        ktrop="$ktrop,-40"
-      elif [ "$suffix" != fixed ] && [ "$suffix" != "$exp_sweep" ]; then
+        ktrop=$ktrop,-40
+      elif [ "$suffix" != "$exp_sweep" ]; then
         err "Error: Unknown sweep ${exp_sweep}."
       fi
       kstrat=$ktrop # if hs forcing, will not change anything
       kmeso=$ktrop
       # Next, separately scale boundary layer damping rate
-      unset kbl
       blopt=${prefix##*[a-z]} # get number
       for iktrop in ${ktrop/,/ }; do
-        case "$blopt" in
-          [01]) ikbl=-4 ;; # hold boundary layer value constant
+        case $blopt in
+          [01]) ikbl=$iktrop ;; # keep surface boundary layer equal to value in rest of atmosphere
           2) ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at 10
           3) ikbl=-$(bc -l <<< "scale=3; (4^-1 + (${iktrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
           *) err "Error: Unknown blopt ${blopt}." ;;
@@ -415,14 +400,9 @@ exp_setup() {
         kbl=$kbl,$ikbl # mean and anomaly components
       done
       kbl=${kbl#,} # trim leading comma
-      # Special fixes background state case
-      if [ "$suffix" == fixed ]; then
-        ktrop="$fixed,$ktrop" # model breaks on scale of minutes, but seems to handle 1 hour o.k. (i.e. 0.05days)
-        kbl="$fixed,$kbl"
-      fi
 
     # Damp stratosphere
-    ;; kstrat[01]) # stratosphere damping experiments
+    ;; kstrat[12]*) # stratosphere damping experiments
       # Parse the depth and stuff
       prefix=${exp_sweep%-*}
       suffix=${exp_sweep#*-}
@@ -431,23 +411,43 @@ exp_setup() {
       if [ -z "$kdepth" ]; then
         err "Error: Need to specify transition depth as second parameter."
       fi
-      stratdamp=${prefix##*[0-9]}
-      if [ "$stratdamp" == 0 ]; then
-        stratdamp=constant
-      elif [ "$stratdamp" == 1 ]; then
-        stratdamp=linear
+      damp=${prefix#*[^12]}
+      if [ "$damp" == 1 ]; then
+        damp=constant
+      elif [ "$damp" == 2 ]; then
+        damp=linear
       else
-        err "Error: Unknown stratosphere damping option ${stratdamp}."
+        err "Error: Unknown stratosphere damping option ${damp}."
       fi
       # Detect other options
       if [ "$suffix" == anom ]; then
-        kstrat="-40,$kstrat"
-      elif [ "$suffix" == fixed ]; then
-        kstrat="$fixed,$kstrat" # model breaks on scale of minutes, but seems to handle 1 hour o.k. (i.e. 0.05days)
+        kstrat=-40,$kstrat
       elif [ "$suffix" == mean ]; then
-        kstrat="$kstrat,-40"
+        kstrat=$kstrat,-40
       elif [ -n "$suffix" ]; then
         err "Error: Unknown suffix option ${suffix}."
+      fi
+
+    # Perturb the equator-pole temp gradient
+    ;; tshift[12])
+      exph=${p_values[0]}
+
+    # The equator-pole equilibrium difference
+    ;; tgrad[12]*) # temp gradient experiments
+      delh=${p_values[0]}
+      prefix=${exp_sweep%-*}
+      suffix=${exp_sweep#*-}
+      blopt=${prefix##*[a-z]} # get number
+      if [ "$blopt" == 1 ]; then
+        kbl=-40 # keep surface boundary layer equal to value in rest of atmosphere
+      elif ! [[ "$blopt" =~ [23] ]]; then
+        err "Error: Unknown blopt ${blopt}."
+      fi
+      if [ "$suffix" == tshift ]; then
+        exph=${p_values[1]}
+        [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
+      elif [ "$suffix" != "$exp_sweep" ]; then
+        err "Error: Unknown sweep ${exp_sweep}."
       fi
 
     # Unknown
@@ -460,7 +460,7 @@ exp_setup() {
   #----------------------------------------------------------------------------#
   # Forcing settings
   array_add delh v$delh exp_h v$exph
-  array_add strat_mode v\'$force\' strat_damp v\'$stratdamp\'
+  array_add teq_mode v\'$force\' damp_mode v\'$force\' strat_damp v\'$damp\'
   array_add ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
   # Timing variables
   # These ones are not experiment dependent so far, and are *global*
@@ -500,11 +500,14 @@ exp_setup() {
   cp $nml_default $nml # move over defaut
   echo "Copied $nml_default to $nml"
   # Message
-  index=0; width=6; while [ $index -le ${#nml_params[@]} ]; do
+  index=0
+  width=6
+  while [ $index -le ${#nml_params[@]} ]; do
     message+="${nml_params[@]:$index:$width}\n${nml_values[@]:$index:$width}\n\n"
     let index+=$width
   done
-  printf "Updated namelist with:\n$message" | column -t
+  echo "Updated namelist with:"
+  printf "$message" | column -t
   # Also print CFL number
   # 100m/s is around 200mph, which is feasible in jet stream
   echo "CFL num for 100m/s wind: $(echo "scale=3; 100 / ((3.14 * 6371000.0 / $nlat ) / $dt)" | bc | awk '{printf "%f", $0}')."
@@ -578,8 +581,6 @@ elif [ -z "$params2" ]; then
 fi
 # Parameter sweeps
 counter=0
-# echo ${params1[@]}
-# echo ${params2[@]}
 for param2 in ${params2[@]}; do
   for param1 in ${params1[@]}; do
     # Get experiment name and directory
@@ -623,6 +624,9 @@ for param2 in ${params2[@]}; do
     # NOTE: Need the eval so the quotes in the -p argument are evaluated
     if ! $super; then
       eval "$exp_run &>>$log"
+      stat=$?
+      printf "Experiment ${exp_name} finished with exit code ${stat}. The call signature was '${exp_run}'.\n\nThe logfile is pasted below.\n\n$(cat $log)\n\nThe namelist is pasted below.\n\n$(cat $exp_dir/input.nml)" \
+        | mail -s "${exp_name} status: ${stat}" lukelbd@gmail.com
       if [ $? -ne 0 ]; then
         printf "Warning: $exp_name integration failed.\n\n\n\n"
         continue # keyboard interruption does not trigger this

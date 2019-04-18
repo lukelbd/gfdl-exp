@@ -71,11 +71,11 @@
 #     - high cloud-cover (188) in 0-1
 #     - charnock (148) no units
 ################################################################################
+# Initial stuff
 rerun=false # compute values if already exist
 testing=false # testing or no
 flags="-O" # see if faster
-cdoscript=./eraint_cdo
-nclscript=./eraint_ncl.ncl
+process=./eraint_process
 eraroot=~/data/eraint # storage of all data
 years=({1979..2015}) # currently 2016 is incomplete; runs to July
 years=({1986..2015}) # instead use most recent 30-year period
@@ -89,7 +89,7 @@ if $testing; then
   days=(29 28 27)
   hours=(00)
 fi
-################################################################################
+
 # Check that tools are available
 if ! hash ncl 2>/dev/null; then
   echo "ERROR: NCL is not in ${PATH}."
@@ -99,6 +99,7 @@ if ! hash cdo 2>/dev/null || [ "$(which cdo)" == "/usr/local/bin/cdo" ]; then
   echo "ERROR: CDO is not in ${PATH}, or is the corrupted version."
   exit 4
 fi
+
 # Loop through time steps
 template="ei.oper.an.pl.regn128??." # general
 uvhourly_template=ei.oper.an.pl.regn128uv.
@@ -117,13 +118,15 @@ for month in ${months[@]}; do
   $testing && ncdir=$eraroot/testing # so don't overwrite good stuff
   [ ! -d eraint$month ] && mkdir eraint$month
   for year in ${years[@]}; do
-    ######################################################################
     # First get the data we can obtain from monthly means ouput
     # * Why bother? Because want e.g. surface data, which is stored in separate files,
     #   and will take appreciable time to read the surface data
     # * And while we're at it, might as well avoid having to take zonal means
     #   of the other data, just do it here
-    if [ $month == "07" ] && [ $year -lt "2000" ]; then continue; fi
+    if [ $month == "07" ] && [ $year -lt "2000" ]; then
+      continue
+    fi
+
     # Start subprocess
     # echo "Starting subprocess for Year ${year} Month ${month}."
     #   { # start subprocess
@@ -141,12 +144,13 @@ for month in ${months[@]}; do
       uvmonthly=$root/monthly/$uvmonthly_template$year${month}0100
       scmonthly=$root/monthly/$scmonthly_template$year${month}0100
       sfcmonthly=$root/monthly/$sfcmonthly_template$year${month}0100
-      ##########################################################################
+
       # Original method
       cdo $flags -f nc merge -chname,var131,u -chname,var132,v -selcode,131,132 $uvmonthly \
         -chname,var130,t -chname,var135,omega -chname,var129,z -selcode,130,135,129 $scmonthly \
         -chname,var151,slp -selcode,151 $sfcmonthly \
         $outmonthly 2>>$log # save in this simple file
+
       # Alternate method (just as fast; the merge command did not slow us down)
       # cdo $flags -f nc -selcode,131,132 $uvmonthly uvfile.nc 2>>$log
       # cdo $flags -f nc -selcode,130,135,129 $scmonthly scfile.nc 2>>$log
@@ -155,7 +159,7 @@ for month in ${months[@]}; do
       #   -chname,var130,t -chname,var135,omega -chname,var129,z scfile.nc \
       #   -chname,var151,slp sfcfile.nc \
       #   $outmonthly 2>>$log # save in this simple file
-      ######################################################################
+
       # Get the zonal means (after verifying we were successful)
       if [ $? != 0 ]; then
         echo "WARNING: Could not find GRIB files for Year ${year} Month ${month}."
@@ -182,7 +186,7 @@ for month in ${months[@]}; do
       rm $outmonthly # remove original
       echo "Took $(($(date +%s) - $t)) seconds."
     fi
-    ######################################################################
+
     # Next get the stuff that has to be computed on synoptic timesteps
     [ ! -d $ncdir/fluxes ] && mkdir $ncdir/fluxes
     for day in ${days[@]}; do
@@ -196,7 +200,7 @@ for month in ${months[@]}; do
         schourly=$root/6-hourly/$year/$schourly_template$year$month$day$hour
         # sfchourly=$root/6-hourly/$year/$sfchourly_template$year$month$day$hour
         # sfccodes=151 # just the SLP
-        ########################################################################
+
         # Keep the files separate then merge at the final second; only need to 
         # pass glob-command to merge if it is chained, so this avoids glob query
         # Timing tests (reveals bottlneck is just reading files):
@@ -211,18 +215,18 @@ for month in ${months[@]}; do
           $outhourly 2>>$log
           # -chname,var151,slp -selcode,$sfccodes $sfchourly \
           # -divc,9.80665 -chname,var129,z -selcode,$zcode $schourly \
-        ######################################################################
+
         # Get the special variables (after verifying we were successful)
         if [ $? != 0 ]; then
           echo "WARNING: Could not find GRIB files for Year ${year} Month ${month} Day ${day} Hour ${hour}."
           continue
         fi
-        $cdoscript "$outhourly" # computes stuff
+        $process "$outhourly" # computes stuff
         rm $outhourly # remove temporary file
         echo "Took $(($(date +%s) - $t)) seconds."
       done
     done
-    ######################################################################
+
     # Combine the flux files into a single year-month file
     # * Keep the flux files; they amount to 226KB * (4 * 30 * 30) = 813MB
     #   for each month; times 12 months is only 10GB of data.

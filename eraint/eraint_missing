@@ -1,6 +1,8 @@
 #!/bin/bash
+#------------------------------------------------------------------------------#
 # Detects missing files in climate runs by scanning the logfiles from my
 # climate-getting runs
+#------------------------------------------------------------------------------#
 basedir=~/data/eraint
 cd $basedir # the working directory; start here
 for month in {01..12}; do

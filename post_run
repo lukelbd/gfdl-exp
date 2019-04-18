@@ -24,7 +24,8 @@ control_climate_isen=false
 control_climate_energy=false
 control_eof=false
 # Scripts
-f2c=$(pwd)/f2c.py
+f2c=$(pwd)/f2c.py # converts frequency-wavenumber data to phase speed-wavenumber space
+eof=$(pwd)/eofs.py
 dyn=$(pwd)/dyn_timescale.py
 # Spindown options
 spin_start=0
@@ -452,9 +453,12 @@ control_climate_energy() {
 ################################################################################
 control_eof_climpy() {
   # Concatenate and select
+  # WARNING: If you cancel this process while series.nc is being created,
+  # EOF process may fail because file didn't finish writing!
   # if true; then #! [ -r ${pseries}.nc ]; then
   # [ -r ${peofs}_nh.nc ] && return 0
   if ! [ -r ${pseries}.nc ]; then
+  # if true; then
     # Initial stuff
     echo "Merging days"
     prefix=$psummary
@@ -464,14 +468,17 @@ control_eof_climpy() {
 
   # Get EOFs for each region
   export PYTHONUNBUFFERED=1
-  for region in sh nh; do
+  for region in nh; do
     echo "EOFs for region: $region" # will be 20N to 70N
     [ -r ${peofs}_${region}_vert.nc ] && rm ${peofs}_${region}_vert.nc
     # python3 $cwd/mergedays_eofs.py $region 1 ${pseries}.nc ${peofs}_${region}_vert.nc
     # [ $? -ne 0 ] && echo "Error: EOF failed." && exit 1
-    python3 $cwd/mergedays_eofs.py $region 0 ${pseries}.nc ${peofs}_${region}.nc
+    python3 $eof $region 0 ${pseries}.nc ${peofs}_${region}.nc
     [ $? -ne 0 ] && echo "Error: EOF failed." && exit 1
   done
+  # Conserve space, only do this for NH
+  [ -r ${peofs}_sh_vert.nc ] && rm ${peofs}_sh_vert.nc
+  [ -r ${peofs}_sh.nc ] && rm ${peofs}_sh.nc
 }
 
 

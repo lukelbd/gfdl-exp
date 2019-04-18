@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Remove old 4xdaily_inst files
+# Now we save 2xdaily_inst data instead!
 shopt -s nullglob
 names=($@) # remember $@ is special, nothing gets expanded
 [ -z "$1" ] && names=("hs*")

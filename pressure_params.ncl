@@ -45,6 +45,8 @@ o->plev_bnds = f->plev_bnds
 o->lat = f->lat
 
 ; Constants
+bnds = o->plev_bnds
+dp = bnds(:,1) - bnds(:,0)
 p = 100.0*(f->plev)
 lat = f->lat
 rlat = 4*atan(1.0)*lat/180.0 ; radians
@@ -178,11 +180,53 @@ timer("  * Time for APE terms")
 
 ; KE terms
 ; Eddy component
-ke = dim_avg_n(u_star^2+v_star^2, 3)/(2*g)
+ke = dim_avg_n(u_star^2 + v_star^2, 3)/(2*g)
 ke@long_name = "eddy KE"
 ke@units = "J/m2 Pa"
 o->ke = fix_coords(t, ke) ; copy coordinates
 delete(ke)
+; Barotropic component
+; NOTE: We reduce pressure dimension, then longitude becomes number 3, end
+; up with time by latitude array.
+dp_conform = conform(u, dp, 1)
+u_tropic = dim_sum_n(u*dp_conform, 1)/sum(dp)
+v_tropic = dim_sum_n(v*dp_conform, 1)/sum(dp)
+u_tropic_anom = u_tropic - conform(u_tropic, dim_avg_n(u_tropic, 2), (/0,1/))
+v_tropic_anom = v_tropic - conform(v_tropic, dim_avg_n(v_tropic, 2), (/0,1/))
+km_tropic = (dim_avg_n(u_tropic, 2)^2 + dim_avg_n(v_tropic, 2)^2)/(2*g)
+km_tropic@long_name = "barotropic mean KE"
+km_tropic@units     = "J/m2 Pa"
+o->km_tropic = fix_coords(u(:,0,:,:), km_tropic)
+delete(km_tropic)
+delete(dp_conform)
+ke_tropic = dim_avg_n(u_tropic_anom^2 + v_tropic_anom^2, 2)/(2*g)
+ke_tropic@long_name = "barotropic eddy KE"
+ke_tropic@units     = "J/m2 Pa"
+o->ke_tropic = fix_coords(u(:,0,:,:), ke_tropic)
+delete(ke_tropic)
+delete(u_tropic_anom)
+delete(v_tropic_anom)
+; Baroclinic component
+u_clinic = u - conform(u, u_tropic, (/0, 2, 3/))
+v_clinic = v - conform(v, v_tropic, (/0, 2, 3/))
+u_clinic_anom = u - conform(u, dim_avg_n(u_clinic, 3), (/0,1,2/))
+v_clinic_anom = v - conform(v, dim_avg_n(v_clinic, 3), (/0,1,2/))
+km_clinic = (dim_avg_n(u_clinic, 3)^2 + dim_avg_n(v_clinic, 3)^2)/(2*g)
+km_clinic@long_name = "baroclinic mean KE"
+km_clinic@units     = "J/m2 Pa"
+o->km_clinic = fix_coords(u, km_clinic)
+delete(km_clinic)
+delete(u_tropic)
+delete(v_tropic)
+delete(u_clinic)
+delete(v_clinic)
+ke_clinic = dim_avg_n(u_clinic_anom^2 + v_clinic_anom^2, 3)/(2*g)
+ke_clinic@long_name = "baroclinic eddy KE"
+ke_clinic@units     = "J/m2 Pa"
+o->ke_clinic = fix_coords(u, ke_clinic)
+delete(ke_clinic)
+delete(u_clinic_anom)
+delete(v_clinic_anom)
 ; Mean component
 km = (u_bar(:,:,:,0)^2 + v_bar(:,:,:,0)^2)/(2*g)
 km@long_name = "mean KE"

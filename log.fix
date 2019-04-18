@@ -1,17 +1,0 @@
- Copyright (C) 1995-2018 - All Rights Reserved
- University Corporation for Atmospheric Research
- NCAR Command Language Version 6.5.0
- The use of this software is governed by a License Agreement.
- See http://www.ncl.ucar.edu/ for more details.
-(0)	Adding to file!
-warning:FileReadVar: t contains a 0 length dimension
-warning:FileReadVar: time contains a 0 length dimension
-warning:FileReadVar: omega contains a 0 length dimension
-warning:FileReadVar: time contains a 0 length dimension
-warning:FileReadVar: tdt contains a 0 length dimension
-warning:FileReadVar: time contains a 0 length dimension
-fatal:Subscript out of range, error in subscript #0
-fatal:An error occurred reading t_bar
-fatal:["Execute.c":8637]:Execute: Error occurred at or near line 42 in file ./add_summary.ncl
-
-

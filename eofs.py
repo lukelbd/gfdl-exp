@@ -103,8 +103,8 @@ for name in names:
         print(f'Warning: Found {mask.sum()} invalid points out of {mask.size}. Setting to zero.')
         data[mask] = 0
     evals, nstar, evecs, pcs = \
-        climpy.eof(data, record=0, space=(1,2), neof=neof,
-                        weights=weights, debug=True)
+        climpy.eof(data, record=0, space=(1,2), neof=neof, weights=weights,
+                         percent=True, debug=True)
     # Project onto *full* hemispheric data, instead of
     # the spatially filtered data. Note time dimension is now 1, not 0.
     projs = (data_xr.data * pcs).mean(axis=1, keepdims=True) # eof by time by plev by lat
@@ -113,12 +113,12 @@ for name in names:
     # regions (i.e. excluding near poles/equator). So save this term separately.
     # For other miscelaneous projections, will project the full pattern (see
     # below).
-    out[f'{name}_eval'] = (('eof',), evals[:,0,0,0] / (data.var(axis=0)*weights).sum(),
-            {'long_name': f'{long} variance explained by EOF', 'units':units})
+    out[f'{name}_eval'] = (('eof',), evals[:,0,0,0],
+            {'long_name': f'percent {long} variance explained by EOF', 'units':'%'})
     out[f'{name}_nstar'] = ((), nstar[0,0,0,0],
             {'long_name': f'{long} degrees of freedom', 'units':'none'})
     out[f'{name}_proj'] = (('eof', 'plev', 'lat'), projs[:,0,:,:],
-            {'long_name': f'projection of {long} onto standardized PC time series', 'units':units})
+            {'long_name': f'projection of {long} onto PC', 'units':units})
     out[f'{name}_pc'] = (('eof', 'time'), pcs[:,:,0,0],
             {'long_name': 'standardized PC time series', 'units':'none'})
     timer(f' * Time for getting {name} EOFs')
@@ -174,16 +174,14 @@ if not t.ndim==3:
 dptdy = climpy.deriv1_uneven(y, t, axis=2, keepedges=True)
 dptdy[dptdy==0] = np.nan
 dptdz = -rho*const.g*climpy.deriv1_uneven(100.0*plev, pt, axis=1, keepedges=True)
-slope = dptdy/dptdz
+slope = -dptdy/dptdz # NOTE: want sign to *match sign of heat flux* -- positive in NH, negative in SH
 slope = xr.DataArray(slope, dims=('time','plev','lat'),
         attrs={'long_name': 'isentropic slope', 'units':'m/m'},
         coords=(dtime, plev, lat))
-# print(slope.mean(dim=('plev','time')))
-# print('slope', np.nanmin(slope), np.nanmax(slope), np.nanmean(slope))
-# print(np.nanpercentile(slope, 95), np.nanpercentile(slope, 5))
-# time.sleep(3)
+print(f'Average slope: {slope.sel(lat=slice(20,70),plev=slice(500,1050)).mean()}')
 
 # Eddy momentum flux *convergence*
+# NOTE: The negative sign! This makes positive = convergence
 emf = file['emf'].squeeze().values
 if not emf.ndim==3:
     raise ValueError('Shit.')
@@ -198,14 +196,14 @@ cemf = xr.DataArray(cemf, dims=('time','plev','lat'),
 # one field onto another, and the scalar projection coefficients.
 # NOTE: Now we also get the lag coefficients
 vars = {} # store them here
-pairs = (('cemf', 'u'), ('cemf', 'km'), ('emf', 'u'), ('emf', 'km'), ('ehf', 'u'), ('ehf', 'km'),
-         ('slope', 'ehf'), ('slope', 'ke'), ('emf', 'ehf'), ('emf', 'ke'), ('ehf', 'ke'), # fix
-         ('ke', 'ehf'), # special
-         ('u', 'u'),    ('km', 'km'),   ('ehf', 'ehf'),   ('ke', 'ke')) # on themselves
-# lags = np.arange(-20, 21, 2) # projections on lags every 5 days
-lags = np.arange(-30, 31, 5) # projections on lags every 5 days
+pairs = (('cemf', 'u'), ('cemf', 'km'), ('slope', 'ehf'), ('slope', 'ke'), # forcing terms
+         ('u', 'u'),    ('km', 'km'),   ('ehf', 'ehf'),   ('ke', 'ke')) # lag with itself
+lags = np.arange(-20, 21, 1) # projections on lags every day (each file is 250M)
 lags_xr = xr.DataArray(lags, dims=('lag',), coords=(lags,), attrs={'long_name':'lag', 'units':'days'}, name='lag')
 ilags = np.round(lags/dt).astype(int)
+# Use below for faster testing
+# ilags = np.array([-4,-2,0,2,4]) # for testing
+# lags_xr = xr.DataArray(ilags, dims=('lag',), coords=(ilags,), name='lag')
 print(f'Using lags: {lags}.')
 for pair in pairs:
     # Get values
@@ -218,6 +216,12 @@ for pair in pairs:
         param = cemf
     else:
         param = file[name_param]
+    # Store attributes
+    attrs = {'long_name': param.attrs['long_name'], 'units': param.attrs['units']}
+    attrs2 = {'long_name': param.attrs['long_name'], 'units': f'({param.attrs["units"]})2'}
+    # Subtract mean
+    param = param - param.mean(dim='time')
+    param.attrs = attrs
     # Filtered versions
     param_f = param.sel(**filter)
     eof_f = eof.sel(**filter)
@@ -225,37 +229,43 @@ for pair in pairs:
     # Get variance of raw data, if haven't already
     # Can use these to get percent variance explained, which is just
     # variance of quantity over variance in vector projection.
-    attrs = {'long_name': param.attrs['long_name'], 'units': param.attrs['units']}
-    attrs2 = {'long_name': param.attrs['long_name'], 'units': f'({param.attrs["units"]})2'}
+    var = None
     if f'{name_param}_var' not in out:
         var = param.var(dim='time')
         var.attrs = attrs2
         out[f'{name_param}_var'] = var
 
-    # Projection coefficient of quantity onto its 'forcing' directly (i.e.
-    # at zero lag). Only do this if names match!
-    # NOTE: We do something sort of analagous to EOF procedure, apply filter
-    # before summing. If we don't, may end up with weird slope values.
+    # Scalar projection of EOF onto itself (no need for lag this time).
+    # Only do this if names match.
     if name_param == name_eof:
+        # Coeffs
         numer = (weights*param_f*eof_f).sum(dim=('lat','plev'))
         denom = (weights*eof_f*eof_f).sum(dim=('lat','plev')) # will have EOF, time dimension
         # Save
         scalar = numer / denom**(1/2)
         scalar.attrs = attrs
         out[f'{name_param}_on_{name_eof}'] = scalar
-        # Save
-        var = (eof * (numer / denom)).var(dim='time')
-        var.attrs = attrs2
-        out[f'{name_param}_on_{name_eof}_var'] = var # will have EOF, plev, lat dimension
+
+        # Variance explained; see notes in else statement
+        print(f'Scalar coeff: min {scalar.sel(eof=1).values.min():.2e}, mean {scalar.sel(eof=1).values.mean():.2e}, max {scalar.sel(eof=1).values.max():.2e}.')
+        var_p = 100 * (param*scalar).sum(dim='time')**2 / \
+                ((param**2).sum(dim='time') * (scalar**2).sum(dim='time'))
+        print(f'Range of percent: {var_p.sel(eof=1).values.min():.2f}, {var_p.sel(eof=1).values.max():.2f}.')
+        var_p.attrs = {'long_name':f'variance in {param.attrs["long_name"]} explained by {eof.attrs["long_name"]}', 'units':'%'}
+        out[f'{name_param}_on_{name_eof}_var'] = var_p # will have EOF, plev, lat dimension
         timer(f" * Time for {pair}")
+
     # Get ***lagged*** version
-    # That is, project PC time series at various lags
-    # NOTE: Because PC is standardized, this should work fine
+    # NOTE: Here we get the pattern in one param ***associated*** with
+    # the pattern in another param's EOF at various lags. Since the PC is
+    # standardized and data has mean removed, mean of projection coefficient
+    # from regressing these patterns back onto original data should be zero.
     else:
         # Get the *vector projections*
         print('Getting lagged projections')
         projs = []
         for ilag in ilags:
+            print(f'Lag: {ilag}')
             if ilag==0:
                 slice1 = slice(None)
                 slice2 = slice(None)
@@ -265,30 +275,51 @@ for pair in pairs:
             else: # means 'forcing' *leads* EOF
                 slice1 = slice(None,ilag)
                 slice2 = slice(-ilag,None)
-            proj = (param.isel(time=slice1) * pc.isel(time=slice2)).mean(dim='time')
+            # WARNING: xarray tries to align the time coords!
+            # So need to drop them before multiplying
+            proj = (param.isel(time=slice1).drop('time')
+                     * pc.isel(time=slice2).drop('time')).mean(dim='time')
             projs.append(proj)
         print('Combining')
         projs = xr.concat(projs, dim=lags_xr)
         projs.attrs = attrs
         out[f'{name_param}_on_{name_eof}_proj'] = projs
         projs_f = projs.sel(**filter)
+
         # Get the scalar projections for each lag
         # NOTE: We project the param on the *forcing pattern* this time, not
         # on the EOF itself
         print('Projecting onto forcing')
-        # print(param.shape, eof.shape, projs.shape, weights.shape)
-        # print(param.dims, eof.dims, projs.dims, weights.dims)
-        numer = (weights*param_f*projs_f).sum(dim=('lat','plev'))
+        numer = (weights*projs_f*param_f).sum(dim=('lat','plev'))
         denom = (weights*projs_f*projs_f).sum(dim=('lat','plev')) # will have EOF, time dimension
-        # Save
         scalar = numer / denom**(1/2)
         scalar.attrs = attrs
         out[f'{name_param}_on_{name_eof}'] = scalar
-        # Save
-        var = (projs * (numer / denom)).var(dim='time')
-        var.attrs = attrs2
-        out[f'{name_param}_on_{name_eof}_var'] = var # will have EOF, plev, lat dimension
+
+        # Variance explained
+        # NOTE: Proved that PC time series projected onto each point, then
+        # summed over all points, exactly equals the eigenvalue!
+        print(f'Scalar coeff: min {scalar.sel(eof=1).values.min():.2e}, mean {scalar.sel(eof=1).values.mean():.2e}, max {scalar.sel(eof=1).values.max():.2e}.')
+        var_p = 100 * (param*scalar).sum(dim='time')**2 / \
+                ((param**2).sum(dim='time') * (scalar**2).sum(dim='time'))
+        print(f'Range of percent: {var_p.sel(eof=1).values.min():.2f}, {var_p.sel(eof=1).values.max():.2f}.')
+        var_p.attrs = {'long_name':f'variance in {param.attrs["long_name"]} explained by {eof.attrs["long_name"]}', 'units':'%'}
+        out[f'{name_param}_on_{name_eof}_var'] = var_p
         timer(f" * Time for lagged {pair}")
+
+        # Testing the old way
+        # WARNING: This had me getting variance of vector projection of pattern
+        # onto field. Do not think that means anything! For variance explained
+        # just want to get the "***time series of the forcing pattern***" by
+        # projecting the n-lagged PC projection pattern back onto the original
+        # forcing data. Then ***compare the time series of the forcing pattern
+        # to the time series at some point***. The variance explained is the R^2
+        # statistic between the two series.
+        # resemblance = (projs_f * (numer / denom)).sel(lag=0)
+        # rvar = resemblance.var(dim='time')
+        # pvar = param_f.var(dim='time')
+        # frac = rvar/pvar
+        # print(frac.values.min(), frac.values.max())
 
 # Save
 print('Saving')

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-#------------------------------------------------------------------------------#
-# Calculate stuff on the 'full' model output files by looping through experiment
-# directories. Generally use this for repairing stuff failed to get earlier.
-# Also gets spectral data (which we only want to save sometimes, due to
-# space constraints).
+################################################################################
+# Calculate stuff on archived model data *after it has already been
+# run*, instead of as model is being run.
+################################################################################
 # NOTE: For debugging/generating small spectral files use:
 # ncwa -O -d plev,500.0,600.0 -d lat,0.0,90.0 -a f,k spectral.nc tmp.nc
 # NOTE: To check status of isentropic files use:
@@ -14,7 +13,7 @@
 # frequencies/wavenumbers use:
 # ncvardump t 2xdaily_inst_spectral.d0500-d0600.nc | xargs
 # ncvardump tvar 2xdaily_inst_full.d0500-d0600.nc | xargs
-#------------------------------------------------------------------------------#
+################################################################################
 # Initial stuff
 shopt -s nullglob
 cwd=$(pwd)
@@ -109,53 +108,6 @@ spectra() {
   return 0
 }
 
-# Run 'repair' files. Fucked up diabatic heating for a bunch of runs. Ugh.
-repair_parallel() {
-  # Message
-  local script full summary
-  script="$1"
-  full="$2"
-  summary="$3"
-  echo $script
-  echo ${full##*/}
-  echo ${summary##*/}
-  # nplev=$(ncdims $full | grep plev | awk '{print $3}')
-  # Loop through segments
-  unset rlogs rpids
-  rm tmp.*.nc 2>/dev/null # make sure already removed!
-  nt=$(ncdims $full | grep time | cut -d'(' -f2 | cut -d' ' -f1) # hard due to UNLIMITED thing
-  lprefix=${script##*/}
-  lprefix=${lprefix%.ncl}
-  for ii in $(seq 1 $pmax); do
-    # NCL times
-    t1=$(((ii - 1)*nt/pmax)) # e.g. pmax=10, nt=200, goes 0, 20, 40, 60
-    t2=$((ii*nt/pmax - 1)) # e.g. pmax=10, nt=200, goes 19, 39, 59
-    rlog=logs/${lprefix}${ii}.log
-    echo "Log file: log $rlog"
-    {
-      ncl -n -Q "slice=(/$t1,$t2/)" "out=\"tmp.${ii}.nc\"" \
-        "full=\"$full\"" "forcing=\"${full%/*}/../forcing.nc\"" $script
-    } &>$rlog &
-    rpids+=",$!"
-    rlogs+=",$rlog"
-  done
-  # Wait
-  background $rpids $rlogs
-  # Merge summaries
-  t=$(date +%s)
-  tmps=(tmp.*.nc)
-  if [ ${#tmps[@]} -eq 0 ]; then
-    echo "No files created."
-  else
-    echo "Merging to ${summary##*/}."
-    ncrcat -O ${tmps[@]} tmp.nc
-    ncks --no-abc -A tmp.nc $summary # overwrite old values
-    # Keep full files if after day 5000, because why not
-    rm tmp*.nc 2>/dev/null
-    echo "Elapsed time: $(($(date +%s) - t))s."
-  fi
-}
-
 # Isentropic interpolation and summary statistics
 isen_parallel() {
   # Message
@@ -174,9 +126,9 @@ isen_parallel() {
     ilog=logs/isen${ii}.log
     {
       ncl -n -Q "forcing=\"${full%/*}/../forcing.nc\"" \
-        "slice=(/$t1,$t2/)" "filename=\"${full}\"" "outname=\"isen1.${ii}.nc\"" \
+        "slice=(/$t1,$t2/)" "filename=\"${full}\"" "output=\"isen1.${ii}.nc\"" \
         $isen_interp_ncl
-      ncl -n -Q "filename=\"isen1.${ii}.nc\"" "outname=\"isen2.${ii}.nc\"" \
+      ncl -n -Q "filename=\"isen1.${ii}.nc\"" "output=\"isen2.${ii}.nc\"" \
         $isen_params_ncl
     } &>$ilog &
     ipids+=",$!"
@@ -253,17 +205,6 @@ for scratch in "${scratches[@]}"; do
           # if $isen && { ! [ -r $summary_isen ] || ! ncin $summary_isen stress; }; then
           if $isen; then
             isen_parallel
-          fi
-          # Fix screwed up data
-          if $repair; then
-            repair_parallel $repair_ncl $full $summary
-          fi
-          if $repair_isen; then
-            nums=($(ncvardump thlev $summary_isen))
-            if [[ ${nums[0]} -lt ${nums[1]} ]]; then
-              echo thlev: ${nums[@]}
-              repair_parallel $repair_isen_ncl $full $summary_isen
-            fi
           fi
 
           # Spectra (the isen() function can be parallelized in same way)
