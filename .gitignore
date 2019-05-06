@@ -34,7 +34,7 @@ __pycache__
 
 # Compiled source #
 ###################
-./bin
+bin
 
 # Logs and databases #
 ######################
