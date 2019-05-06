@@ -1,9 +1,7 @@
 <!-- Modifications to the GFDL dry core Fortran source for a series of experiments with the thermal damping timescale. For more info, see recent publication. -->
 # Summary
 All sorts of useful tools for running and processing parameter sweep experiments with the dry core model in [this repository](https://github.com/lukelbd/gfdl-drycore.git).
-
-# Notes
-Use `add_check` to check for 'missing' variables in NetCDF files.
+<!-- Use `add_check` to check for 'missing' variables in NetCDF files. -->
 <!-- May need to re-run damping rate experiments with 0.4 and 1 days for some reason. For the rest, only missing meridional wind variance in first 500 days, and missing PM-PE conversion for all days (omega was not saved in full files, so cannot calculate this one). -->
 
 # Benchmarks
