@@ -35,6 +35,11 @@ __pycache__
 # Compiled source #
 ###################
 bin
+*.x
+*.mod
+*.o
+*.so
+*.cppdefs
 
 # Logs and databases #
 ######################
