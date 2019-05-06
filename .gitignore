@@ -17,8 +17,6 @@
 .session.vim
 .vimsession
 .*.sw[a-z]
-  # VERY IMPORTANT, need to install manually with :PlugInstall
-  # on every server, otherwise everything fails
 
 # R history #
 #############
@@ -36,11 +34,7 @@ __pycache__
 
 # Compiled source #
 ###################
-*.x
-*.mod
-*.o
-*.so
-*.cppdefs
+./bin
 
 # Logs and databases #
 ######################

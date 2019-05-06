@@ -103,8 +103,7 @@ for name in names:
         print(f'Warning: Found {mask.sum()} invalid points out of {mask.size}. Setting to zero.')
         data[mask] = 0
     evals, nstar, evecs, pcs = \
-        climpy.eof(data, record=0, space=(1,2), neof=neof, weights=weights,
-                         percent=True, debug=True)
+        climpy.eof(data, record=0, space=(1,2), neof=neof, weights=weights, percent=True)
     # Project onto *full* hemispheric data, instead of
     # the spatially filtered data. Note time dimension is now 1, not 0.
     projs = (data_xr.data * pcs).mean(axis=1, keepdims=True) # eof by time by plev by lat

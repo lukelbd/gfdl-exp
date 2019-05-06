@@ -4,6 +4,7 @@
 # phse speed
 #------------------------------------------------------------------------------#
 # Imports
+import os
 import sys
 import numpy as np
 import xarray as xr
@@ -84,5 +85,7 @@ for name in data.variables:
 
 # Save
 data_c = data_c.transpose('c', 'plev', 'lat', 'k')
+if os.path.exists(out):
+    os.remove(out)
 data_c.to_netcdf(out)
 

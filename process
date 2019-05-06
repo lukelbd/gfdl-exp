@@ -24,7 +24,6 @@ nclcheck() { # input log file as argument
 }
 
 # Parse input flags
-# cores=8 # default cores for mppnccombine, actually this didn't work so nevermind
 _dir='.'
 _debug=false   # keep data in original folder, instead of moving to ../netcdf? useful for testing
 _resume=false  # process old "full" files?
@@ -36,11 +35,11 @@ while [ $# -gt 0 ]; do
   case $1 in
     -c|--combine) echo "Only combining files." && _combine=true ;;
     -q|--quit) echo "Skipping processing." && exit 0 ;;
-    -d=*|--dir=*) _dir=${1##*=} ;;
-    -d|--debug)  _debug=true   ;;  # if true, keep all intermediate files
-    -r|--resume) _resume=true  ;; # process old results sitting in the directory
-    -k|--keep)   _keepxyz=true ;; # whether to keep longitudinal data
-    -s|--split) _splitxyz=true ;; # whether to split XYZ files before combining
+    -d|--debug)   _debug=true    ;; # if true, keep all intermediate files
+    -r|--resume)  _resume=true   ;; # process old results sitting in the directory
+    -k|--keep)    _keepxyz=true  ;; # whether to keep longitudinal data
+    -s|--split)   _splitxyz=true ;; # whether to split XYZ files before combining
+    -d=*|--dir=*) _dir=${1##*=}  ;;
     *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
   esac
   shift # shift by one
@@ -63,9 +62,9 @@ spectra=$bin/spectra.py # spectral decompositions
 cd $_dir # optionally pass dir argument
 
 # Double check some stuff
-[ ! -r $plev_params ]       && echo "Error: The script \"$plev_params\" is missing."          && exit 127
-[ ! -r $plev_interp ]    && echo "Error: The script \"$plev_interp\" is missing."       && exit 127
-[ ! -x $mppnccombine ]  && echo "Error: The executable \"$mppnccombine\" is missing." && exit 127
+! [ -r $plev_params ]   && echo "Error: The script \"$plev_params\" is missing."      && exit 127
+! [ -r $plev_interp ]   && echo "Error: The script \"$plev_interp\" is missing."      && exit 127
+! [ -x $mppnccombine ]  && echo "Error: The executable \"$mppnccombine\" is missing." && exit 127
 ! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                         && exit 127
 ! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                         && exit 127
 # ! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                       && exit 127
@@ -85,7 +84,7 @@ interp() {
 
   # Apply some simple modifications to attributes
   # NOTE: Use -h to prevent appending history
-  # WARNING: Some NCO distos seem to have fatal issue with using multiple
+  # WARNING: Some NCO distros seem to have fatal issue with using multiple
   # ncrename instructions in same command! Fails on cheyenne when we try to
   # do it in one line.
   ncrename -h -d pfull,mlev $filename # -d renames dimensions, -v renames variables of same name
@@ -100,6 +99,7 @@ interp() {
   echo "Interpolating to pressure levs..." # -Q = no banner, -n = do not enumerate print statements
   [ -r "$plevout" ] && rm "$plevout"
   ncl -n -Q "filename=\"$filename\"" "output=\"$plevout\"" $plev_interp &>$log #2> /dev/null
+  sed -i '/^.*warning:.*$/d;/^$/d' $log
   if ! nclcheck $log || ! [ -r $plevout ]; then
     echo "Error: Something failed during NCL interpolation." && exit 2
   fi
@@ -290,37 +290,39 @@ for file in ${files[@]}; do
 
   ################################################################################
   # 2) Get spectra, and merge them
+  # WARNING: Now we just save full resolution files, and get spectra later
+  # and combine *overlapping* windows of days, with process_post.
   ################################################################################
-  # Calculate
-  echo "Getting spectra..."
-  tp=$(date +%s)
-  unset pids
-  for suffix in ${suffixes[@]}; do
-    num=${suffix%.nc}
-    [ "$suffix" == "nc" ] && num=0000
-    spectra "$suffix" &>>LOGS/log.${num} &
-    pids+=($!)
-  done
-  pidcheck ${pids[@]}
-  echo "  * Time for getting spectra in parallel: $(($(date +%s) - tp))s."
-
-  # Merge
-  if $_parallel; then
-    echo "Combining spectral files..."
-    t=$(date +%s)
-    [ -r spectra.nc ] && rm spectra.nc
-    $mppnccombine spectra.nc spectra.*.nc
-    wait
-    echo "  * Time for combining spectra: $(($(date +%s) - t))s."
-  fi
-
-  # Save files
-  if $_debug; then
-    cp spectra.nc $spectra_file
-  else
-    mv spectra.nc $spectra_file
-    rm spectra.*.nc
-  fi
+  # # Calculate
+  # echo "Getting spectra..."
+  # tp=$(date +%s)
+  # unset pids
+  # for suffix in ${suffixes[@]}; do
+  #   num=${suffix%.nc}
+  #   [ "$suffix" == "nc" ] && num=0000
+  #   spectra "$suffix" &>>LOGS/log.${num} &
+  #   pids+=($!)
+  # done
+  # pidcheck ${pids[@]}
+  # echo "  * Time for getting spectra in parallel: $(($(date +%s) - tp))s."
+  #
+  # # Merge
+  # if $_parallel; then
+  #   echo "Combining spectral files..."
+  #   t=$(date +%s)
+  #   [ -r spectra.nc ] && rm spectra.nc
+  #   $mppnccombine spectra.nc spectra.*.nc
+  #   wait
+  #   echo "  * Time for combining spectra: $(($(date +%s) - t))s."
+  # fi
+  #
+  # # Save files
+  # if $_debug; then
+  #   cp spectra.nc $spectra_file
+  # else
+  #   mv spectra.nc $spectra_file
+  #   rm spectra.*.nc
+  # fi
 
   ##############################################################################
   # 3) Calculate other params in parallel
@@ -375,6 +377,8 @@ for file in ${files[@]}; do
   # NOTE: Had error on Cheyenne where mppnccombine failed for sufficiently
   # big files (threshold was somewhere between 60-80 timesteps at T106 resolution)
   # To fix this, we take time hyperslabs, merge each half, then re-combine
+  # TODO: Consider adding new nctimecombine and nctimedivide files that
+  # divide them into blocks.
   ##############################################################################
   # Delete the old files
   if ! $_debug; then
@@ -397,9 +401,9 @@ for file in ${files[@]}; do
     if ! $_splitxyz; then
       # Delete some vars
       for suffix in ${suffixes[@]}; do
-        file=interp_plev.${suffix}
         out=$file
-        $_debug && out=interp_plev_x.${suffix}
+        file=interp_plev.${suffix}
+        $_debug && out=interp_plev_cut.${suffix}
         ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $file $out &
         interp+=($out)
       done
@@ -426,7 +430,7 @@ for file in ${files[@]}; do
         unset outs
         for suffix in ${suffixes[@]}; do
           file=interp_plev.${suffix}
-          out=interp_plev_x${ni}.${suffix}
+          out=interp_plev_cut${ni}.${suffix}
           t1=$(((ni - 1)*ts/nsplit)) # e.g. nsplit=10, ts=200, goes 0, 20, 40, 60
           t2=$((ni*ts/nsplit - 1)) # e.g. nsplit=10, ts=200, goes 19, 39, 59
           ncks -O -h --no-abc -d time,$t1,$t2 -v $keep $file $out &

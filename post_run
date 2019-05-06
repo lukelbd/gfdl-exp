@@ -7,13 +7,51 @@
 # commands like 'select,key=value' to merge multiple files in one command instead
 # of constructing massive chained commands in single bash string.
 ################################################################################
-# Verify environmental variables are set
-# flags='-O'
+# Initial
+shopt -s nullglob # will return empty if no match
 flags='-s -O' # overwrite, and only issue warnings
 # flags='-v -O' # echo more info
-shopt -s nullglob # will return empty if no match
 debug=true # disable sending stuff to background?
+netcdf=true # use subfolder? have this so if we just got forcing data and have no real data yet
 
+# Raises error and exits
+raise() {
+  echo "Error: $@" 1>&2
+  exit 1
+}
+# Check if destination file is *newer* than source files
+newer() {
+  local ret src file date idate
+  dest="$1"
+  src=("${@:2}")
+  [ ${#src[@]} -eq 0 ] && return 0
+  date=$(date +%s -r "$dest" 2>/dev/null)
+  for file in "${src[@]}"; do
+    [ -r "$file" ] || return 0 # do not re-process since a source is unavailable!
+    idate=$(date +%s -r "$file" 2>/dev/null)
+    [ "$idate" -gt "$date" ] && return 1 # destination is *not* newer, re-process!
+  done
+  [ -r "$dest" ] || return 1 # re-process since destination is unavailable! must test this after we test whether input files available!
+  command ncdump -h "$dest" &>/dev/null # if 1, destination is *corrupt*, re-process!
+  ret="$?"
+  if [ $ret -eq 0 ]; then
+    echo "Post-processed file already exists." 1>&2
+  else
+    echo "Updating post-processed file from new source files." 1>&2
+  fi
+  return $ret
+}
+# Python heredoc header
+header="
+import time
+t1 = time.time()
+t0 = t1
+def timer(message):
+    global t1
+    t2 = time.time()
+    print(f'{message}: {t2-t1:.3f}s')
+    t1 = t2
+"
 # Optional environmental variables, with defaults
 # The flag names should be descriptive enough, but feel free to read comments
 climo_start=0
@@ -22,6 +60,7 @@ spectral_climate=false
 control_climate=false
 control_climate_isen=false
 control_climate_energy=false
+control_autocorr=false
 control_eof=false
 # Scripts
 f2c=$(pwd)/f2c.py # converts frequency-wavenumber data to phase speed-wavenumber space
@@ -37,22 +76,24 @@ spindown_regional_ts=false
 mode=2 # spindown mode
 while [ $# -gt 0 ]; do
   case $1 in
-    -d|--debug)                     debug=true                    ;;
-    -r=*|--restart=*)               rdays=${1##*=}                ;;
-    -m=*|--mode=*)                  mode=${1##*=}                 ;;
-    -c1=*|--climo-start=*)          climo_start=${1##*=}          ;;
-    -c2=*|--climo-end=*)            climo_end=${1##*=}            ;;
-    -s1=*|--spin-start=*)           spin_start=${1##*=}           ;;
-    -s2=*|--spin-end=*)             spin_end=${1##*=}             ;;
-    -sc|--spectral-climo)           spectral_climate=true         ;;
-    -cc|--control-climo)            control_climate=true          ;;
-    -cci|--control-climo-isen)      control_climate_isen=true     ;;
-    -cce|--control-climo-energy)    control_climate_energy=true        ;;
-    -eof|--control-eof*)            control_eof=true              ;;
-    -se|--spindown-ensemble-ts)     spindown_ensemble_ts=true     ;;
-    -sr|--spindown-region-ts)       spindown_regional_ts=true     ;;
-    -st|--spindown-timescale)       spindown_timescale=true       ;;
-    -*) echo "Error: Unknown flag \"${1}\"." && exit 1 ;;
+    -d|--debug)       debug=true      ;;
+    -n|--new)         overwrite=false ;;
+    -r=*|--restart=*) rdays=${1##*=}  ;;
+    -m=*|--mode=*)    mode=${1##*=}   ;;
+    -c1=*|--climo-start=*)       climo_start=${1##*=}        ;;
+    -c2=*|--climo-end=*)         climo_end=${1##*=}          ;;
+    -s1=*|--spin-start=*)        spin_start=${1##*=}         ;;
+    -s2=*|--spin-end=*)          spin_end=${1##*=}           ;;
+    -sc|--spectral-climo)        spectral_climate=true       ;;
+    -cc|--control-climo)         control_climate=true        ;;
+    -cci|--control-climo-isen)   control_climate_isen=true   ;;
+    -cce|--control-climo-energy) control_climate_energy=true ;;
+    -eof|--control-eof)          control_eof=true            ;;
+    -auto|--control-autocorr)    control_autocorr=true       ;;
+    -se|--spindown-ensemble-ts)  spindown_ensemble_ts=true   ;;
+    -sr|--spindown-region-ts)    spindown_regional_ts=true   ;;
+    -st|--spindown-timescale)    spindown_timescale=true     ;;
+    -*) raise "Unknown flag \"${1}\".";;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
         filename="$1"
@@ -60,26 +101,25 @@ while [ $# -gt 0 ]; do
         input="$1"
       elif [ -z $output ]; then
         output="$1"
-      else echo "Error: Too many arguments." && exit 1
+      else raise "Too many arguments."
       fi ;;
   esac
   shift
 done
 # Requirements
+if $netcdf; then
+  ! [ -d "$input/netcdf" ] && [ -d "$input" ] && mkdir "$input/netcdf"
+  input="$input/netcdf"
+fi
 if [ -z "$filename" ] || [ -z "$input" ] || [ -z "$output" ]; then
-  echo "Error: Need filename prefix (e.g. 2xdaily_inst), input folder, and output folder, in that order."
-  exit 1
+  raise "Need filename prefix (e.g. 2xdaily_inst), input folder, and output folder, in that order."
 fi
 # Require restart days because may have some old 5-day tests or whatever
 # in that experiment folder.
-if [ -z "$rdays" ]; then
-  echo "Error: You must specify the restart day spacing with -r=N or --restart=N."
-  exit 1
-fi
+[ -z "$rdays" ] && raise "You must specify the restart day spacing with -r=N or --restart=N."
 
 # File management/names
 # Prefixes for output files
-plog=$(pwd)/logs/ # log prefix; easy to change by making it a variable
 pfull=${filename}_full
 psummary=${filename}_summary # original prefix file names
 peofs=${filename}_eofs
@@ -89,20 +129,21 @@ pfull_isen=${filename}_full_isen
 psummary_isen=${filename}_summary_isen
 # Destinations for final files
 fspectral=${filename}_spectral.nc
+fautocorr=${filename}_autocorr.nc
+ftimescale=${filename}_autocorr_timescale.nc
 fclimate=${filename}_climate.nc
 fclimate_isen=${filename}_climate_isen.nc
 fregion=${filename}_timeseries.nc
 fregion_isen=${filename}_timeseries_isen.nc
 fenergy=${filename}_energy.nc
-fautocorr=${filename}_autocorr.nc
 fspinclimate=${filename}_spindown${mode}xs.nc # cross-section
 fspindownpoles=${filename}_spindown${mode}poles.nc # spindown rate at the poles
-ftimescale=${filename}_timescale${mode}.nc # the timescale stuff
+fdyntimescale=${filename}_dynamical_timescale${mode}.nc # the timescale stuff
 
 # Directory management; move to save directory
 cwd=$(pwd) # directory where scripts stored (you must run this script from current directory!)
-! [ -d $input ] && echo "Error: Cannot find input directory \"$input\"." && exit 1
-! [ -d $output ] && mkdir $output
+! [ -d "$input" ] && raise "Cannot find input directory \"$input\"."
+! [ -d "$output" ] && mkdir $output
 cd $output # move here
 
 # Energy terms
@@ -166,7 +207,7 @@ check() {
   i=0 # iterate
   for ex in ${exs[@]}; do
     if [ $ex -ne 0 ]; then
-      echo "Error: One of the background processes failed: \"$(ps -p ${pids[i]} -o comm=)\"."
+      raise "One of the background processes failed: \"$(ps -p ${pids[i]} -o comm=)\"."
     fi
     let i+=1
   done
@@ -180,7 +221,7 @@ selregion() {
     pole[nN][hH]) selregion="-sellonlatbox,0,0,60,90"   ;;
     pole[sS][hH]) selregion="-sellonlatbox,0,0,-90,-60" ;;
     globe)        selregion="-sellonlatbox,0,0,-90,90" ;;
-    *) echo "Error: Invalid region ${region}." && return 1 ;;
+    *) raise "Invalid region ${region}." && return 1 ;;
   esac
   echo $selregion
 }
@@ -217,7 +258,7 @@ get_files() {
   [ -n "$2" ] && start=$2
   [ -n "$3" ] && end=$3
   files=($input/${prefix}.d????-d????.nc)
-  [ ${#files[@]} -eq 0 ] && echo "Error: No $prefix files found in ${input}." 1>&2 && exit 1
+  [ ${#files[@]} -eq 0 ] && raise "No $prefix files found in ${input}."
   for file in ${files[@]}; do
     # Get start and end days
     daystring=${file##*/}
@@ -242,7 +283,7 @@ get_files() {
       ffiles+=($file)
     fi
   done
-  [ ${#ffiles[@]} -eq 0 ] && echo "Error: No $prefix files found between day $start and ${end}." 1>&2 && exit 1
+  [ ${#ffiles[@]} -eq 0 ] && raise "No $prefix files found between day $start and ${end}."
   echo "Between $start and $end, found days $(print_days ${ffiles[@]})." 1>&2
   echo ${ffiles[@]} # intended for user to capture output
 }
@@ -271,7 +312,7 @@ spindown_files_by_init() {
     done
     spindowntsfiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
   done
-  [ ${#spindowntsfiles[@]} -eq 0 ] && echo "Error: No $psummary files found between days ${spin_start} and ${spin_end}." && exit 1
+  [ ${#spindowntsfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spin_start} and ${spin_end}."
 }
 # echo "${spindowntsfiles[@]##*/}"
 # for spindowngroup in "${spindowntsfiles[@]}"; do # testing
@@ -300,7 +341,7 @@ spindown_files_by_day() {
     done
     spindowndayfiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
   done
-  [ ${#spindowndayfiles[@]} -eq 0 ] && echo "Error: No $psummary files found between days ${spin_start} and ${spin_end}." && exit 1
+  [ ${#spindowndayfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spin_start} and ${spin_end}."
 }
 # echo "${spindowndayfiles[@]##*/}"
 # for spindowngroup in "${spindowndayfiles[@]}"; do # testing
@@ -321,10 +362,10 @@ control_climate() {
   # Calculate with CDO
   prefix=$1
   out=$2
-  # [ -r $out ] && return 0 # TODO: uncomment! but had a bunch of incomplete saves due to segfaults in cdo
-  [ -r $out ] && rm $out
   files=($(get_files $prefix))
-  [ ${#files[@]} -eq 0 ] && exit 1
+  newer $out ${files[@]} && return 0
+  [ -r $out ] && rm $out
+  [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
   echo "Getting time-means."
   commands=("${files[@]/#/ -timmean }")
   cdo $flags -ensmean ${commands[@]} $out
@@ -338,43 +379,34 @@ control_climate() {
 # but did not work. NOTE: No longer do this so forget it.
 spectral_climate() {
   # Initial
-  prefix=$pspectral
   out=$fspectral
-  # if [ -r $out ]; then # TODO: re-comment out?
-  if false; then
-    # Exit
-    echo "File exists."
-  else
-    # Merge with xarray and Dask
-    # The fancy sed transforms 'a b c d' to '"a", "b", "c", "d", '
-    files=($(get_files $prefix))
-    [ ${#files[@]} -eq 0 ] && exit 1
-    echo "Getting average spectra."
-    export PYTHONUNBUFFERED=1
-    [ -r $out ] && rm $out
+  # Merge with xarray and Dask
+  # The fancy sed transforms 'a b c d' to '"a", "b", "c", "d", '
+  files=($(get_files $pspectral))
+  newer $out ${files[@]} && return 0
+  [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
+  echo "Getting average spectra."
+  export PYTHONUNBUFFERED=1
+  [ -r $out ] && rm $out
   python3 <<EOF
-# Timer
-import time
-t1 = time.time()
-t0 = t1
-def timer(message):
-    global t1
-    t2 = time.time()
-    print(f'{message}: {t2-t1:.3f}s')
-    t1 = t2
-# Go
+import os
 import xarray as xr
+$header
+# Go
+# TODO: Add support for windowing
 print("Averaging spectra")
 ds = xr.open_mfdataset([$(echo ${files[@]} | sed 's/[^ ][^ ]*/"&", /g')],
      concat_dim='record', chunks={'f':25}, decode_cf=False)
 timer(" * Read time")
 ds = ds.mean(dim='record', keep_attrs=True) # by default attrs thrown out for all computations, which makes sense
 timer(" * Mean time")
+if os.path.exists("$out"):
+    os.remove("$out")
+ds.attrs.pop('_NCProperties', None) # causes weird error if present!
 ds.to_netcdf("$out")
 timer(" * Save time")
 EOF
-    [ $? -ne 0 ] && echo "Error: Merge failed." && exit 1
-  fi
+  [ $? -ne 0 ] && raise "Merge failed."
   # Translate from k-frequency space to k-phase speed space
   out_phase=${out%.nc}_phase.nc
   # if ! [ -r $out_phase ]; then
@@ -382,9 +414,195 @@ EOF
     [ -r $out_phase ] && rm $out_phase
     t=$(date +%s)
     python3 $f2c $out $out_phase
-    [ $? -ne 0 ] && echo "Error: Translation failed." && exit 1
+    [ $? -ne 0 ] && raise "Translation failed."
     echo " * Time for translating to phase speeds: $(($(date +%s) - t))s."
   fi
+}
+
+################################################################################
+# Autocorrelation
+# Returns autocorrelation up to N lags, from which we can perform a best-fit
+# and get a "timescale"
+################################################################################
+control_autocorr() {
+  # Just get the autocorrelation from the time-mean
+  unset outs
+  out=$fautocorr
+  if ! newer $out ${files[@]}; then
+    files=($(get_files $pfull))
+    [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
+    num=1
+    nlag=25 # up to 25 days
+    block=0 # block number
+    ncorr=2 # process in groups of 2 files, or 200 days
+    # Get correlation in blocks
+    # Note the following was wrong:
+    # mean = ds.mean(dim='time', keep_attrs=True)
+    # var = ds.var(dim='time', keep_attrs=True)
+    # corr = (((ds.isel(time=slice(i,None)) - mean) * (ds.isel(time=slice(None,-i)) - mean)).mean(dim='time') / var).mean(dim='lon')
+    for file in "${files[@]}"; do
+      ifiles+=("$file")
+      if [ $num -ne $ncorr ]; then
+        let num+=1
+        continue
+      fi
+      iout=${out%.nc}.${block}.nc
+      outs+=($iout) # record
+      echo "Using files: ${ifiles[@]##*/}"
+      stdbuf -oL -eL python3 << PYTHON
+import os
+import numpy as np
+import xarray as xr
+import climpy
+$header
+# Load files
+# TODO: Change chunk size?
+print("Getting autocorrelation")
+ds = xr.open_mfdataset([$(echo ${ifiles[@]} | sed 's/[^ ][^ ]*/"&", /g')], concat_dim='time', decode_cf=False)
+time_ = ds['time'] # cannot conflict with time module
+dt = time_.values[1] - time_.values[0]
+timer(" * Read time")
+# Make output
+dims = ('lag', 'plev', 'lat')
+lag = np.arange(0, ${nlag} + dt/2, dt)
+lag = xr.DataArray(lag, dims=('lag',), name='lag', attrs={'long_name':'lag', 'units':'days'})
+out = xr.Dataset(coords={
+    'lag':  lag,
+    'lat':  ds['lat'],
+    'plev': ds['plev'],
+    })
+longs = {
+    't': 'temperature',
+    'u': 'zonal wind',
+    }
+timer(" * Output time")
+# Get autocorrelation
+for var in ['t','u']:
+    # data = ds[var].values
+    data = ds[var].data
+    _, corr = climpy.corr(data, dt=dt, nlag=${nlag}, axis=0)
+    corr = corr.mean(axis=-1) # get mean along longitudes
+    attrs = {'long_name':longs[var] + ' autocorrelation', 'units':'none'}
+    out[var] = (dims, corr, attrs)
+timer(" * Correlation time")
+if os.path.exists("$iout"):
+    os.remove("$iout")
+out.to_netcdf("$iout")
+timer(" * Save time")
+PYTHON
+      [ $? -ne 0 ] && raise "Autocorr calculation failed."
+      # Reset vars
+      let num=1
+      let block+=1
+      unset ifiles
+    done
+    # Merge the resulting files
+    if [ ${#outs[@]} -eq 1 ]; then
+      mv $outs $out
+    else
+      # ncecat -O $out ${outs[@]}
+      echo "Merging output."
+      t=$(date +%s)
+      cdo $flags -ensmean ${outs[@]} $out
+      rm ${outs[@]} 2>/dev/null
+      echo " * Merge time: $(($(date +%s) - t))"
+    fi
+  fi
+
+  # Next get the best-fit red noise timescale
+  # TODO: Only exit if overwrite disabled
+  corrs=$out
+  out=$ftimescale
+  if [ -r $out ] && command ncdump -h $out | grep '_sigma('; then
+    # Special
+    echo "Fixing names."
+    ncrename -O -h -v t_sigma,t_err $out
+    ncrename -O -h -v u_sigma,u_err $out
+  fi
+  newer $out $corrs && return 0
+  stdbuf -oL -eL python3 << PYTHON
+import os
+import climpy
+import numpy as np
+import xarray as xr
+$header
+# Get best fit spectrum, using climpy
+dims = ('plev', 'lat')
+ds = xr.open_dataset("$corrs", decode_cf=False)
+lag = ds['lag']
+dt = lag.values[1] - lag.values[0]
+units = lag.attrs['units']
+out = xr.Dataset(coords={
+    'lat':  ds['lat'],
+    'plev': ds['plev'],
+    })
+longs = {
+    't': 'temperature',
+    'u': 'zonal wind',
+    }
+timer(" * Init time")
+# Iterate over variables
+for var in ['t','u']:
+    # Calculate
+    data = ds[var].values # lag is on first dimension, right?
+    tau, sigma = climpy.rednoisefit(data, dt=dt, corr=True, axis=0)
+    tau, sigma = tau.squeeze(), sigma.squeeze()
+    # Save
+    attrs = {'long_name': longs[var] + ' autocorrelation timescale estimate', 'units': units}
+    out[var] = (dims, tau, attrs)
+    attrs = {'long_name': 'standard error in ' + longs[var] + ' autocorrelation timescale estimate', 'units': units}
+    out[var + '_err'] = (dims, sigma, attrs)
+timer(" * Fit time")
+# Save
+if os.path.exists("$out"):
+    os.remove("$out")
+out.to_netcdf("$out")
+timer(" * Save time")
+PYTHON
+  [ $? -ne 0 ] && raise "Best fit calculation failed."
+
+  # With CDO
+  # echo "Getting lag-1 autocorrelation from the time series."
+  # ntime=$(cdo ntime tmp.nc 2>/dev/null)
+  # timesteps=$(seq 1 $ntime | xargs | tr ' ' ',') # list of timesteps
+  # timesteps1=${timesteps#*,} # trim first timestep
+  # timestepsN=${timesteps%,*} # trim last one
+  # t=$(date +%s)
+  # cdo $flags -timcor -seltimestep,$timesteps1 tmp.nc \
+  #   -seltimestep,$timestepsN tmp.nc $fautocorr
+  # rm tmp.nc # remove file
+}
+
+################################################################################
+# EOFs with xarray and climpy
+################################################################################
+control_eof_climpy() {
+  # Concatenate and select
+  # WARNING: If you cancel this process while series.nc is being created,
+  # EOF process may fail because file didn't finish writing!
+  # if true; then #! [ -r ${pseries}.nc ]; then
+  # [ -r ${peofs}_nh.nc ] && return 0
+  files=($(get_files $psummary)) # full record
+  if ! newer ${pseries}.nc ${files[@]}; then
+    echo "Merging days"
+    [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
+    cdo $flags -select,name='ke,km,u,emf,ehf,t' ${files[@]} ${pseries}.nc
+  fi
+
+  # Get EOFs for each region
+  # NOTE: We no longer save SH modes, and also no longer calculate vertical averages
+  export PYTHONUNBUFFERED=1
+  [ -r ${peofs}_sh.nc ] && rm ${peofs}_sh.nc # conserve space and only get NH
+  [ -r ${peofs}_sh_vert.nc ] && rm ${peofs}_sh_vert.nc
+  [ -r ${peofs}_nh_vert.nc ] && rm ${peofs}_nh_vert.nc
+  for region in nh; do
+    # newer ${peofs}_${region}.nc ${pseries}.nc && continue
+    newer ${peofs}_${region}.nc ${pseries}.nc && continue
+    echo "EOFs for region: $region" # will be 20N to 70N
+    python3 $eof $region 0 ${pseries}.nc ${peofs}_${region}.nc
+    [ $? -ne 0 ] && raise "EOF failed."
+  done
+  return 0
 }
 
 ################################################################################
@@ -402,23 +620,30 @@ EOF
 # on with param ids (see pe_cdo.txt and pe_nco.txt in hs_base_t42l10s).
 control_climate_energy() {
   # Initial stuff
-  prefix=$psummary # has to be this
-  files=($(get_files $prefix))
-  [ ${#files[@]} -eq 0 ] && exit 1
+  unset regions
+  files=($(get_files $psummary))
+  for region in globe nh sh; do
+    if ! newer energy_${region}.nc ${files[@]}; then
+      regions+="$region "
+    fi
+  done
+  [ $? -ne 0 ] && exit 1 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
   echo "Getting time series of energy budget."
-  # files=($(get_files $prefix 0 100000)) # full record
+  # files=($(get_files $psummary 0 100000)) # full record
   # Iterate over files, because 128 parallel process limit
   i=0
   pmax=8
   for i in $(seq 1 ${#files[@]}); do
+    # Energy
     echo "File: $i"
     file=${files[i-1]}
-    { cdo $flags -mulc,101325 -vertmean -selname,$energy_params $file energy.${i}.nc
+    {
+      cdo $flags -mulc,101325 -vertmean -selname,$energy_params $file energy.${i}.nc
       ncap2 -A -s 'lon[$lon] = float(0.0)' energy.${i}.nc
       ncatted -a long_name,lon,o,c,'longitude' \
               -a units,lon,o,c,'degrees_east' \
               -a axis,lon,o,c,'Y' energy.${i}.nc
-      for region in globe nh sh; do
+      for region in $regions; do
         cdo --no_warnings $flags -fldmean $(selregion $region) \
           energy.${i}.nc energy_${region}.${i}.nc
       done
@@ -436,51 +661,20 @@ control_climate_energy() {
   # to ignore e.g. first 500 files, if you re-ran experiments after spinup to
   # get new variables. Or when working with CDO, just *always* make sure files consistent!
   echo "Merging files."
-  for region in globe nh sh; do
+  for region in $regions; do
     out=$fenergy
+    ! $overwrite && [ -r $out ] && continue
     [ "$region" != globe ] && out=${fenergy%.nc}_${region}.nc
     echo "Output: $out"
-    { cdo $flags -mergetime energy_${region}.*.nc $out # merge the means
+    {
+      cdo $flags -mergetime energy_${region}.*.nc $out # merge the means
       ncks --no-abc -O -C -x -v lon,lat $out $out
     } &
   done
   wait
   rm energy.*.nc energy_*.*.nc
+  return 0
 }
-
-################################################################################
-# EOFs with xarray and climpy
-################################################################################
-control_eof_climpy() {
-  # Concatenate and select
-  # WARNING: If you cancel this process while series.nc is being created,
-  # EOF process may fail because file didn't finish writing!
-  # if true; then #! [ -r ${pseries}.nc ]; then
-  # [ -r ${peofs}_nh.nc ] && return 0
-  if ! [ -r ${pseries}.nc ]; then
-  # if true; then
-    # Initial stuff
-    echo "Merging days"
-    prefix=$psummary
-    files=($(get_files $prefix)) # full record
-    cdo $flags -select,name='ke,km,u,emf,ehf,t' ${files[@]} ${pseries}.nc
-  fi
-
-  # Get EOFs for each region
-  export PYTHONUNBUFFERED=1
-  for region in nh; do
-    echo "EOFs for region: $region" # will be 20N to 70N
-    [ -r ${peofs}_${region}_vert.nc ] && rm ${peofs}_${region}_vert.nc
-    # python3 $cwd/mergedays_eofs.py $region 1 ${pseries}.nc ${peofs}_${region}_vert.nc
-    # [ $? -ne 0 ] && echo "Error: EOF failed." && exit 1
-    python3 $eof $region 0 ${pseries}.nc ${peofs}_${region}.nc
-    [ $? -ne 0 ] && echo "Error: EOF failed." && exit 1
-  done
-  # Conserve space, only do this for NH
-  [ -r ${peofs}_sh_vert.nc ] && rm ${peofs}_sh_vert.nc
-  [ -r ${peofs}_sh.nc ] && rm ${peofs}_sh.nc
-}
-
 
 ################################################################################
 # Spindown stuff
@@ -506,7 +700,7 @@ spindown_ensemble_mean_ts() {
     members=(${spindowngroup[@]##*/${psummary}.})
     members=(${members[@]%%-*})
     [ ! -z $count ] && [ $count != $newcount ] && \
-      echo "Error: $newcount spindown runs in this group, but $count files in previous groups." && exit 1
+      raise "$newcount spindown runs in this group, but $count files in previous groups."
     count=$newcount
     # Next get ensemble mean of files; timesteps will be adopted from the first input file
     daystring=${spindowngroup[0]#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-}
@@ -515,7 +709,8 @@ spindown_ensemble_mean_ts() {
     echo "Spindown runs in the ${daystring} group: ${members[@]}."
     cdo $flags -ensmean ${spindowngroup[@]} $outfile &>/dev/null # log not necessary here
     outfiles+=($outfile)
-  done; wait # wait for everything
+  done
+  wait # wait for everything
   # From results, get ensemble mean of full spindown process
   echo "Merging the ensemble means: ${outfiles[@]##*/}."
   cdo $flags -mergetime ${outfiles[@]} $fspinclimate
@@ -578,7 +773,7 @@ spindown_regional_mean_ts() {
   # Special treatment where we want to average cross-sections from each hemisphere
   # Maybe modify this maybe
   file1=(${filename}_*polenh.nc) file2=(${filename}_*polesh.nc)
-  [[ ${#file1[@]} != 1 || ${#file2[@]} != 1 ]] && echo "Error: Had issues averaging poles together." && exit 1
+  [[ ${#file1[@]} != 1 || ${#file2[@]} != 1 ]] && raise "Had issues averaging poles together."
   ncea $file1 $file2 $fspindownpoles
   rm $file1 $file2 # each pole should be thought of as additional ensemble member; so 50 runs == 100
 }
@@ -586,76 +781,84 @@ spindown_regional_mean_ts() {
 # Timescale stuff
 dynamical_timescale() {
   echo "Esimating dynamical timescale."
-  ! [ -r $fspindownpoles ] && echo "Error: Spindown file over poles $fspindownpoles is not available."
-  ! [ -r $fclimate ] && echo "Error: The climate file $fclimate is not available."
+  ! [ -r $fspindownpoles ] && raise "Spindown file over poles $fspindownpoles is not available."
+  ! [ -r $fclimate ] && raise "The climate file $fclimate is not available."
   # Python approach due to illegible ensemble data
-  # python3 -c | tee ${plog}timescale.log << EOF
+  # python3 -c | tee ${input}/timescale.log << EOF
   export PYTHONUNBUFFERED=1
   import=postprocess_funcs # name of module
-  python3 $dyn $fspindownpoles $fclimate $ftimescale 
-  ncks --no-abc -O -x -v lon,lat,time $ftimescale $ftimescale # drop vars and alphabetize
+  python3 $dyn $fspindownpoles $fclimate $fdyntimescale 
+  ncks --no-abc -O -x -v lon,lat,time $fdyntimescale $fdyntimescale # drop vars and alphabetize
 }
 
+################################################################################
 # Main function for applying post-processing
+################################################################################
 driver() {
+  # Forcing data
+  if ! newer $output/forcing.nc $input/../forcing.nc; then
+    echo "Copying forcing data."
+    cp $input/../forcing.nc $output
+  fi
+
   # Climate means
   if $control_climate; then
     echo "Control climate."
-    log=${plog}control_climate.log
+    log=${input}/climate.log
     parallel control_climate $psummary $fclimate
   fi
   if $control_climate_isen; then
     echo "Isentropic control climate."
-    log=${plog}control_climate.log
+    log=${input}/climate_isen.log
     parallel control_climate $psummary_isen $fclimate_isen
   fi
   if $spectral_climate; then
     echo "Average phase-speed spectra."
-    log=${plog}control_climate.log
+    log=$input/climate_spectral.log
     parallel spectral_climate
   fi
 
-  # Energy time series, EOFs
-  if $control_climate_energy; then
-    echo "Control global energy budget time series."
-    log=${plog}control_energy_ts.log
-    parallel control_climate_energy
+  # Autocorrelation, EOFs, time series
+  if $control_autocorr; then
+    echo "Autocorrelation for pointwise data."
+    log=$input/climate_autocorr.log
+    parallel control_autocorr
   fi
   if $control_eof; then
-    echo "Control 2D EOFs of energy terms."
-    log=${plog}eofs.log
+    echo "Control 2D EOFs."
+    log=$input/climate_eofs.log
     # parallel control_eof
     parallel control_eof_climpy
+  fi
+  if $control_climate_energy; then
+    echo "Control global energy budget time series."
+    log=$input/climate_energy.log
+    parallel control_climate_energy
   fi
 
   # Spindown processing
   # Get the full cross-section
   if $spindown_ensemble_ts; then
     echo "Spindown ensemble mean time series."
-    log=${plog}spindown${mode}.log
+    log=$input/spindown${mode}_mean.log
     parallel spindown_ensemble_mean_ts
   fi
   # Preserve each record but take area averages
   if $spindown_regional_ts; then
     echo "Spindown regional average time series for each branch."
-    log=${plog}spindown${mode}.log
+    log=$input/spindown${mode}_ensemble.log
     parallel spindown_regional_mean_ts
   fi
   # Timescale
   if $spindown_timescale; then
     echo "Spindown dynamical timescale."
-    log=${plog}spindown${mode}.log
+    log=$input/spindown${mode}_timescale.log
     parallel dynamical_timescale
   fi
 }
 
 # Call driver!
 # Nice to organize it this way, so the final block of code shows up in ctags
-# NOTE: First we copy over forcing data
-if [ -r $input/../forcing.nc ] && ! [ -r $output/forcing.nc ]; then
-  echo "Copying forcing data."
-  cp $input/../forcing.nc $output
-fi
 driver
 exit 0
 

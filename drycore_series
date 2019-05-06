@@ -61,6 +61,11 @@ module load nco &>/dev/null
 # module load ncl &>/dev/null # use conda versions instead, already on path
 # module load cdo/1.9.4 &>/dev/null
 
+# Error
+raise() {
+  echo "Error: $@" 1>&2
+  exit 1
+}
 # Default settings
 # NOTE: Really can't push CFL number! Shoot for around 0.5. Got almost instant
 # model blow up at 1200s with T106, since upper-level winds probably get to
@@ -92,11 +97,11 @@ testmode=false
 testname=test # default name of directory
 initname=init
 testdays=5
-testblocks=1 # number of blocks of testdays
+testblocks=5 # number of blocks of testdays
 # For supercomputer, idea will be to submit all jobs for the series
 # simultaneously, by auto-generating a PBS script
 super=false
-diag_table=diag_table_default
+diag_default=diag_table_default
 [[ $HOSTNAME =~ cheyenne* ]] && super=true
 # Parse input
 unset series_name flags_global
@@ -116,13 +121,12 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     -tn=*|--testname=*)   testname=${1#*=} ;;
     -in=*|--initname=*)   initname=${1#*=} ;;
     -c=*|-np=*|--cores=*) cores=${1#*=} ;;
-    -p=*|--process=*)     pflags="${1#*=}" ;; # extra flags for processing script
     -n=*|--nodes=*) nodes=${1#*=} ;;
     -m=|--mode=*) runmode=${1#*=} ;;
     -1=|--1=*) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
     -2=|--2=*) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
     -*) flags_global+="$1 " ;;
-    *) [ -n "$series_name" ] && echo "Error: More than one experiment series specified." && exit 1
+    *) [ -n "$series_name" ] && raise "More than one experiment series specified."
        series_name="$1" ;;
   esac; shift # shift by at least one
 done
@@ -143,10 +147,8 @@ reso="${reso%%_*}"
 
 # Run really fast test run
 if $testmode; then
-  unset flags_global # no resume or new days
-  # rdir="${force}_base2_t95l60e" # override previous directory
+  # exp_restart="${force}_base2_t95l60e" # override previous directory
   # rdays=d0450-d0500 # set restart directory days (leave empty to just use the last subfolder in directory)
-  # pflags+=" -d" # don't move/delete anything; also implies flags="--keep-xyz "
   outfreq=12
   frequnits=hours
   filename=test
@@ -167,8 +169,8 @@ txyzdata=$(seq $ktstart $days $ktend | tr $'\n' ',') # for saving
 # Storage information for runscript and post-processing script
 storage=$HOME
 scratch=$HOME # on Euclid, home is unmounted/not backed up; so disk I/O is quick
-f90dir=$HOME/gfdl-drycore # model code folder
-bindir=./drycore-${HOSTNAME%%.*} # compiled model code folder (should be in this folder)
+srcdir=$HOME/gfdl-drycore # model code folder
+bindir=./bin # compiled model code folder (should be in this folder)
 case ${HOSTNAME%%.*} in
   # olbers)
   #   scratch=''
@@ -180,32 +182,25 @@ case ${HOSTNAME%%.*} in
     case $reso in
       # t42l20s) scratch=/mdata2/ldavis ;;
       t42l20s) scratch=/mdata1/ldavis ;;
-      *) echo "Error: Unknown scratch destination for experiment with resolution ${reso}." ;;
+      *) raise "Unknown scratch destination for experiment with resolution ${reso}." ;;
     esac
   ;; cheyenne*)
     storage=/glade/u/home/davislu
     scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
-    bindir=drycore-cheyenne
-  ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+  ;; *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
 ! [ -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
 # Copy over the appropriate executable file
 cp $bindir/fms.x ./ # location of executables
-[ $? -ne 0 ] && echo "Error: fms.x not found in \"$bindir\"." && exit 1
+[ $? -ne 0 ] && raise "fms.x not found in \"$bindir\"."
 cp $bindir/mppnccombine.x ./ # location of executables
-[ $? -ne 0 ] && echo "Error: mppnccombine.x not found in \"$bindir\"." && exit 1
+[ $? -ne 0 ] && raise "mppnccombine.x not found in \"$bindir\"."
 
 #------------------------------------------------------------------------------#
 # Helper functions
 #------------------------------------------------------------------------------#
-# Error message for functions from which we want to capture stdout
-err() {
-  echo $@ 1>&2
-  exit 1
-}
-
 # Array membership
-array_in() {
+member() {
   [[ " ${@:2} " =~ " ${1} " ]]
 }
 
@@ -214,119 +209,121 @@ array_in() {
 #   series does not change that value), will not add to arrays
 # * Function accounts for situation when you pass an empty string parameter
 #   or negative number, and have weird strings like "v-" and "v''"
-array_add() {
+nml_add() {
   while [ $# -ne 0 ]; do
-    if [ -n "$2" ] && [ "${#2}" -gt 1 ] && [ "$2" != "v-" ] && [ "$2" != "v''" ]; then
-      [ "${2:0:1}" != v ] && err "Error: Values must be input as v<value>."
+    if [ -n "$2" ] && [ "$2" != "-" ] && [ "$2" != "''" ]; then
       nml_params+=("$1")
-      nml_values+=("${2#v}")
+      nml_values+=("$2")
     fi
     shift 2
   done
 }
 
-# Get the model run name
+# Determine model run name, accounting for "intersection" of experiment series
+# Sets global model run variables 'exp_restart' and 'exp_name'
 exp_name() {
-  # First allow "continuation experiments" -- picking up for new timescale
-  # experiment from the end of the control run from an old experiment
-  local opt param1 param2 rparam1 rparam2 exp_in exp_out sweep_in sweep_out
-  exp_in=$1
+  # Get params for this experiment and the "continuation" experiment, e.g.
+  # --1=40:100 means run this experiment with parmeter 100, from experiment
+  # with parameter 40.
+  # NOTE: Cannot have "diagonal" continuation experiments, they should always
+  # be from an adjacent run in a linear the experiment series.
+  local opt contin param1 param2 rparam1 rparam2 isweep fsweep
   param1=$2
   param2=$3
-  sweep_in=${exp_in#*_}
-  sweep_in=${sweep_in%%_*}
-  if [[ $param1 =~ : ]]; then
-    rparam1=${param1%:*}
-    param1=${param1#*:}
-  fi
-  if [[ $param2 =~ : ]]; then
-    rparam2=${param2%:*}
-    param2=${param2#*:}
-  fi
+  isweep=${1#*_}
+  isweep=${isweep%%_*} # e.g. katmos, tgrad
+  [[ $param1 =~ : ]] && rparam1=${param1%:*} param1=${param1#*:}
+  [[ $param2 =~ : ]] && rparam2=${param2%:*} param2=${param2#*:}
+  [ -n "$rparam1" ] && [ -n "$rparam2" ] && raise "Cannot do 'diagonal' continuation experiments."
   # Detect whether this is a 'base' experiment. Experiment series can
   # 'intersect' each other, and this ensures we aren't duplicating model runs
-  if [ -n "$rparam1" ] && [ -n "$rparam2" ]; then
-    err "Error: Cannot do 'diagonal' continuation experiments."
-  fi
-  # This loop will be through only 1 or 2 params, since we enforce at least
-  # rparam1 or rparam2 are empty. Idea is restarts should be taken from the
-  # end of an experiment where only *one* param was changed.
+  exp_name= # but don't unset exp_restart because maybe it was manually declared for the start of this experiment
   for p1 in $rparam1 $param1; do
     for p2 in $rparam2 $param2; do
       # Continuation experiments
       # NOTE: Continue from the *preceding* continuation experiment if possible,
       # rather than from a cold start
-      unset c
-      if [ -n "$exp_out" ]; then
-        c=c
-        rdir=$exp_out
-        if ! [[ $rdir =~ base ]]; then
-          rdir=${rdir}c
+      if [ -z "$exp_name" ]; then
+        contin=
+      else
+        contin=c
+        if [[ $exp_name =~ base ]]; then
+          exp_restart=${exp_name}
+        else
+          exp_restart=${exp_name}c
         fi
       fi
       # Get experiment sweep name, *ensuring that we avoid duplicating runs
       # by deferring to different names when possible*
       # TODO: Add to these.
-      opt=${sweep_in%-*}
+      opt=${isweep%-*}
       opt=${opt##*[a-z]} # get the option
-      sweep_out=$sweep_in # by default, will be same
-      case $sweep_in in
-        # 1D paramter sweeps
+      fsweep=$isweep # by default, will be same
+      case $isweep in
+        # 1D parameter sweeps
         # NOTE: The fixed experiments and katmos1 experiments do not
         # have the same 'base'.
         base[12])
-          sweep_out=$sweep_in p1= p2=
+          p1= p2=
           ;;
         katmos[123]|katmos[123]-mean|katmos[123]-anom)
-          [[ $p1 == 40 ]] && sweep_out=base${opt} p1=
+          [[ $p1 == 40 ]] && fsweep=base${opt} p1=
           ;; # base is 40 day zonal-mean or anomaly damping
         tgrad[12])
-          [[ $p1 == 60 ]] && sweep_out=base${opt} p1=
+          [[ $p1 == 60 ]] && fsweep=base${opt} p1=
           ;; # base is 60K contrast
+        tmean[12])
+          [[ $p1 == 300 ]] && fsweep=base${opt} p1=
+          ;; # base is 300K mean
         tshift[12])
-          [[ $p1 == 0 ]] && sweep_out=base${opt} p1=
+          [[ $p1 == 0 ]] && fsweep=base${opt} p1=
           ;; # zero just means no shift
         kfric[12])
-          [[ $p1 == 1  ]] && sweep_out=base${opt} p1=
+          [[ $p1 == 1  ]] && fsweep=base${opt} p1=
           ;;
         kstrat[12])
-          [[ $p1 == 40 ]] && sweep_out=base2 p1=
+          [[ $p1 == 40 ]] && fsweep=base2 p1=
           ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
-        # 2D paameter spaces
+        # 2D parameter spaces
         katmos[123]-tgrad)
-          num=${sweep_in#katmos}
-          num=${sweep_in%-*}
-          [[ $p1 == 40 && $p2 == 60 ]] && sweep_out=base${opt} p1= p2=
-          [[ $p1 == 40 ]] && sweep_out=tgrad${opt} p1=$p2 p2=
-          [[ $p2 == 60 ]] && sweep_out=katmos${opt} p2=
+          [[ $p1 == 40 && $p2 == 60 ]] && fsweep=base${opt} p1= p2=
+          [[ $p1 == 40 ]] && fsweep=tgrad${opt} p1=$p2 p2=
+          [[ $p2 == 60 ]] && fsweep=katmos${opt} p2=
+          ;;
+        katmos[123]-tmean)
+          [[ $p1 == 40 && $p2 == 300 ]] && fsweep=base${opt} p1= p2=
+          [[ $p1 == 40 ]] && fsweep=tmean${opt} p1=$p2 p2=
+          [[ $p2 == 300 ]] && fsweep=katmos${opt} p2=
           ;;
         katmos[123]-tshift)
-          [[ $p1 == 40 && $p2 == 0 ]] && sweep_out=base${opt} p1= p2=
-          [[ $p1 == 40 ]] && sweep_out=tshift p1=$p2 p2=
-          [[ $p2 == 0 ]] && sweep_out=katmos${opt} p2=
-          ;;
-        tgrad-tshift)
-          [[ $p1 == 60 && $p2 == 0 ]] && sweep_out=base${opt} p1= p2=
-          [[ $p1 == 60 ]] && sweep_out=tshift p1=$p2 p2=
-          [[ $p2 == 0 ]] && sweep_out=tgrad p2=
+          [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base${opt} p1= p2=
+          [[ $p1 == 40 ]] && fsweep=tshift p1=$p2 p2=
+          [[ $p2 == 0 ]] && fsweep=katmos${opt} p2=
           ;;
         katmos[123]-kfric)
-          [[ $p1 == 40 && $p2 == 1 ]] && sweep_out=base${opt} p1= p2=
-          [[ $p1 == 40 ]] && sweep_out=kfric${opt} p1=$p2 p2=
-          [[ $p2 == 1 ]] && sweep_out=katmos${opt} p2=
+          [[ $p1 == 40 && $p2 == 1 ]] && fsweep=base${opt} p1= p2=
+          [[ $p1 == 40 ]] && fsweep=kfric${opt} p1=$p2 p2=
+          [[ $p2 == 1 ]] && fsweep=katmos${opt} p2=
+          ;;
+        tgrad-tshift)
+          [[ $p1 == 60 && $p2 == 0 ]] && fsweep=base${opt} p1= p2=
+          [[ $p1 == 60 ]] && fsweep=tshift p1=$p2 p2=
+          [[ $p2 == 0 ]] && fsweep=tgrad p2=
+          ;;
+        # Forcing experiments
+        katmos[123]-arctic|katmos[123]-tropical|katmos[123]-vortex)
           ;;
         *)
-          err "Error: Unknown experiment \"${sweep_in}\"."
+          raise "Unknown experiment \"${isweep}\"."
           ;;
       esac
       [ "$p1" == na ] && unset p1
       [ "$p2" == na ] && unset p2
       [ -n "$p1" ] && p1="_p$(printf "%08.3f" $p1)"
       [ -n "$p2" ] && p2="p$(printf "%08.3f" $p2)"
-      exp_out=${force}_${sweep_out}_${reso}${p1}${p2}${c}
+      exp_name=${force}_${fsweep}_${reso}${p1}${p2}${contin}
     done
   done
-  echo $exp_out
 }
 
 # Determine namelist changes and diag table changes
@@ -337,56 +334,63 @@ exp_name() {
 exp_setup() {
   # Parse the experiment name, figure out what needs to be written
   # The 'p values' are values specified in experiment name as pXXXpYYYpZZZ
-  unset kbl ktrop kstrat kmeso kdepth kfric blopt damp delh exph
-  unset nml_params nml_values p_values message
-  local exp_name=$1
-  exp_sweep=${exp_name#*_}
-  exp_sweep=${exp_sweep%%_*}
-  if [[ "$exp_name" =~ _p[0-1] ]]; then # i.e. has param values on end
-    p_values=${exp_name##*_}
-    p_values=${p_values%c}
-    p_values=($(echo $p_values | tr -t p ' ' | xargs printf "%.3f "))
+  local kbl ktrop kstrat kmeso kdepth kfric levels blopt damp delh exph tmean params sweep message
+  local butler_arctic butler_tropical butler_vortex
+  unset nml_params nml_values
+  sweep=${1#*_}
+  sweep=${sweep%%_*}
+  if [[ "$1" =~ _p[0-1] ]]; then # i.e. has param values on end
+    params=${1##*_}
+    params=${params%c}
+    params=($(echo $params | tr -t p ' ' | xargs printf "%.3f "))
   fi
-  # echo $exp_name 1>&2
-  # echo ${p_values[@]} 1>&2
   #----------------------------------------------------------------------------#
   # Add to this as you design new experiment series
   #----------------------------------------------------------------------------#
-  case $exp_sweep in
+  case $sweep in
     # Base
     base1)
       kbl=-40
-    ;; base2)
+      ;;
+    base2)
+      ;;
 
     # Friction
-    ;; kfric[12]*) # friction experiments
-      kfric=-${p_values[0]}
+    kfric[12]*) # friction experiments
+      kfric=-${params[0]}
+      ;;
 
     # Damp full atmosphere
     # Also includes diagonal experiments where multiple params changed
-    ;; katmos[123]*)
+    katmos[123]*)
       # Check experiments with 'dash' in name, make sure enough params were
       # specified or set the other param ourselves.
-      prefix=${exp_sweep%-*}
-      suffix=${exp_sweep#*-}
-      ktrop=-${p_values[0]}
-      if [ "$suffix" == kfric ]; then
-        kfric=-${p_values[1]} # diagaonal experiment
-        [ -z "$kfric" ] && err "Error: Need second param for diagonal experiment."
-      elif [ "$suffix" == tgrad ]; then
-        delh=${p_values[1]} # diagaonal experiment
-        [ -z "$delh" ] && err "Error: Need second param for diagonal experiment."
-      elif [ "$suffix" == tshift ]; then
-        exph=${p_values[1]} # diagaonal experiment
-        [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
-      elif [ "$suffix" == anom ]; then
-        ktrop=-40,$ktrop
-      elif [ "$suffix" == mean ]; then
-        ktrop=$ktrop,-40
-      elif [ "$suffix" != "$exp_sweep" ]; then
-        err "Error: Unknown sweep ${exp_sweep}."
+      prefix=${sweep%-*}
+      suffix=${sweep#*-}
+      ktrop=-${params[0]}
+      if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
+        case "$suffix" in
+          # Special configurations
+          anom) ktrop=-40,$ktrop ;;
+          mean) ktrop=$ktrop,-40 ;;
+          arctic) butler_arctic=.true. ;;
+          tropical) butler_tropical=.true. ;;
+          vortex) butler_vortex=.true. ;;
+          *) [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
+          # True 'diagonal' experiments
+          case "$suffix" in # diagaonal experiment
+            kfric) kfric=-${params[1]} ;;
+            tgrad) delh=${params[1]} ;;
+            tmean) tmean=${params[1]} ;;
+            tshift) exph=${params[1]} ;;
+            *) raise "Unknown sweep ${sweep}." ;;
+          esac
+          ;;
+        esac
       fi
-      kstrat=$ktrop # if hs forcing, will not change anything
+      # Match strat and meso forcing to ktrop, but this should not change anything
+      # for Held-Suarez forcing
+      kstrat=$ktrop
       kmeso=$ktrop
       # Next, separately scale boundary layer damping rate
       blopt=${prefix##*[a-z]} # get number
@@ -395,76 +399,85 @@ exp_setup() {
           [01]) ikbl=$iktrop ;; # keep surface boundary layer equal to value in rest of atmosphere
           2) ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at 10
           3) ikbl=-$(bc -l <<< "scale=3; (4^-1 + (${iktrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
-          *) err "Error: Unknown blopt ${blopt}." ;;
+          *) raise "Unknown blopt ${blopt}." ;;
         esac
         kbl=$kbl,$ikbl # mean and anomaly components
       done
       kbl=${kbl#,} # trim leading comma
+      ;;
 
     # Damp stratosphere
-    ;; kstrat[12]*) # stratosphere damping experiments
+    kstrat[12]*) # stratosphere damping experiments
       # Parse the depth and stuff
-      prefix=${exp_sweep%-*}
-      suffix=${exp_sweep#*-}
-      kstrat=-${p_values[0]}
-      kdepth=${p_values[1]} # param 2 is depth of transition region
-      if [ -z "$kdepth" ]; then
-        err "Error: Need to specify transition depth as second parameter."
-      fi
+      prefix=${sweep%-*}
+      suffix=${sweep#*-}
+      kstrat=-${params[0]}
+      kdepth=${params[1]} # param 2 is depth of transition region
+      [ -z "$kdepth" ] && raise "Need to specify transition depth as second parameter."
+      # Whether to damp mesosphere more stronly
       damp=${prefix#*[^12]}
-      if [ "$damp" == 1 ]; then
-        damp=constant
-      elif [ "$damp" == 2 ]; then
-        damp=linear
-      else
-        err "Error: Unknown stratosphere damping option ${damp}."
-      fi
+      case "$damp" in
+        1) damp=constant ;;
+        2) damp=linear ;;
+        *) raise "Unknown stratosphere damping option ${damp}." ;;
+      esac
       # Detect other options
-      if [ "$suffix" == anom ]; then
-        kstrat=-40,$kstrat
-      elif [ "$suffix" == mean ]; then
-        kstrat=$kstrat,-40
-      elif [ -n "$suffix" ]; then
-        err "Error: Unknown suffix option ${suffix}."
-      fi
+      case "$suffix" in
+        anom) kstrat=-40,$kstrat ;;
+        mean) kstrat=$kstrat,-40 ;;
+        *) raise "Unknown suffix option ${suffix}." ;;
+      esac
+      ;;
 
     # Perturb the equator-pole temp gradient
-    ;; tshift[12])
-      exph=${p_values[0]}
+    tshift[12])
+      exph=${params[0]}
+      ;;
+
+    # The mean temp ones
+    tmean[12]*)
+      tmean=${params[0]}
+      ;;
 
     # The equator-pole equilibrium difference
-    ;; tgrad[12]*) # temp gradient experiments
-      delh=${p_values[0]}
-      prefix=${exp_sweep%-*}
-      suffix=${exp_sweep#*-}
+    tgrad[12]*) # temp gradient experiments
+      delh=${params[0]}
+      prefix=${sweep%-*}
+      suffix=${sweep#*-}
+      # Boundary layer
       blopt=${prefix##*[a-z]} # get number
-      if [ "$blopt" == 1 ]; then
-        kbl=-40 # keep surface boundary layer equal to value in rest of atmosphere
-      elif ! [[ "$blopt" =~ [23] ]]; then
-        err "Error: Unknown blopt ${blopt}."
+      case "$blopt" in
+        [01]) kbl=-40 ;; # keep surface boundary layer equal to value in rest of atmosphere ;;
+        [23]) ;; # do nothing
+        *) raise "Unknown blopt ${blopt}."
+      esac
+      # Diagonal experiments
+      if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
+        [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
+        case "$suffix" in
+          tshift) exph=${params[1]} ;;
+          *) raise "Unknown sweep ${sweep}." ;;
+        esac
       fi
-      if [ "$suffix" == tshift ]; then
-        exph=${p_values[1]}
-        [ -z "$exph" ] && err "Error: Need second param for diagonal experiment."
-      elif [ "$suffix" != "$exp_sweep" ]; then
-        err "Error: Unknown sweep ${exp_sweep}."
-      fi
+      ;;
 
     # Unknown
-    ;; *) err "Error: Unknown experiment series \"$exp_sweep\"."
-  ;; esac
+    *) raise "Unknown experiment series \"$sweep\"."
+      ;;
+  esac
 
   #----------------------------------------------------------------------------#
   # Store namelist changes in two arrays, so we can also
   # nicely print those changes
   #----------------------------------------------------------------------------#
   # Forcing settings
-  array_add delh v$delh exp_h v$exph
-  array_add teq_mode v\'$force\' damp_mode v\'$force\' strat_damp v\'$damp\'
-  array_add ktrop v$ktrop kfric v$kfric kbl v$kbl kstrat v$kstrat kmeso v$kmeso z_kdepth v$kdepth
+  nml_add teq_mode \'$force\' damp_mode \'$force\' strat_damp \'$damp\' # modes
+  nml_add delh "$delh" t_mean "$tmean" exp_h "$exph" # equilibrium temp stuff
+  nml_add ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping
+  nml_add butler_arctic "$butler_arctic" butler_tropical "$butler_tropical" butler_vortex "$butler_vortex" # forcing
   # Timing variables
   # These ones are not experiment dependent so far, and are *global*
-  array_add dt_atmos v$dt days v$days seconds v$secs
+  nml_add dt_atmos "$dt" days "$days" seconds "$secs"
   # Set horizontal coordinates
   ntrunc=${reso%l*}
   ntrunc=${ntrunc#t}
@@ -475,28 +488,28 @@ exp_setup() {
     95)  nlat=144 ;; # for 36-core Cheyenne nodes
     106) nlat=160 ;;
     170) nlat=256 ;;
-    *) err "Error: Invalid truncation number \"$ntrunc\"." ;;
+    *) raise "Invalid truncation number \"$ntrunc\"." ;;
   esac
   nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
   nlon=$(($nlat * 2)) # always twice the res
-  array_add num_fourier v$ntrunc num_spherical v$nsphere lat_max v$nlat lon_max v$nlon
+  nml_add num_fourier "$ntrunc" num_spherical "$nsphere" lat_max "$nlat" lon_max "$nlon"
   # Now vertical resolution options
   # Will raise error if string-specifier is unknown
   vert=${reso#*l}
   case $vert in
-    *e) coord=input;      nlev=60;        levels=$f90dir/levels_era.nml ;; # ERA-Interim coordinates
-    *p) coord=pk_sigma;   nlev=${vert%p}; levels= ;;
-    *s) coord=even_sigma; nlev=${vert%s}; levels= ;;
-    *) err "Error: Unknown vertical coordinate identifier \"${vert}\"." ;;
+    *e) coord=input; nlev=60; levels=$srcdir/levels_era.nml ;; # ERA-Interim coordinates
+    *p) coord=pk_sigma; nlev=${vert%p} ;;
+    *s) coord=even_sigma; nlev=${vert%s} ;;
+    *) raise "Unknown vertical coordinate identifier \"${vert}\"." ;;
   esac
-  array_add num_levels v$nlev vert_coord_option v\'$coord\'
+  nml_add num_levels "$nlev" vert_coord_option \'$coord\'
 
   #----------------------------------------------------------------------------#
   # Add arrays to namelist
   #----------------------------------------------------------------------------#
   # Copy over the default namelist
   nml=$exp_dir/input.nml
-  nml_default=$f90dir/general_default.nml
+  nml_default=$srcdir/general_default.nml
   cp $nml_default $nml # move over defaut
   echo "Copied $nml_default to $nml"
   # Message
@@ -512,28 +525,28 @@ exp_setup() {
   # 100m/s is around 200mph, which is feasible in jet stream
   echo "CFL num for 100m/s wind: $(echo "scale=3; 100 / ((3.14 * 6371000.0 / $nlat ) / $dt)" | bc | awk '{printf "%f", $0}')."
   # Add forcing namelist
-  nml_forcing=$f90dir/forcing_default.nml
+  nml_forcing=$srcdir/forcing_default.nml
   if [ ! -r "$nml_forcing" ]; then
-    err "Error: File \"$nml_forcing\" not found."
+    raise "File \"$nml_forcing\" not found."
   fi
   cat $nml_forcing >>$nml # append that shit
   # Add coordinate namelist, potentially
   if [ -n "$levels" ]; then
     if ! [ -r "$levels" ]; then 
-      err "Error: File \"$levels\" not found."
+      raise "File \"$levels\" not found."
     fi
     cat $levels >>$nml
   fi
   # Now loop through variables and assign them
   # Only modify the parameter sweep variables, resolution variables, and
   # timing variables. For others, just change in the namelist file directly.
-  [ ${#nml_params[@]} -ne ${#nml_values[@]} ] && err "Error: One of the batch script namelist params is unset."
+  [ ${#nml_params[@]} -ne ${#nml_values[@]} ] && raise "One of the batch script namelist params is unset."
   for i in $(seq 0 $((${#nml_params[@]}-1))); do
     key=${nml_params[$i]}
     val=${nml_values[$i]}
     [ -z "$key" ] && continue # e.g. stratosphere timescale should be empty
     if ! grep '^[ \t]*\b'${key}'\b' $nml &>/dev/null; then
-      err "Error: Param \"${key}\" not found in namelist."
+      raise "Param \"${key}\" not found in namelist."
     fi
     space='\([ \t]*\)' # space atom; more readable to set it as a variable
     sed -i 's/^'"${space}${key}${space}"'='"${space}"'.*$/\1'${key}'\2=\3'${val}',/g' $nml
@@ -545,10 +558,8 @@ exp_setup() {
   #------------------------------------------------------------------------#
   # Set up diag table; so far this is kept very simple
   #------------------------------------------------------------------------#
-  diag="$exp_dir/diag_table"
-  # $testmode  && diag_default=$f90dir/diag_table_init || diag_default=$f90dir/$diag_table
-  diag_default=$f90dir/$diag_table
-  cp $diag_default $diag
+  diag=$exp_dir/diag_table
+  cp $srcdir/$diag_default $diag
   sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' $diag
   sed -i 's/#.*$//g;/^[ \t]*$/d' $diag # remove comments, empty lines, for clarity
 }
@@ -567,28 +578,19 @@ if [[ $sweep =~ base ]]; then
   params1=(na)
   params2=(na)
 elif [ -z "$params1" ]; then
-  echo "Error: You must define an array of parameters with e.g. --1=10,20,30"
-  exit 1
+  raise "You must define an array of parameters with e.g. --1=10,20,30"
 elif [ -z "$params2" ]; then
-  case $sweep in
-    katmos[123]-kfric|katmos[123]-tgrad|katmos[123]-tshift|kstrat[01])
-      echo "Error: You must define a second array of parameters with e.g. --2=10,20,30"
-      exit 1
-      ;;
-    *) params2=(na)
-      ;;
-  esac
+  params2=(na)
 fi
 # Parameter sweeps
-counter=0
 for param2 in ${params2[@]}; do
   for param1 in ${params1[@]}; do
-    # Get experiment name and directory
+    # Set the exp_name and exp_restart variables
     # Prevent repeating experiments during diagonal param sweeps
-    exp_name=$(exp_name $sweep $param1 $param2)
-    ! [ -d logs ] && mkdir logs
-    if array_in $exp_name ${exp_names[@]}; then
-      echo "Already processed ${exp_name} in this loop."
+    unset -v exp_name exp_restart # restart, then exp_name may set it again
+    exp_name $sweep $param1 $param2
+    if member $exp_name ${exp_names[@]}; then
+      echo "Already ran ${exp_name} in this loop."
       continue
     fi
     exp_names+=($exp_name) # record in list
@@ -598,7 +600,7 @@ for param2 in ${params2[@]}; do
       exp_dir="$scratch/$exp_name"
     fi
     ! [ -d "$exp_dir" ] && mkdir "$exp_dir"
-    log=logs/${exp_dir##*/}.log # e.g use the testing name
+    log="$exp_dir/run.log" # e.g use the testing name
     echo "Experiment name: ${exp_name}." | tee $log
     echo "Log file: log $log" # so can copy paste this
     echo "Run flags: $flags_global"
@@ -607,10 +609,9 @@ for param2 in ${params2[@]}; do
     # NOTE: This sets global variables 'exp_name' and 'exp_dir'
     unset flags
     exp_setup $exp_name 1>>$log
-    [ $counter -ge 1 ] && unset rdir # allow override for first experiment
-    if ! [ -z "$rdir" ] && [ $runmode -eq 0 ]; then
-      echo "Warning: Using \"${rdir}\" for restart files." | tee $log
-      flags+="-rd=$scratch/$rdir/$rdays " # override with this restart directory
+    if ! [ -z "$exp_restart" ] && [ $runmode -eq 0 ]; then
+      echo "Warning: Using \"${exp_restart}\" for restart files." | tee $log
+      flags+="-rd=$scratch/$exp_restart/$rdays " # override with this restart directory
     fi
     ! [ -z "$txyzdata" ]  && flags+="-dxyz=$txyzdata " # keep XYZ data
     ! [ -z "$tnodata" ]   && flags+="-dn=$tnodata " # record zero data
@@ -618,23 +619,23 @@ for param2 in ${params2[@]}; do
 
     # Run experiment (or just echo command for dryrun)
     np=$((cores * nodes))
-    exp_run="./drycore_run $exp_dir $flags_global $flags -m=$runmode -ts=$tstart -te=$tend -c=$np -p='$pflags'"
+    exp_run="./drycore_run $exp_dir $flags_global $flags -m=$runmode -ts=$tstart -te=$tend -c=$np"
     $dryrun && echo $exp_run && continue
     # On server
     # NOTE: Need the eval so the quotes in the -p argument are evaluated
     if ! $super; then
       eval "$exp_run &>>$log"
       stat=$?
-      printf "Experiment ${exp_name} finished with exit code ${stat}. The call signature was '${exp_run}'.\n\nThe logfile is pasted below.\n\n$(cat $log)\n\nThe namelist is pasted below.\n\n$(cat $exp_dir/input.nml)" \
-        | mail -s "${exp_name} status: ${stat}" lukelbd@gmail.com
-      if [ $? -ne 0 ]; then
-        printf "Warning: $exp_name integration failed.\n\n\n\n"
+      if ! $testmode; then
+        printf "Experiment ${exp_name} finished with exit code ${stat}. The call signature was '${exp_run}'.\n\nThe logfile is pasted below.\n\n$(cat $log)\n\nThe namelist is pasted below.\n\n$(cat $exp_dir/input.nml)" \
+          | mail -s "${exp_name} status: ${stat}" lukelbd@gmail.com
+      fi
+      if [ $stat -ne 0 ]; then
+        echo "Warning: $exp_name integration failed."
         continue # keyboard interruption does not trigger this
       fi
     # On supercomputer, submit via qsub
-    # NOTE: See Readme and subfolders in 'logs' folder to see rationale
-    # for core selection; found that *mpiprocs/openmp flags made no change*,
-    # while got better performance using 40 cores instead of 40 cpus.
+    # NOTE: See Readme for core selection rationale
     # NOTE: Use economy queue because I work at weird times, have never
     # really noticed big slowdowns or wait times
     else

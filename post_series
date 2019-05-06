@@ -5,49 +5,57 @@
 # to logarithmically sweep space. Existing directories have been moved to their
 # closest values in this new spacing. White lie, but probably insignificant differences.
 ################################################################################
+# Error
+raise() {
+  echo "Error: $@" 1>&2
+  exit 1
+}
 # Processes files in directories matching some glob pattern
 shopt -s nullglob
 cwd=$(pwd)
-dryrun=false
-runmode=0 # 0 is control run, the rest are different spindown modes:
-filename=2xdaily_inst
-merge=$cwd/post_run
-$dryrun && merge="echo $merge"
-
-# Stuff to retrieve
-# climo_start=100
-# climo_end=2000 # for small-damping runs we wanted! needed fast results, just took
-flags="$@" # --eof2d
-climo_start=500
-climo_end=5500
-spin_start=0
-spin_end=100000 # just get all of them
-
-# Host-specific settings
-netcdf=netcdf
 storage=$HOME/data
 case ${HOSTNAME%%.*} in
   monde*)    scratches=(/mdata1/ldavis /mdata2/ldavis) ;;
   cheyenne*) scratches=/glade/scratch/davislu ;;
-  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+  *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
 ! [ -d $storage ] && mkdir $storage
 storage="$storage/timescales" # put in this subdirectory
 ! [ -d $storage ] && mkdir $storage
-# Defaults
-[[ "$flags" =~ "-m" ]]  || flags="$flags -m=$runmode"
-[[ "$flags" =~ "-s1" ]] || flags="$flags -s1=$spin_start"
-[[ "$flags" =~ "-s2" ]] || flags="$flags -s2=$spin_end"
-[[ "$flags" =~ "-c1" ]] || flags="$flags -c1=$climo_start"
-[[ "$flags" =~ "-c2" ]] || flags="$flags -c2=$climo_end"
-echo "Using flags: $flags"
-sleep 3
 
-# Parallel
-# TODO: isentropic stuff for katmos?- experiments! skipped it because too much load on server
-pmax=1
-globs=('hs_base*' 'hs_katmos?_*' 'hs_katmos?-m*' 'hs_tgrad_*' 'h_katmos?-a*' 'hs_tshift*' 'hs_tgrad-*' 'hs_katmos?-t*') # everything
-globs=('hs_tgrad[12]_t42l20s*') # tgrad updates
+# Command-line options
+pmax=1 # paralelization
+runmode=0 # 0 is control run, the rest are different spindown modes:
+rdays=100
+dryrun=false
+filename=2xdaily_inst
+climo_start=500
+climo_end=5500
+spin_start=0
+spin_end=100000 # just get all of them
+unset flags
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d)    dryrun=true ;;
+    -p=*)  pmax=${1#*=} ;;
+    -f=*)  filename=${1#*=} ;;
+    -r=*)  rdays=${1#*=} ;; # restart day blocks
+    -m=*)  runmode=${1#*=} ;;
+    -c1=*) climo_start=${1#*=} ;;
+    -c2=*) climo_end=${1#*=} ;;
+    -s1=*) spin_start=${1#*=} ;;
+    -s2=*) spin_end=${1#*=} ;;
+    -*) flags+="$1 " ;;
+    *)  globs+=("$1") ;;
+  esac
+  shift
+done
+# Defaults
+post=$cwd/post_run
+$dryrun && post="echo $post"
+flags="$flags -r=$rdays -m=$runmode -c1=$climo_start -c2=$climo_end -s1=$spin_start -s2=$spin_end"
+echo "Using flags: $flags"
+
 # Iterate
 # NOTE: May get 'different parameter names' cdo warnings; this generally means
 # the order of parameters or something is different, and cdo has to shuffle
@@ -73,24 +81,27 @@ for scratch in ${scratches[@]}; do
         echo "Log file: log $log"
         echo "Flags: $flags"
         if [ $pmax -eq 1 ]; then
-          $merge "$filename" "$folder/$netcdf" "$dest" $flags --debug
+          $post "$filename" "$folder" "$dest" $flags --debug
+          [ $? -ne 0 ] && raise "A post-processing step failed."
         else
-          # $merge "$filename" "$folder/$netcdf" "$dest" $flags &>$log &
-          $merge "$filename" "$folder/$netcdf" "$dest" $flags --debug &
+          # $post "$filename" "$folder" "$dest" $flags &>$log &
+          $post "$filename" "$folder" "$dest" $flags --debug &
+          pids+=($!) # record process
         fi
-        pids+=($!) # record process
 
         # Crude parallelization across multiple experiments
-        let counter+=1
-        if [ $((counter % pmax)) -eq 0 ]; then
-          echo "Waiting for processes: ${pids[@]}."
-          for pid in ${pids[@]}; do
-            wait $pid
-            [ $? -ne 0 ] && echo "Error: A post-processing step failed." && exit 1
-          done
-          echo "Elapsed time: $(($(date +%s) - t))s."
-          t=$(date +%s)
-          unset pids # reset tracked process ids
+        if [ $pmax -ne 1 ]; then
+          let counter+=1
+          if [ $((counter % pmax)) -eq 0 ]; then
+            echo "Waiting for processes: ${pids[@]}."
+            for pid in ${pids[@]}; do
+              wait $pid
+              [ $? -ne 0 ] && raise "A post-processing step failed."
+            done
+            echo "Elapsed time: $(($(date +%s) - t))s."
+            t=$(date +%s)
+            unset pids # reset tracked process ids
+          fi
         fi
       done
     done
