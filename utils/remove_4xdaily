@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Remove old 4xdaily_inst files
+# Now we save 2xdaily_inst data instead!
+shopt -s nullglob
+names=($@) # remember $@ is special, nothing gets expanded
+[ -z "$1" ] && names=("hs*")
+case $HOSTNAME in
+  monde*)    roots=(~/mdata2 ~/mdata1)                            ;;
+  cheyenne*) roots=(~/scratch)                                    ;;
+  *)         echo "Error: Unknown host ${HOSTNAME}." && exit 1 ;;
+esac
+
+# Remove files from older runs
+prefix=2xdaily_inst
+rm $log 2>/dev/null
+for root in ${roots[@]}; do
+  echo "Root: $root"
+  unset globs
+  for name in "${names[@]}"; do
+    globs+=($root/$name) # performs expansion
+  done
+  [ ${#globs[@]} -eq 0 ] && echo "No $name files found in ${root}." && continue
+  for path in ${globs[@]}; do
+    # Get params corresponding to that parameter series, so
+    # we can echo them
+    files=($path/netcdf/4xdaily_inst*.nc)
+    if [ ${#files[@]} -gt 0 ]; then
+      rm ${files[@]}
+    fi
+  done
+done

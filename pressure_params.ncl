@@ -29,7 +29,7 @@
 ; right after 'time' dimension by default, if 'lon' dimension has been destroyed.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 print("Reading initial file...")
-load "~/timescales-model/header.ncl"
+load "~/timescales-exps/header.ncl"
 exists("filename")
 exists("output")
 exists("means")

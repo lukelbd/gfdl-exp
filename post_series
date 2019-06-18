@@ -32,15 +32,15 @@ filename=2xdaily_inst
 climo_start=500
 climo_end=5500
 spin_start=0
-spin_end=100000 # just get all of them
+spin_end=9900 # just get all of them
 unset flags
 while [ $# -gt 0 ]; do
   case "$1" in
-    -d)    dryrun=true ;;
-    -p=*)  pmax=${1#*=} ;;
-    -f=*)  filename=${1#*=} ;;
-    -r=*)  rdays=${1#*=} ;; # restart day blocks
-    -m=*)  runmode=${1#*=} ;;
+    -d) dryrun=true ;;
+    -p=*) pmax=${1#*=} ;;
+    -f=*) filename=${1#*=} ;;
+    -r=*) rdays=${1#*=} ;; # restart day blocks
+    -m=*) runmode=${1#*=} ;;
     -c1=*) climo_start=${1#*=} ;;
     -c2=*) climo_end=${1#*=} ;;
     -s1=*) spin_start=${1#*=} ;;
@@ -72,20 +72,19 @@ for scratch in ${scratches[@]}; do
         # post-process, and a bigger log that indicates what processes are running
         echo
         echo "Experiment: \"${folder##*/}\"."
-        # sleep 1
         dest="$storage/${folder##*/}" # saving processed data
         ! [ -d "$dest" ] && mkdir $dest
 
         # Opionally run in parallel, or just linearly
-        log=logs/merge_${dest##*/}
-        echo "Log file: log $log"
+        log=$folder/post.log
+        echo "Log file: $log"
         echo "Flags: $flags"
         if [ $pmax -eq 1 ]; then
-          $post "$filename" "$folder" "$dest" $flags --debug
+          $post "$filename" "$folder" "$dest" $flags
           [ $? -ne 0 ] && raise "A post-processing step failed."
         else
           # $post "$filename" "$folder" "$dest" $flags &>$log &
-          $post "$filename" "$folder" "$dest" $flags --debug &
+          $post "$filename" "$folder" "$dest" $flags &
           pids+=($!) # record process
         fi
 

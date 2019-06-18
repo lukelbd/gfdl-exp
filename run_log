@@ -5,6 +5,7 @@
 #------------------------------------------------------------------------------#
 shopt -s nullglob
 names=($@) # remember $@ is special, nothing gets expanded
+forcing=(arctic tropical vortex global surface)
 [ -z "$1" ] && names=("hs*")
 case $HOSTNAME in
   monde*) roots=(~/mdata1 ~/mdata2) ;;
@@ -12,42 +13,37 @@ case $HOSTNAME in
   *) echo "Error: Unknown host ${HOSTNAME}." && exit 1 ;;
 esac
 # Print days
-day_range() {
+message() {
   local files stat ns nd
-  files=($@)
-  files=(${files[@]%.nc}) # from dir/dir/stuff.dXXXX-dYYYY.nc to dir/dir/stuff.dXXXX-dYYYY
-  files=(${files[@]##*.}) # from dir/dir/stuff.dXXXX-dYYYY to dXXXX-dYYYY
-  if [ ${#files[@]} -eq 0 ]; then
+  paths=($@)
+  paths=(${paths[@]%.nc}) # from dir/dir/stuff.dXXXX-dYYYY.nc to dir/dir/stuff.dXXXX-dYYYY
+  paths=(${paths[@]##*.}) # from dir/dir/stuff.dXXXX-dYYYY to dXXXX-dYYYY
+  if [ ${#paths[@]} -eq 0 ]; then
     echo 0 0 na
   else
     # Get exit status
-    if [ ${#files[@]} -ge 2 ]; then
-      dir=(${files[-2]} ${files[-1]})
+    if [ ${#paths[@]} -ge 2 ]; then
+      ipaths=(${paths[-2]} ${paths[-1]})
     else
-      dir=${files[-1]}
+      ipaths=${paths[-1]}
     fi
-    check=false
-    for d in ${dir[@]}; do
-      if [ -d $d ]; then
-        check=true
+    stat=na
+    for jpath in ${ipaths[@]}; do
+      [ -d $jpath ] || continue
+      stat=0
+      if ! [ -r $jpath/log.model ]; then
+        stat=1
+      elif [ -r $jpath/log.model ]; then
+        grep -E 'EXIT CODE: [1-9]|FATAL from PE|WARNING from PE' $idir/log.model &>/dev/null
+        [ $? -eq 0 ] && stat=1
       fi
     done
-    if $check; then
-      stat=0
-      for d in ${dir[@]}; do
-        if ! [ -r $d/log.model ]; then
-          stat=1
-        elif [ -r $d/log.model ]; then
-          grep -E 'EXIT CODE: [1-9]|FATAL from PE|WARNING from PE' $d/log.model &>/dev/null
-          [ $? -eq 0 ] && stat=1
-        fi
-      done
-    fi
     # Days
-    ns=${files[0]:1} # from dXXXX-dYYYY to XXXX-dYYYY
+    ns=${paths[0]:1} # from dXXXX-dYYYY to XXXX-dYYYY
     ns=$(printf "%.0f" ${ns%-*}) # from XXXX-dYYYY to XXXX
-    nd=${files[-1]}
+    nd=${paths[-1]}
     nd=$(printf "%.0f" ${nd##*d}) # from dXXXX-dYYYY to YYYY
+    # Message
     echo $ns $nd $stat
   fi
 }
@@ -77,10 +73,11 @@ for root in ${roots[@]}; do
       dt='???'
     fi
     # Get day range for folders
-    unset message
-    dd=($(day_range d????-d????))
+    unset -v message
+    dd=($(message d????-d????))
+    # Get day range for files
     for suffix in full summary full_isen summary_isen spectral; do
-      fd=($(day_range netcdf/${prefix}_${suffix}.d????-d????.nc))
+      fd=($(message netcdf/${prefix}_${suffix}.d????-d????.nc))
       if [ ${fd[1]} -gt 0 ]; then
         message+=", ${suffix}: ${fd[0]}-${fd[1]}"
       fi

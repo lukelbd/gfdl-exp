@@ -52,7 +52,7 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     -c=*|--cores=*) cores=${1#*=} ;;
     -ts=*|--tstart=*)  tstart=${1#*=} ;; # use this to continue from *particular* day of existing run
     -te=*|--tend=*)    tend=${1#*=} ;; # ending day
-    -rd=*|--restart=*) rdir_init=${1#*=} ;; # manual override restart directory
+    -rd=*|--restart=*) rinit=${1#*=} ;; # manual override restart directory
     -dn=*|--days-nodata=*)    t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
     -ds=*|--days-spindown=*)  t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
     -dxyz=*|--days-xyzdata=*) t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
@@ -65,6 +65,12 @@ done
 # Warnings and errors
 [ -z $expdir ] && raise "You must declare the experiment directory."
 ! $forcing && [ $tstart -eq 0 ] && [ $tend -eq 0 ] && raise "Start and end times both zero."
+# Use final day
+if [ -n "$rinit" ] && ! [[ $rinit =~ d.*-d.* ]]; then
+  rinit=($rinit/d*-d*);
+  rinit="${rinit[-1]}"
+  echo "Warning: Using final block ${rinit##*/} for restart files."
+fi
 # Messages
 [ ${#t_nodata[@]} -gt 0 ]    && echo "Removing all data for days: ${t_nodata[@]}."
 [ ${#t_xyzdata[@]} -gt 0 ]   && echo "Preserving full resolution for days: ${t_xyzdata[@]}."
@@ -89,15 +95,11 @@ nml_parse() {
 }
 # Replace namelist value for a *local* spindown experiment
 nml_replace() { # first argument is param name, second argument is value
-  local quiet=false
   while [ $# -gt 0 ]; do
-    case "$1" in
-      -q) quiet=true; shift; continue ;;
-    esac
     ! grep '^[ \t]*\b'"${1}"'\b' ./input.nml &>/dev/null && \
       raise "Param \"${1}\" not found in namelist."
     space='\([ \t]*\)' # space atom; more readable to set it as a variable
-    ! $quiet && echo "Replacing \"${1}\" with ${2}."
+    echo "Replacing \"${1}\" with ${2}."
     sed -i 's/^'"${space}${1}${space}"'='"${space}"'.*$/\1'"${1}"'\2=\3'"${2}"',/g' ./input.nml
     shift 2
     [ $? -ne 0 ] && raise "Must pass even number of params to nml_replace function."
@@ -119,7 +121,7 @@ exit_check() {
   fi
 }
 # NCL status
-nclcheck() { # input log file as argument
+ncl_check() { # input log file as argument
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | grep -E "^fatal:" &>/dev/null
 }
 
@@ -128,11 +130,11 @@ nclcheck() { # input log file as argument
 # applying post-processing to a previous model step in the background, and organizing
 # all the NetCDF files
 ################################################################################
-driver() {
+run_model() {
   # Run model in parallel
   # Previously we set processor affinities
   local cday=$1 # the restart direcotry
-  [ $# -ne 1 ] && raise "driver() function takes exactly 1 argument."
+  [ $# -ne 1 ] && raise "run_model() function takes exactly 1 argument."
   t1=$(date +%s)
   echo "Running model..."
   $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
@@ -143,7 +145,7 @@ driver() {
 
   # Remove some files
   # [ -r INPUT/topography.data.nc ] && rm INPUT/topography.data.nc # remove topography
-  [ -d INPUT ] && [ $cday -gt 0 ] && rm -r INPUT # remove input *if* this is not start of new run; in that case we want to keep input so know what's going on
+  [ -d INPUT ] && [ $cday -gt 0 ] && rm -rf INPUT # remove input *if* this is not start of new run; in that case we want to keep input so know what's going on
   [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
   rm fms.x # remove executable, because takes up space
 
@@ -166,7 +168,7 @@ copy_restart() {
   local cday rdir
   cday=$1
   rdir=$2 # the restart direcotry
-  [ $# -ne 2 ] && raise "copy_restart() function takes exactly 1 argument."
+  [ $# -ne 2 ] && raise "copy_restart() function takes exactly 2 arguments."
   if ! [ -d "$rdir" ] || ! [ -d "$rdir/RESTART" ] || [ -z "$(ls $rdir/RESTART/* 2>/dev/null)" ]; then
     raise "Restart directory $rdir/RESTART does not exist, or is empty."
   fi
@@ -180,14 +182,15 @@ copy_restart() {
     cp $rdir/RESTART/$file INPUT/$file
   done
   # Enforce starting time
-  # WARNING: Had mysterious issue where after day 10000, had 1 timestep
-  # in output NetCDF files and data was corrupt/filled with zeros
+  # WARNING: After day 10000, 'days' field runs into 'month' field in atmos_model.res
+  # which causes weird error with 1 timestep in output NetCDF files and data corruption
   # WARNING: Editing namelist does not work because current time overwritten
   # by the INPUT/atmos_model.res file. Need to edit the latter.
   if [ $cday -eq 0 ]; then
     # sed -i 's/\&main_nml/\&main_nml\n  current_time = 0,/g' input.nml
     sed -i 's/ \+/ /g;s/[0-9]*[1-9][0-9]*/0/g' INPUT/atmos_model.res
     cp $rdir/input.nml ../restart.nml # store the restart namelist in root directory for experiment
+    echo ${rdir} >../restart.log
   fi
 }
 
@@ -221,7 +224,7 @@ dir_setup() {
     echo "Restarting experiment."
     fix=false
     resume=false
-    rm -r $wdir
+    rm -rf $wdir
   elif $resume; then
     # Resume interrupted run
     # NOTE: This checks for contents of netcdf folder
@@ -232,11 +235,11 @@ dir_setup() {
     # Otherwise, resume run and delete 'unfinished' contents
     echo "No NetCDF files found for block ${wdir##*/}. Resuming..."
     resume=false
-    rm -r $wdir
+    rm -rf $wdir
   else
     # Overwrite
     echo "Working directory ${wdir##*/} already exists. Deleting..."
-    rm -r $wdir
+    rm -rf $wdir
   fi
 
   # Make directory and move stuff over
@@ -264,10 +267,10 @@ dir_setup() {
   # Namelist changes for spindown runs
   if [ $mode -gt 0 ]; then
     case $mode in   # determine spindown type
-      1) nml_replace ktrop 0 kbl 0; nml_replace -q kstrat 0 kmeso 0 ;;         # turn off all thermal damping
-      2) nml_replace ktrop 0; nml_replace -q kstrat 0 kmeso 0 ;;               # turn off damping except in boundary layer
-      3) nml_replace ktrop 0 kfric 0 kbl 0; nml_replace -q kstrat 0 kmeso 0 ;; # turn off all damping
-      4) nml_replace kfric 0 ;;                 # turn off friction
+      1) nml_replace ktrop 0 kbl 0 kstrat 0 kmeso 0 ;; # turn off all thermal damping
+      2) nml_replace ktrop 0 kstrat 0 kmeso 0 ;; # turn off damping except in boundary layer
+      3) nml_replace ktrop 0 kfric 0 kbl 0 kstrat 0 kmeso 0 ;; # turn off all damping
+      4) nml_replace kfric 0 ;; # turn off friction
       *) raise "Unknown experiment identifier \"$mode\"." ;;
     esac
   fi
@@ -277,8 +280,8 @@ dir_setup() {
   if $slow && [ $cday -lt $slowdays ]; then # next 300 days, eddies grow
     echo "Fixing initial model instability."
     for param in ktrop kstrat kmeso kbl; do
-      k=$(nml_parse $param | cut -d, -f1)
-      nml_replace -q $param "$k, $k" # speed up damping so eddies suppressed at first! otherwise get weird model instability!
+      k=$(nml_parse $param | cut -d, -f1) # use mean damping rate
+      nml_replace $param "$k, $k" # apply mean damping rate to both
     done
   fi
   # Parent script will test return code; ensure zero here
@@ -295,14 +298,14 @@ dir_setup() {
 ! [ -r $expdir/input.nml ]  && raise "input.nml file not found."
 # Now make the forcing folder
 echo "Generating forcing.nc file"
-[ -d $expdir/forcing ] && rm -r $expdir/forcing
+[ -d $expdir/forcing ] && rm -rf $expdir/forcing
 mkdir $expdir/forcing # expdir was created several lines up
 cd $expdir/forcing
 mkdir RESTART # model spits out stuff here, can be accepted as input to new iteration
 mkdir INPUT   # model reads from this
 cp $expdir/input.nml ./ # identical namelist
 sed -i 's/^.*[nr]damp_decomp.*$//g' input.nml # older runs had this option, now obsolete
-nml_replace -q days 0 hours 0 minutes 0 seconds 1 dt_atmos 1 # speed up damping so eddies suppressed at first! otherwise get weird model instability!
+nml_replace days 0 hours 0 minutes 0 seconds 1 dt_atmos 1
 touch field_table # empty file for no tracers
 cat > diag_table <<EOF
 "Forcing scheme for dry core damping experiments."
@@ -311,7 +314,6 @@ cat > diag_table <<EOF
 "forcing", 1, "seconds", 1, "days", "time",
 # Parameters
 "dynamics", "slp",        "slp",        "forcing", "all", .false., "none", 2,
-"dynamics", "temp",       "t",          "forcing", "all", .false., "none", 2,
 "dynamics", "bk",         "hybi",       "forcing", "all", .false., "none", 2,
 "dynamics", "pk",         "hyai",       "forcing", "all", .false., "none", 2,
 "forcing",  "teq",        "teq",        "forcing", "all", .false., "none", 2,
@@ -339,7 +341,7 @@ ncatted -h -O -a bounds,mlev,o,c,"ilev" forcing.nc
 [ -r ../forcing.nc ] && rm ../forcing.nc
 ncl -n -Q 'filename="forcing.nc"' 'output="../forcing.nc"' $interp &>forcing.log
 sed -i '/^.*warning:.*$/d;/^$/d' forcing.log
-if nclcheck forcing.log || ! [ -r ../forcing.nc ]; then
+if ncl_check forcing.log || ! [ -r ../forcing.nc ]; then
   raise "Something failed during NCL interpolation of forcing data."
 fi
 # Exit if user *only* wanted to get initial conditions
@@ -366,7 +368,7 @@ case $mode in
     # Message and reset timer/flagS
     # Skip this time (optionally)
     if [ $cday -lt $tstart ]; then
-      unset rdir_init # important! for 'resume' experiments, generally just want to use rdir_init as cold start alternative
+      unset rinit # important! for 'resume' experiments, generally just want to use rinit as cold start alternative
       pday=$cday # previous day
       cday=$((pday + days))
       nday=$((cday + days))
@@ -378,16 +380,11 @@ case $mode in
     # Optionally use the end of other control runs to reduce spinup time
     rdir=$expdir/d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
     cdir=$expdir/d$(printf "%04d" $cday)-d$(printf "%04d" $nday)
-    if [ -n "$rdir_init" ]; then
+    if [ -n "$rinit" ]; then
       coldstart=false
-      if ! [[ $rdir_init =~ d.*-d.* ]]; then
-        echo "Override: Using final day from \"$rdir_init\" for restart files."
-        rdir_init=($rdir_init/d*-d*); rdir="${rdir_init[-1]}" # pick last one; should be sorted
-      else
-        echo "Override: Using restart files from \"$rdir_init\"."
-        rdir="$rdir_init" # use specific day sequence
-      fi
-      unset rdir_init # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
+      echo "Override: Using restart files from \"$rinit\"."
+      rdir="$rinit" # use specific day sequence
+      unset rinit # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
       ! [ -d $rdir ] && raise "Override restart directory \"$rdir\" does not exist."
     fi
     unset pflags_day
@@ -400,7 +397,7 @@ case $mode in
       else
         echo "Cold start."
       fi
-      driver $cday # run model
+      run_model $cday # run model
     fi
     [ $days -eq 0 ] && break # exit for initial condition experiment
     # Step things forward, for next iteration
@@ -413,8 +410,10 @@ case $mode in
   wait $pp
   exit_check $?
   unset pp
-  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
-  echo "Final process time: ${tprocess%.*}s."
+  if [ -r log.process ]; then
+    tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
+    echo "Final process time: ${tprocess%.*}s."
+  fi
   # Message
   echo "The control run completed successfully in $(($(date +%s) - t0)) seconds!"
   echo "Timestamp: $(date)."
@@ -456,7 +455,7 @@ case $mode in
       dir_setup $cday $cdir # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         copy_restart $cday $rdir # add restart files
-        driver $cday # run model
+        run_model $cday # run model
       fi
       # Step things forward, for next iteration
       pday=$cday # previous day
@@ -467,8 +466,13 @@ case $mode in
     echo "Timestamp: $(date)."
   done
   echo "Processing last file..."
-  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
-  wait $pp; pp=
+  wait $pp
+  exit_check $?
+  unset pp
+  if [ -r log.process ]; then
+    tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
+    echo "Final process time: ${tprocess%.*}s."
+  fi
   echo "The spindown runs completed successfuly in $(($(date +%s) - t0)) seconds!"
   echo "Timestamp: $(date)."
 

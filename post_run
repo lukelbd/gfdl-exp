@@ -7,39 +7,11 @@
 # commands like 'select,key=value' to merge multiple files in one command instead
 # of constructing massive chained commands in single bash string.
 ################################################################################
-# Initial
+# Raise error and exit
 shopt -s nullglob # will return empty if no match
-flags='-s -O' # overwrite, and only issue warnings
-# flags='-v -O' # echo more info
-debug=true # disable sending stuff to background?
-netcdf=true # use subfolder? have this so if we just got forcing data and have no real data yet
-
-# Raises error and exits
 raise() {
   echo "Error: $@" 1>&2
   exit 1
-}
-# Check if destination file is *newer* than source files
-newer() {
-  local ret src file date idate
-  dest="$1"
-  src=("${@:2}")
-  [ ${#src[@]} -eq 0 ] && return 0
-  date=$(date +%s -r "$dest" 2>/dev/null)
-  for file in "${src[@]}"; do
-    [ -r "$file" ] || return 0 # do not re-process since a source is unavailable!
-    idate=$(date +%s -r "$file" 2>/dev/null)
-    [ "$idate" -gt "$date" ] && return 1 # destination is *not* newer, re-process!
-  done
-  [ -r "$dest" ] || return 1 # re-process since destination is unavailable! must test this after we test whether input files available!
-  command ncdump -h "$dest" &>/dev/null # if 1, destination is *corrupt*, re-process!
-  ret="$?"
-  if [ $ret -eq 0 ]; then
-    echo "Post-processed file already exists." 1>&2
-  else
-    echo "Updating post-processed file from new source files." 1>&2
-  fi
-  return $ret
 }
 # Python heredoc header
 header="
@@ -52,16 +24,19 @@ def timer(message):
     print(f'{message}: {t2-t1:.3f}s')
     t1 = t2
 "
-# Optional environmental variables, with defaults
+# Environmental variables, with defaults
 # The flag names should be descriptive enough, but feel free to read comments
-climo_start=0
-climo_end=100000
-spectral_climate=false
-control_climate=false
-control_climate_isen=false
-control_climate_energy=false
-control_autocorr=false
-control_eof=false
+flags='-s -O' # overwrite, and only issue warnings
+netcdf=true # use subfolder? have this so if we just got forcing data and have no real data yet
+climo_start=500
+climo_end=1500
+forcing=false
+climate_plev=false
+climate_isen=false
+climate_lorenz=false
+climate_autocorr=false
+climate_variability=false
+climate_spectral=false
 # Scripts
 f2c=$(pwd)/f2c.py # converts frequency-wavenumber data to phase speed-wavenumber space
 eof=$(pwd)/eofs.py
@@ -76,23 +51,24 @@ spindown_regional_ts=false
 mode=2 # spindown mode
 while [ $# -gt 0 ]; do
   case $1 in
-    -d|--debug)       debug=true      ;;
-    -n|--new)         overwrite=false ;;
-    -r=*|--restart=*) rdays=${1##*=}  ;;
-    -m=*|--mode=*)    mode=${1##*=}   ;;
-    -c1=*|--climo-start=*)       climo_start=${1##*=}        ;;
-    -c2=*|--climo-end=*)         climo_end=${1##*=}          ;;
-    -s1=*|--spin-start=*)        spin_start=${1##*=}         ;;
-    -s2=*|--spin-end=*)          spin_end=${1##*=}           ;;
-    -sc|--spectral-climo)        spectral_climate=true       ;;
-    -cc|--control-climo)         control_climate=true        ;;
-    -cci|--control-climo-isen)   control_climate_isen=true   ;;
-    -cce|--control-climo-energy) control_climate_energy=true ;;
-    -eof|--control-eof)          control_eof=true            ;;
-    -auto|--control-autocorr)    control_autocorr=true       ;;
-    -se|--spindown-ensemble-ts)  spindown_ensemble_ts=true   ;;
-    -sr|--spindown-region-ts)    spindown_regional_ts=true   ;;
-    -st|--spindown-timescale)    spindown_timescale=true     ;;
+    # Params
+    -m=*) mode=${1##*=} ;;
+    -r=*) rdays=${1##*=} ;;
+    -c1=*) climo_start=${1##*=} ;;
+    -c2=*) climo_end=${1##*=} ;;
+    -s1=*) spin_start=${1##*=} ;;
+    -s2=*) spin_end=${1##*=} ;;
+    # Flags
+    -f) forcing=true ;;
+    -cp) climate_plev=true ;;
+    -cs) climate_spectral=true ;;
+    -ci) climate_isen=true ;;
+    -ce) climate_lorenz=true ;;
+    -cv) climate_variability=true ;; # variability
+    -ca) climate_autocorr=true ;;
+    -se) spindown_ensemble_ts=true ;;
+    -sr) spindown_regional_ts=true ;;
+    -st) spindown_timescale=true ;;
     -*) raise "Unknown flag \"${1}\".";;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
@@ -106,6 +82,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# Require restart days because may have some old 5-day tests or whatever
+# in that experiment folder.
+[ -z "$rdays" ] && raise "You must specify the restart day spacing with -r=N or --restart=N."
 # Requirements
 if $netcdf; then
   ! [ -d "$input/netcdf" ] && [ -d "$input" ] && mkdir "$input/netcdf"
@@ -114,12 +93,9 @@ fi
 if [ -z "$filename" ] || [ -z "$input" ] || [ -z "$output" ]; then
   raise "Need filename prefix (e.g. 2xdaily_inst), input folder, and output folder, in that order."
 fi
-# Require restart days because may have some old 5-day tests or whatever
-# in that experiment folder.
-[ -z "$rdays" ] && raise "You must specify the restart day spacing with -r=N or --restart=N."
 
 # File management/names
-# Prefixes for output files
+# Prefixes for input files
 pfull=${filename}_full
 psummary=${filename}_summary # original prefix file names
 peofs=${filename}_eofs
@@ -127,18 +103,19 @@ pseries=${filename}_series
 pspectral=${filename}_spectral
 pfull_isen=${filename}_full_isen
 psummary_isen=${filename}_summary_isen
-# Destinations for final files
-fspectral=${filename}_spectral.nc
-fautocorr=${filename}_autocorr.nc
-ftimescale=${filename}_autocorr_timescale.nc
-fclimate=${filename}_climate.nc
-fclimate_isen=${filename}_climate_isen.nc
-fregion=${filename}_timeseries.nc
-fregion_isen=${filename}_timeseries_isen.nc
-fenergy=${filename}_energy.nc
-fspinclimate=${filename}_spindown${mode}xs.nc # cross-section
-fspindownpoles=${filename}_spindown${mode}poles.nc # spindown rate at the poles
-fdyntimescale=${filename}_dynamical_timescale${mode}.nc # the timescale stuff
+# Destinations for output files
+days="d$(printf "%04d" ${climo_start})-d$(printf "%04d" ${climo_end})"
+fspectral=${filename}_spectral.${days}.nc
+fautocorr=${filename}_autocorr.${days}.nc
+ftimescale=${filename}_autocorr_timescale.${days}.nc
+fclimate=${filename}_climate.${days}.nc
+fclimate_isen=${filename}_climate_isen.${days}.nc
+fregion=${filename}_timeseries.${days}.nc
+fregion_isen=${filename}_timeseries_isen.${days}.nc
+fenergy=${filename}_energy.${days}.nc
+fspinclimate=${filename}_spindown${mode}xs.${days}.nc # cross-section
+fspindownpoles=${filename}_spindown${mode}poles.${days}.nc # spindown rate at the poles
+fdyntimescale=${filename}_dynamical_timescale${mode}.${days}.nc # the timescale stuff
 
 # Directory management; move to save directory
 cwd=$(pwd) # directory where scripts stored (you must run this script from current directory!)
@@ -149,6 +126,62 @@ cd $output # move here
 # Energy terms
 ts_params=ke,km,pe,pm,ehf,emf
 energy_params=ckekm,cpeke,cpmkm,cpmpe,dke,dkm,gpe,gpm,ke,km,pe,pm
+
+################################################################################
+# Helper function, checks if destination file is newer than source file
+################################################################################
+# Check if destination file is *newer* than source files
+newer() {
+  local ret src file date idate
+  dest="$1"
+  src=("${@:2}")
+  if [ ${#src[@]} -eq 0 ]; then
+    echo "Skipping (source file(s) unavailable)." 1>&2
+    return 0
+  fi
+  # If version without day string exists, remove it
+  idest="${dest%%.*}.nc"
+  if [ "$dest" != "$idest" ] && [ -r "$idest" ]; then
+    rm "$idest"
+    echo "Warning: Removed file \"$idest\" with no day string."
+  fi
+  # Test if sources are available; never try to run processing script if not
+  for file in "${src[@]}"; do
+    if ! [ -r "$file" ]; then # TODO: test with ncdump? nah.
+      echo "Skipping (source file(s) un-readable)." 1>&2
+      return 0 # do not re-process since a source is unavailable!
+    fi
+  done
+  # Check if destination exists
+  if ! [ -r "$dest" ]; then
+    echo "Running (${dest##*/} not found)." 1>&2
+    return 1
+  fi # re-process since destination is unavailable!
+  # Finally test dates, and check for curropt files
+  date=$(date +%s -r "$dest" 2>/dev/null) # just get this once
+  for file in "${src[@]}"; do
+    idate=$(date +%s -r "$file" 2>/dev/null)
+    if [ "$idate" -gt "$date" ]; then
+      echo "Running (${dest##*/} older than source file(s))." 1>&2
+      return 1 # destination is *not* newer, re-process!
+    fi
+  done
+  # Test if file valid
+  # WARNING: Common error is length-zero time dimension
+  ncdump -h "$dest" &>/dev/null # if 1, destination is *corrupt*, re-process!
+  if [ $? -ne 0 ]; then
+    echo "Running (${dest##*/} appears corrupt)." 1>&2
+    return 1
+  fi
+  ntime=$(ncdump -h "$dest" | grep UNLIMITED | tr -dc '[0-9]') # format should be 'time = UMLIMITED; // (0 currently)'
+  if [ -n "$ntime" ] && [ $ntime -eq 0 ]; then
+    echo "Running (${dest##*/} has zero-length time dim)." 1>&2
+    return 1
+  fi
+  # Final
+  echo "Skipping (${dest##*/} exists and is new)." 1>&2
+  return 0
+}
 
 ################################################################################
 # NetCDF utils copied from bashrc
@@ -188,25 +221,23 @@ ncdims() {
 # Helper functions
 ################################################################################
 # Wait for processes from array of process IDs, and check their exit statuses
+# WARNING: No longer do this! Just parallelize with post_series.
 parallel() {
-  if $debug; then # don't send to background
-    t=$(date +%s)
-    $@ # just naked call to command
-    echo "Elapsed time: $(($(date +%s) - t))s."
-  else
-    $@ &>$log & # send to background, save logfile
-  fi
+  # $@ &>$log & # send to background, save logfile
+  t=$(date +%s)
+  $@ # just naked call to command
+  echo "Elapsed time: $(($(date +%s) - t))s."
 }
 check() {
-  local i pids exs pid ex
+  local i pids stats pid ex
   pids=($@)
   for pid in ${pids[@]}; do
     wait $pid
-    exs+=($?) # if process already done, wait just mimicks its exit status
+    stats+=($?) # if process already done, wait just mimicks its exit status
   done
   i=0 # iterate
-  for ex in ${exs[@]}; do
-    if [ $ex -ne 0 ]; then
+  for stat in ${stats[@]}; do
+    if [ $stat -ne 0 ]; then
       raise "One of the background processes failed: \"$(ps -p ${pids[i]} -o comm=)\"."
     fi
     let i+=1
@@ -251,7 +282,7 @@ print_days() {
 get_files() {
   # Glob
   local prefix file files ffiles start end vars
-  local daystring day1 day2
+  local daystring nfiles day1 day2
   prefix=$1
   start=$climo_start # the *default* starting/ending points
   end=$climo_end
@@ -259,6 +290,10 @@ get_files() {
   [ -n "$3" ] && end=$3
   files=($input/${prefix}.d????-d????.nc)
   [ ${#files[@]} -eq 0 ] && raise "No $prefix files found in ${input}."
+  # Checks
+  nfiles=$((($end - $start) / $rdays)) # expectation
+  [ $((($end - $start) % $rdays)) -ne 0 ] && \
+    raise "Non-integer number of $rdays-day blocks between days $start and $end."
   for file in ${files[@]}; do
     # Get start and end days
     daystring=${file##*/}
@@ -271,21 +306,20 @@ get_files() {
     if [ $((day2 - day1)) -ne $rdays ]; then
       continue
     fi
-    vars=($(ncvarlist $file))
-    # Detect error due to some accidentally overwritten files! Or maybe the
-    # run wasn't completed/the end of the run was corrupted, but when I ran
-    # the repair script, crated new summary files
-    if [[ " ${vars[@]} " =~ " pm " ]] && [ ${#vars[@]} -lt 10 ]; then
-      echo "Warning: $day1 contains file with overwritten energy data!" 1>&2
-      continue
-    fi
+    # Add to list on condition
     if [ $day1 -ge $start ] && [ $day2 -le $end ]; then
       ffiles+=($file)
     fi
   done
-  [ ${#ffiles[@]} -eq 0 ] && raise "No $prefix files found between day $start and ${end}."
-  echo "Between $start and $end, found days $(print_days ${ffiles[@]})." 1>&2
-  echo ${ffiles[@]} # intended for user to capture output
+  # Message and exit
+  if [ ${#ffiles[@]} -eq 0 ]; then
+    raise "No $prefix files found between days $start and ${end}."
+  elif [ ${#ffiles[@]} -ne $nfiles ]; then
+    raise "Expected $nfiles files between days $start and ${end}, got ${#ffiles[@]}."
+  else
+    echo "Found all files between days $start and ${end}." 1>&2
+    echo ${ffiles[@]} # intended for user to capture output
+  fi
 }
 
 # Spindown files grouped by initialization (branch) day
@@ -314,10 +348,6 @@ spindown_files_by_init() {
   done
   [ ${#spindowntsfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spin_start} and ${spin_end}."
 }
-# echo "${spindowntsfiles[@]##*/}"
-# for spindowngroup in "${spindowntsfiles[@]}"; do # testing
-#   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/}
-# done
 
 # Spindown files grouped by daystring (days after control run)
 # Used for dynamical timescale stuff
@@ -365,7 +395,6 @@ control_climate() {
   files=($(get_files $prefix))
   newer $out ${files[@]} && return 0
   [ -r $out ] && rm $out
-  [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
   echo "Getting time-means."
   commands=("${files[@]/#/ -timmean }")
   cdo $flags -ensmean ${commands[@]} $out
@@ -377,14 +406,13 @@ control_climate() {
 # A 'negative' length indicates unlimited
 # Tried using the documented feature NC_UNLIMITED: http://nco.sourceforge.net/nco.html#Dimensions
 # but did not work. NOTE: No longer do this so forget it.
-spectral_climate() {
+climate_spectral() {
   # Initial
   out=$fspectral
   # Merge with xarray and Dask
   # The fancy sed transforms 'a b c d' to '"a", "b", "c", "d", '
   files=($(get_files $pspectral))
   newer $out ${files[@]} && return 0
-  [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
   echo "Getting average spectra."
   export PYTHONUNBUFFERED=1
   [ -r $out ] && rm $out
@@ -424,13 +452,12 @@ EOF
 # Returns autocorrelation up to N lags, from which we can perform a best-fit
 # and get a "timescale"
 ################################################################################
-control_autocorr() {
+climate_autocorr() {
   # Just get the autocorrelation from the time-mean
   unset outs
   out=$fautocorr
+  files=($(get_files $pfull))
   if ! newer $out ${files[@]}; then
-    files=($(get_files $pfull))
-    [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
     num=1
     nlag=25 # up to 25 days
     block=0 # block number
@@ -576,30 +603,28 @@ PYTHON
 ################################################################################
 # EOFs with xarray and climpy
 ################################################################################
-control_eof_climpy() {
+climate_variability() {
   # Concatenate and select
   # WARNING: If you cancel this process while series.nc is being created,
   # EOF process may fail because file didn't finish writing!
   # if true; then #! [ -r ${pseries}.nc ]; then
   # [ -r ${peofs}_nh.nc ] && return 0
   files=($(get_files $psummary)) # full record
-  if ! newer ${pseries}.nc ${files[@]}; then
+  ntime=$(ncdump -h "${pseries}.nc" 2>/dev/null | grep UNLIMITED | tr -dc '[0-9]') # format should be 'time = UMLIMITED; // (0 currently)'
+  [ -z "$ntime" ] && ntime="0"
+  # if true; then
+  if ! newer ${pseries}.nc ${files[@]} || [ "$ntime" -eq 1 ]; then
     echo "Merging days"
-    [ $? -ne 0 ] && exit 0 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
     cdo $flags -select,name='ke,km,u,emf,ehf,t' ${files[@]} ${pseries}.nc
   fi
 
   # Get EOFs for each region
   # NOTE: We no longer save SH modes, and also no longer calculate vertical averages
   export PYTHONUNBUFFERED=1
-  [ -r ${peofs}_sh.nc ] && rm ${peofs}_sh.nc # conserve space and only get NH
-  [ -r ${peofs}_sh_vert.nc ] && rm ${peofs}_sh_vert.nc
-  [ -r ${peofs}_nh_vert.nc ] && rm ${peofs}_nh_vert.nc
   for region in nh; do
-    # newer ${peofs}_${region}.nc ${pseries}.nc && continue
-    newer ${peofs}_${region}.nc ${pseries}.nc && continue
+    newer ${peofs}_${region}.${days}.nc ${pseries}.nc && continue
     echo "EOFs for region: $region" # will be 20N to 70N
-    python3 $eof $region 0 ${pseries}.nc ${peofs}_${region}.nc
+    python3 $eof $region 0 ${pseries}.nc ${peofs}_${region}.${days}.nc
     [ $? -ne 0 ] && raise "EOF failed."
   done
   return 0
@@ -618,24 +643,28 @@ control_eof_climpy() {
 # returns array of *all missing vals* (with monde anaconda cdo, but not with
 # builtin cdo), but ***sellonlatbox*** seems to fix whatever issue was going
 # on with param ids (see pe_cdo.txt and pe_nco.txt in hs_base_t42l10s).
-control_climate_energy() {
-  # Initial stuff
+climate_lorenz() {
+  # Remove old ones
   unset regions
-  files=($(get_files $psummary))
-  for region in globe nh sh; do
-    if ! newer energy_${region}.nc ${files[@]}; then
-      regions+="$region "
-    fi
+  for file in *energy.nc *energy_nh.nc *energy_sh.nc; do
+    echo "Warning: Removing bad energy file ${file}."
+    rm $file
   done
-  [ $? -ne 0 ] && exit 1 # even if get_files failed, need to exit again because it opened subshell, does not cancel script
-  echo "Getting time series of energy budget."
-  # files=($(get_files $psummary 0 100000)) # full record
+  # Figure out which files need to be retrieved
+  files=($(get_files $psummary 0)) # always start at day 0
+  for region in nh; do # now just nh
+    out=${fenergy%%.*}_${region}.${fenergy#*.}
+    out=${out/d????-/d0000-}
+    newer $out ${files[@]} || regions+=("$region")
+  done
+  [ "${#regions[@]}" -eq 0 ] && return 0
   # Iterate over files, because 128 parallel process limit
   i=0
-  pmax=8
+  pmax=1
+  echo "Getting time series of energy budget."
   for i in $(seq 1 ${#files[@]}); do
-    # Energy
-    echo "File: $i"
+    # Calculate global energy budget in parallel for restart day blocks
+    # echo "File: $i"
     file=${files[i-1]}
     {
       cdo $flags -mulc,101325 -vertmean -selname,$energy_params $file energy.${i}.nc
@@ -652,26 +681,17 @@ control_climate_energy() {
   done
   wait
 
-  # Merge
-  # WARNING: Get warnings here, maybe due to param ids differeing maybe order.
-  # Example: below is order for day 400-500, and for 500-600.
-  # ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke km lat latb omega pe plev plev_bnds pm slp t tdt tvar u udt uvar v vdt
-  # plev plev_bnds lat latb t u v omega slp tdt udt vdt tvar uvar ehf emf pe pm ke km gpe gpm dke dkm cpeke cpmkm ckekm cpmpe
-  # NOTE: If this happens get fucked up nonsense for time averages! So make sure
-  # to ignore e.g. first 500 files, if you re-ran experiments after spinup to
-  # get new variables. Or when working with CDO, just *always* make sure files consistent!
+  # Merge files
   echo "Merging files."
   for region in $regions; do
-    out=$fenergy
-    ! $overwrite && [ -r $out ] && continue
-    [ "$region" != globe ] && out=${fenergy%.nc}_${region}.nc
-    echo "Output: $out"
+    out=${fenergy%%.*}_${region}.${fenergy#*.}
+    out=${out/d????-/d0000-}
+    newer $out energy_${region}.*.nc && continue
     {
       cdo $flags -mergetime energy_${region}.*.nc $out # merge the means
       ncks --no-abc -O -C -x -v lon,lat $out $out
     } &
-  done
-  wait
+  done; wait
   rm energy.*.nc energy_*.*.nc
   return 0
 }
@@ -796,44 +816,46 @@ dynamical_timescale() {
 ################################################################################
 driver() {
   # Forcing data
-  if ! newer $output/forcing.nc $input/../forcing.nc; then
-    echo "Copying forcing data."
-    cp $input/../forcing.nc $output
+  if $forcing; then
+    if ! newer $output/forcing.nc $input/../forcing.nc; then
+      echo "Copying forcing data."
+      cp $input/../forcing.nc $output
+    fi
   fi
 
   # Climate means
-  if $control_climate; then
+  if $climate_plev; then
     echo "Control climate."
     log=${input}/climate.log
     parallel control_climate $psummary $fclimate
   fi
-  if $control_climate_isen; then
+  if $climate_isen; then
     echo "Isentropic control climate."
     log=${input}/climate_isen.log
     parallel control_climate $psummary_isen $fclimate_isen
   fi
-  if $spectral_climate; then
+  if $climate_spectral; then
     echo "Average phase-speed spectra."
     log=$input/climate_spectral.log
-    parallel spectral_climate
+    parallel climate_spectral
   fi
 
   # Autocorrelation, EOFs, time series
-  if $control_autocorr; then
+  if $climate_autocorr; then
     echo "Autocorrelation for pointwise data."
     log=$input/climate_autocorr.log
-    parallel control_autocorr
+    parallel climate_autocorr
   fi
-  if $control_eof; then
+  if $climate_variability; then
     echo "Control 2D EOFs."
     log=$input/climate_eofs.log
-    # parallel control_eof
-    parallel control_eof_climpy
+    # parallel climate_variability
+    parallel climate_variability
   fi
-  if $control_climate_energy; then
+  if $climate_lorenz; then
     echo "Control global energy budget time series."
     log=$input/climate_energy.log
-    parallel control_climate_energy
+    parallel climate_lorenz
   fi
 
   # Spindown processing

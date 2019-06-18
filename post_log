@@ -14,7 +14,10 @@ for glob in "${globs[@]}"; do
     dir=${folder##*/}
     nfields=$(echo $dir | tr '[^_]' ' ' | wc -w)
     iseries=${dir%_p*}
-    [ "$iseries" != "$series" ] && printf "\nSeries: $iseries\n" | tee -a $log # new line
+    if [ "$iseries" != "$series" ]; then
+      echo "Series: $iseries"
+      printf "\nSeries: $iseries\n" &>> $log # new line
+    fi
     series=$iseries
     if [ $nfields -eq 3 ]; then
       params="default"
@@ -22,20 +25,22 @@ for glob in "${globs[@]}"; do
       params=${dir##*_}
       params="$(echo $params | tr p ' ' | sed 's/ 0*/ /g' | sed 's/ \./ 0./g' | xargs | sed 's/ /, /g')"
     fi
-    echo $params | tee -a $log # parameters
+    echo $params &>> $log # parameters
     # Print if file available
     unset message
     for file in forcing autocorr climate climate_isen spectral spectral_phase eofs_nh eofs_nh_vert energy; do
     # for file in autocorr; do
       if [ $file == forcing ]; then
-        ncfile=($folder/*${file}.nc)
+        ncfile=($folder/*${file}*.nc)
       else
-        ncfile=($folder/${prefix}*${file}.nc)
+        ncfile=($folder/${prefix}*${file}*.nc)
       fi
-      if [ ${#ncfile[@]} -ne 0 ]; then
-        message+="$file: $(date -u -r $ncfile)\n"
-      fi
+      for ncf in ${ncfile[@]}; do
+        name=${ncf%.nc}
+        name=${ncf##*/}
+        message+="$name: $(date -u -r $ncf)\n"
+      done
     done
-    printf "$message" | column -t -o' ' | awk '{print "    " $0}' | tee -a $log
+    printf "$message" | column -t -o' ' | awk '{print "    "$0}' &>> $log
   done
 done

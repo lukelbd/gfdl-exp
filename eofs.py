@@ -87,6 +87,7 @@ for name in names:
     data = data_xr.sel(**filter).values # trim singleton longitude dimension
     if data.ndim != 3:
         raise ValueError(f'Expected data with 3 dimensions, got {data.ndim}.')
+    print(name, data_xr.sel(**filter).dims, data.shape)
 
     # EOF of vertically averaged data?
     if average:
@@ -264,7 +265,7 @@ for pair in pairs:
         print('Getting lagged projections')
         projs = []
         for ilag in ilags:
-            print(f'Lag: {ilag}')
+            # print(f'Lag: {ilag}')
             if ilag==0:
                 slice1 = slice(None)
                 slice2 = slice(None)

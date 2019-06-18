@@ -6,10 +6,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Read file
 print("Reading initial file and interpolating...")
-load "~/timescales-model/header.ncl"
+load "~/timescales-exps/header.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; read data from here, write later
+varnames = getfilevarnames(f)
+dimnames = getvardims(f) ; will work on file handle passed to it
 system("rm " + output + " 2>/dev/null") ; remove file
 o = addfile(output, "c")
 filedimdef(o, "time", -1, True) ; set unlimited
@@ -42,10 +44,16 @@ plev_bnds := plev_bnds(plev|:,bnds|:) ; re-order
 ; Parameters needed for interpolation
 slp = f->slp ; sea level pressure in mb
 ; Parameters needed for extrapolation
+; NOTE: If 't' is not available, just put a dummy in place
 hyam_norm = hyam/p0 ; required for vint2hp function
-tbot = f->t(:,0,:,:) ; temperature at bottom level
+if any(varnames .eq. "t")
+  tbot = f->t(:,0,:,:) ; temperature at bottom level
+else
+  tbot = 0.0*slp ; a copy
+  tbot = 273.15
+end if
 zbot = tbot(0,:,:) ; indexing makes a copy in NCL
-zbot(:,:) = 0 ; zero surface geopotential
+zbot = 0 ; zero surface geopotential
 
 ; Standardize coordinates
 ; First horizontal coordinates
@@ -108,8 +116,6 @@ timer("  * Time for NCL reading and setup")
 ; * this may be what CDO results are supposed to look like
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 print("Interpolating variables in " + qq + filename + qq + "...")
-varnames = getfilevarnames(f)
-dimnames = getvardims(f) ; will work on file handle passed to it
 do i=0,dimsizes(varnames)-1
   varname := varnames(i) ; wrap in array to strip attributes
   if .not. any(varname .eq. dimnames) then

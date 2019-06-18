@@ -126,7 +126,7 @@ spectra_parallel() {
 }
 
 # Isentropic interpolation and summary statistics
-# TODO: Make this work with nccombine and ncdivide
+# TODO: Make this work with ncparallel
 isen_parallel() {
   # Message
   echo ${full_isen##*/}

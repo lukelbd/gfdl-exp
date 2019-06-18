@@ -4,7 +4,7 @@
 ; variable "forcing" to this script (calculate from Newtonian damping and
 ; the damping/equilbrium params).
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-load "~/timescales-model/header.ncl"
+load "~/timescales-exps/header.ncl"
 qq = integertochar(34) ; a double quote; only way to put inside string! yuck.
 exists("filename")
 exists("output")

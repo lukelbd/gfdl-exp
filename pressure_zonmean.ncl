@@ -7,7 +7,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Initial stuff
 print("Reading initial file...")
-load "~/timescales-model/header.ncl"
+load "~/timescales-exps/header.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; input
