@@ -1,29 +1,63 @@
-#!/bin/bash
-################################################################################
-# README.md file has instructions on namelist/diagnostic table parameters
-# This script runs the GFDL dry core model in blocks of N days, and concurrently
-# processes data with "process" script while next block is run.
-# Concurrent processing can hugely reduce the amount of time needed to get derived
-# quantities like heat flux and stuff.
-################################################################################
+#!/usr/bin/env bash
+usage='drycore_run [OPTION...] DIR'
+doc="This script runs the GFDL dry core model in blocks of N days, and processes
+the parallel output NetCDF files with './process' before merging them. This means
+pressure level interpolation, heat flux calcualtion, etc. are done in parallel
+just like the model integration, which can save huge amounts of time. For a
+description of namelist/diagnostic table parameters, see README.md.
+
+Usage
+
+  $usage
+
+Positional args
+
+  DIR  The directory in which model will be run. Must have 'input.nml' and
+       'diag_table' files in the top level.
+
+Run mode spec
+
+  This is the experiment mode. Passed with the flag [-m|--mode]=MODE
+
+  * 0 is control run, the default.
+  * 1 is radiation off spindown.
+  * 2 is radiation off but surface on spindown.
+  * 3 is everything off (radiation, surface, and friction) spindown.
+  * 4 for friction off spindown.
+
+Options
+
+  -h|--help                Print this message.
+  -n|--new                 Exit if experiment folder already exists.
+  -f|--fix                 Exit if model already ran successfully for full integration time. Use this to restart crashed runs with smaller timestep.
+  -r|--resume              Exit if particular run block already exists. Use this to continue interrupted runs.
+  -s|--slow                Slow timestep for spinup to minimize crash risk.
+  -i|--init)               Exit after saving the 'forcing.nc' forcing data.
+  [-c|--cores]=*           The number of cores to parallelize over.
+  [-ts|--tstart]=*         The initial day. Can use this to continue from another run.
+  [-te|--tend]=*           The final day.
+  [-rd|--restart]=*        The initial restart directory.
+  [-dn|--days-nodata]=*    Comma-separated list of days for which no data is saved.
+  [-ds|--days-spindown]=*  Comma-separated list of initial spindown days.
+  [-dxyz|--days-xyzdata]=* Comma-separated list of days for which full res data is saved.
+"
 # Error
 raise() {
+  echo "Usage: $usage" 1>&2
   echo "Error: $@" 1>&2
   exit 1
 }
-# Initial stuff 
+# Initial stuff
 ulimit -s unlimited # set max open files
 cwd=$(pwd)
-cores=8      # number of cores for parallel
-mode=0       # default is to run the control
-new=false    # do not write to existing experiment directory?
-resume=false # do not overwrite existing run block?
-forcing=false # *only* save forcing scheme data to file? (i.e. exit after doing so?)
-fix=false # repair runs that did not finish?
-all=false  # keep xyz data for all days?
-none=false # throw out all data for all days (i.e. just keep restarts)?
-slow=false # slow timestep for first block of days? needed for experiments with strong mean damping
-slowdays=300 # number of days
+cores=8
+mode=0
+new=false
+resume=false
+init=false
+fix=false
+slow=false
+slowdays=300 # number of days for slow run
 tstart=0 # defaults
 tend=0
 
@@ -43,11 +77,12 @@ interp=$cwd/pressure_interp.ncl # for forcing data
 # Read the comments to see explanations for each option
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
+    -h|--help) echo "$doc" && exit 0 ;;
     -n|--new)  new=true ;; # use this to *exit* if experiment folder already exists
     -f|--fix)  fix=true ;;
     -s|--slow) slow=true ;; # slow start to prevent crash (TODO: maybe delete this)
-    -r|--resume)   resume=true ;; # use this to *autodetect* last day of existing run, continue from there
-    -fc|--forcing) forcing=true ;; # *only* save forcing scheme data to file?
+    -r|--resume) resume=true ;; # use this to *autodetect* last day of existing run, continue from there
+    -i|--init) init=true ;; # *only* save forcing scheme data to file?
     -m=*|--mode=*)  mode=${1#*=} ;; # 0 is control, 1 is spindown, 2...
     -c=*|--cores=*) cores=${1#*=} ;;
     -ts=*|--tstart=*)  tstart=${1#*=} ;; # use this to continue from *particular* day of existing run
@@ -56,15 +91,15 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     -dn=*|--days-nodata=*)    t_nodata=($(echo ${1#*=}   | tr ',' ' ')) ;;
     -ds=*|--days-spindown=*)  t_spindown=($(echo ${1#*=} | tr ',' ' ')) ;;
     -dxyz=*|--days-xyzdata=*) t_xyzdata=($(echo ${1#*=}  | tr ',' ' ')) ;;
-    -*) pflags_global+="$1 " ;; # send all extra flags to process function
-    *)  [ -n "$expdir" ] && raise "More than one experiment directory specified."
-      expdir="$1" ;;
+    -*) pflags+="$1 " ;; # send all extra flags to process function
+    *) [ -n "$expdir" ] && raise "More than one experiment directory specified."
+       expdir="$1" ;;
   esac
   shift
 done
 # Warnings and errors
 [ -z $expdir ] && raise "You must declare the experiment directory."
-! $forcing && [ $tstart -eq 0 ] && [ $tend -eq 0 ] && raise "Start and end times both zero."
+! $init && [ $tstart -eq 0 ] && [ $tend -eq 0 ] && raise "Start and end times both zero."
 # Use final day
 if [ -n "$rinit" ] && ! [[ $rinit =~ d.*-d.* ]]; then
   rinit=($rinit/d*-d*);
@@ -90,7 +125,6 @@ array_in() {
 }
 # Get namelist value for the *global*, experiment-series namelist
 nml_parse() {
-  # cat $expdir/input.nml | sed 's/!.*//g' | grep "$1" | cut -d= -f2 | tr -d "\t ,'\""
   cat $expdir/input.nml | sed 's/!.*//g' | grep "$1" | cut -d= -f2 | xargs | sed 's/,$//g'
 }
 # Replace namelist value for a *local* spindown experiment
@@ -144,15 +178,14 @@ run_model() {
   echo "Model time: ${tmodel%.*}s." # is just max of the two
 
   # Remove some files
-  # [ -r INPUT/topography.data.nc ] && rm INPUT/topography.data.nc # remove topography
   [ -d INPUT ] && [ $cday -gt 0 ] && rm -rf INPUT # remove input *if* this is not start of new run; in that case we want to keep input so know what's going on
   [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
   rm fms.x # remove executable, because takes up space
 
   # Process new data, and remove old data
   # Previously we set processor affinities, but didn't help much
-  echo "Calling processing script with flags: $(echo $pflags_day $pflags_global | xargs)"
-  $process $pflags_day $pflags_global &>log.process
+  echo "Calling processing script with flags: $(echo $ipflags $pflags | xargs)"
+  $process $ipflags $pflags &>log.process
   exit_check $?
   tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
   echo "Process time: ${tprocess%.*}s."
@@ -164,30 +197,24 @@ run_model() {
 ################################################################################
 # Take one argument: directory where restart files exist
 copy_restart() {
-  # Copy over relevant restart files for exp type; if missing, raise error
+  # Move restart files
   local cday rdir
   cday=$1
   rdir=$2 # the restart direcotry
   [ $# -ne 2 ] && raise "copy_restart() function takes exactly 2 arguments."
-  if ! [ -d "$rdir" ] || ! [ -d "$rdir/RESTART" ] || [ -z "$(ls $rdir/RESTART/* 2>/dev/null)" ]; then
+  if ! [ -d "$rdir" ] || ! [ -d "$rdir/RESTART" ] || [ -z "$(ls $rdir/RESTART/*.nc 2>/dev/null)" ] || ! [ -r "$rdir/RESTART/atmos_model.res" ]; then
     raise "Restart directory $rdir/RESTART does not exist, or is empty."
   fi
-  # Move restart files
-  # resfiles=(atmos_model.res atmos_tracers.res.nc fv_rst.res.nc fv_srf_wnd.res.nc) # fv type
-  # resfiles=(atmos_model.res atmos_tracers.res.nc bgrid_prog_var.res.nc) # bgrid type
-  resfiles=(atmos_model.res atmosphere.res.nc spectral_dynamics.res.nc)
   echo "Moving restart files from ${rdir##*/}/RESTART to ${PWD##*/}/INPUT..."
-  for file in ${resfiles[@]}; do
-    ! [ -r $rdir/RESTART/$file ] && raise "Missing restart file ${rdir##*/}/RESTART/${file}."
-    cp $rdir/RESTART/$file INPUT/$file
+  for file in $rdir/RESTART/*; do
+    cp $file INPUT/${file##*/}
   done
   # Enforce starting time
   # WARNING: After day 10000, 'days' field runs into 'month' field in atmos_model.res
   # which causes weird error with 1 timestep in output NetCDF files and data corruption
-  # WARNING: Editing namelist does not work because current time overwritten
-  # by the INPUT/atmos_model.res file. Need to edit the latter.
+  # Editing namelist does not work because current time overwritten by the
+  # INPUT/atmos_model.res file. Need to edit the latter.
   if [ $cday -eq 0 ]; then
-    # sed -i 's/\&main_nml/\&main_nml\n  current_time = 0,/g' input.nml
     sed -i 's/ \+/ /g;s/[0-9]*[1-9][0-9]*/0/g' INPUT/atmos_model.res
     cp $rdir/input.nml ../restart.nml # store the restart namelist in root directory for experiment
     echo ${rdir} >../restart.log
@@ -345,7 +372,7 @@ if ncl_check forcing.log || ! [ -r ../forcing.nc ]; then
   raise "Something failed during NCL interpolation of forcing data."
 fi
 # Exit if user *only* wanted to get initial conditions
-$forcing && exit 0
+$init && exit 0
 # *Now* check for diag_table existence (not needed for forcing stuff)
 ! [ -r $expdir/diag_table ] && raise "diag_table file not found."
 
@@ -387,9 +414,9 @@ case $mode in
       unset rinit # only ever use this on first 'day' of a new experiment; for subsequent days, continue from earlier day block
       ! [ -d $rdir ] && raise "Override restart directory \"$rdir\" does not exist."
     fi
-    unset pflags_day
-    array_in $cday ${t_nodata[@]} && pflags_day+=" -q" && echo "Will delete output netcdf files."
-    array_in $cday ${t_xyzdata[@]} && pflags_day+=" -k" && echo "Will keep XYZ netcdf files."
+    unset ipflags
+    array_in $cday ${t_nodata[@]} && ipflags+=" -q" && echo "Will delete output netcdf files."
+    array_in $cday ${t_xyzdata[@]} && ipflags+=" -k" && echo "Will keep full res netcdf files."
     dir_setup $cday $cdir # sets up working directory, cd into it
     if [ $? -eq 0 ]; then # setup returns 1 if directory is present and 'resume' option is set
       if ! $coldstart || [ $cday -gt 0 ]; then
@@ -449,9 +476,9 @@ case $mode in
       [ $cday -eq 0 ] && rdir=$fstart || \
         rdir=$prefix-spindown$mode-d$(printf "%04d" $pday)-d$(printf "%04d" $cday)
       # Run the model and combine output
-      unset pflags_day
-      array_in $cday ${t_nodata[@]} && pflags_day+=" -q"
-      array_in $cday ${t_xyznodata[@]} && pflags_day+=" -k"
+      unset ipflags
+      array_in $cday ${t_nodata[@]} && ipflags+=" -q"
+      array_in $cday ${t_xyznodata[@]} && ipflags+=" -k"
       dir_setup $cday $cdir # sets up working directory, cd into it
       if [ $? == 0 ]; then # returns 1 if we were requested not to overwrite old directories
         copy_restart $cday $rdir # add restart files

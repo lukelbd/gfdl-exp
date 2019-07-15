@@ -1,73 +1,84 @@
 #!/bin/bash
-################################################################################
-# File for processing results of GFDL model runs AS THEY ARE PRODUCED; use this
-# in parallel after every model step while next model step is simultaneously running.
-# ---------
-# Summary of current variables:
-# * with longitude-data:
-#   p, t, u, v, z, vor, omega, teq, D, pt, pv s
-#   forget dthdp (only will want lapse rate to diagnose mean climate/tropopause
-#   heights and can use the mean t/theta fields), but keep S; has physical interpretation
-# * without longitude-data:
-#   t, u, v, z, vor, omega, teq, D, dthdp, pt, pv, s, **NEW** EHF, EMF, EPF, EKE, C, KE
-# Tips:
-# Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
+usage='process [OPTION...]'
+doc="This script processes the parallel-produced results of GFDL model runs.
+It calls the 'mppnccombine.x', 'pressure_interp.ncl', 'pressure_params.ncl',
+'pressure_zonmean.ncl', 'isentropes_interp.ncl', and 'isentropes_params.ncl'
+scripts. It also used to call the 'spectra.py' script, but this is now
+done after the fact so that we can window the blocks and get spectral data
+in-between run blocks.
+
+Usage
+
+  $usage
+
+Options
+
+  -q|--quit     Immediately quit and do nothing. Used in 'drycore_run'.
+  -c|--combine  Just combine files, do not process them.
+  -d|--debug    Keep all intermediate files.
+  -s|--split    Whether to split full res files before combining.
+  -k|--keep     Whether to keep full res files or delete them.
+  [-d|--dir]=*  The input directory. Defaults to current directory.
+"
+# Error
+# NOTE: Run 'grep -r -l "^[^\!].*register_diag_field(" . | grep ".*\.f90"' at base of source
 # directory to see list of files where diag_fields are registered.
-################################################################################
+raise() {
+  echo "Usage: $usage" 1>&2
+  echo "Error: $1" 1>&2
+  exit $2
+}
 # Function for checking NCL scripts success
 # Script sometimes fails to spawn child process for displaying time information; ignore these errors
 # Also Execute.c is always shown as error alongside specific function error, so ignore that one
-# TODO: Make nclhe
-nclcheck() { # input log file as argument
+nclcheck() {
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | grep "fatal:" &>/dev/null
   [ $? -ne 0 ] # ***success** if exit code was 1 (fatal: not found), failure if it was zero (fatal: was found)
 }
-
-# Parse input flags
-_dir='.'
-_debug=false   # keep data in original folder, instead of moving to ../netcdf? useful for testing
-_resume=false  # process old "full" files?
-_keepxyz=false # keep original "full" results?
-_combine=false # only combine model files, nothing else?
-_splitxyz=true # make true the default
-nsplit=4 # number of time splits for XYZ files
+# Parse input
+dir='.'
+debug=false  
+keepxyz=false
+combine=false
+splitxyz=true
+nsplit=4
 while [ $# -gt 0 ]; do
   case $1 in
-    -c|--combine) echo "Only combining files." && _combine=true ;;
+    -c|--combine) echo "Only combining files." && combine=true ;;
     -q|--quit) echo "Skipping processing." && exit 0 ;;
-    -d|--debug)   _debug=true    ;; # if true, keep all intermediate files
-    -r|--resume)  _resume=true   ;; # process old results sitting in the directory
-    -k|--keep)    _keepxyz=true  ;; # whether to keep longitudinal data
-    -s|--split)   _splitxyz=true ;; # whether to split XYZ files before combining
-    -d=*|--dir=*) _dir=${1##*=}  ;;
-    *) echo "Error: Unknown flag \"$1\"." && exit 127 ;;
+    -d|--debug)   debug=true    ;;
+    -k|--keep)    keepxyz=true  ;;
+    -s|--split)   splitxyz=true ;;
+    -d=*|--dir=*) dir=${1##*=}  ;;
+    *) raise "Unknown flag \"$1\"." 127 ;;
   esac
   shift # shift by one
 done
-$_debug && _keepxyz=true
-$_resume && _keepxyz=true # we are *reading* from existing XYZ files so definitely don't delete them!
+$debug && keepxyz=true
 
 # Global vars
 # interp_cdo=$bin/process_interp.cdo # interpolate with CDO
 t0=$(date +%s) # starting time
 bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from right
 run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
+ncdivide=$HOME/ncparallel/ncdivide
+nccombine=$HOME/ncparallel/nccombine
 mppnccombine=$bin/mppnccombine.x # combine; needs to have been compiled here
 plev_interp=$bin/pressure_interp.ncl  # interpolate with NCL, automatic iteration
 plev_params=$bin/pressure_params.ncl # eddy and mean Lorenz energy cycle terms with NCL
 plev_means=$bin/pressure_zonmean.ncl # just gets zonal means
 isen_interp=$bin/isentropes_interp.ncl
 isen_params=$bin/isentropes_params.ncl
-spectra=$bin/spectra.py # spectral decompositions
-cd $_dir # optionally pass dir argument
+spectra=$bin/pressure_spectra.py # spectral decompositions
+cd $dir # optionally pass dir argument
 
 # Double check some stuff
-! [ -r $plev_params ]   && echo "Error: The script \"$plev_params\" is missing."      && exit 127
-! [ -r $plev_interp ]   && echo "Error: The script \"$plev_interp\" is missing."      && exit 127
-! [ -x $mppnccombine ]  && echo "Error: The executable \"$mppnccombine\" is missing." && exit 127
-! hash ncl 2>/dev/null  && echo "Error: NCL is not in $PATH."                         && exit 127
-! hash ncks 2>/dev/null && echo "Error: NCO is not in $PATH."                         && exit 127
-# ! hash cdo 2>/dev/null  && echo "Error: CDO is not in $PATH."                       && exit 127
+! [ -r $plev_params ]   && raise "The script \"$plev_params\" is missing."      127
+! [ -r $plev_interp ]   && raise "The script \"$plev_interp\" is missing."      127
+! [ -x $mppnccombine ]  && raise "The executable \"$mppnccombine\" is missing." 127
+! hash ncl 2>/dev/null  && raise "NCL is not in $PATH."                         127
+! hash ncks 2>/dev/null && raise "NCO is not in $PATH."                         127
+# ! hash cdo 2>/dev/null  && raise "CDO is not in $PATH."                       127
 
 ################################################################################
 # Functions
@@ -101,7 +112,7 @@ interp() {
   ncl -n -Q "filename=\"$filename\"" "output=\"$plevout\"" $plev_interp &>$log #2> /dev/null
   sed -i '/^.*warning:.*$/d;/^$/d' $log
   if ! nclcheck $log || ! [ -r $plevout ]; then
-    echo "Error: Something failed during NCL interpolation." && exit 2
+    raise "Something failed during NCL interpolation." 2
   fi
   echo "  * Time for plev interpolation: $(($(date +%s) - t))s."
 
@@ -112,7 +123,7 @@ interp() {
   [ -r "$isenout" ] && rm "$isenout"
   ncl -n -Q "filename=\"$filename\"" "output=\"$isenout\"" "stratosphere=False" $isen_interp &>$log #2> /dev/null
   if ! nclcheck $log || ! [ -r $isenout ]; then
-    echo "Error: Something failed during NCL interpolation." && exit 2
+    raise "Something failed during NCL interpolation." 2
   fi
   echo "  * Time for isen interpolation: $(($(date +%s) - t))s."
 }
@@ -130,7 +141,7 @@ plev_means() {
   [ -r "$out" ] && rm "$out"
   ncl -n -Q "filename=\"$filename\"" "output=\"$out\"" $plev_means &>$log
   if ! nclcheck $log; then
-    echo "Error: Something failed while getting zonal means." && exit 4
+    raise "Something failed while getting zonal means." 4
   fi
   echo "  * Time for getting zonal means: $(($(date +%s) - t))s."
 }
@@ -151,7 +162,7 @@ params() {
   [ -r "$plevout" ] && rm "$plevout"
   ncl -n -Q "filename=\"interp_plev.$suffix\"" "output=\"$plevout\"" "means=\"means.$suffix\"" $plev_params &>$log
   if ! nclcheck $log; then
-    echo "Error: Something failed while getting plev params." && exit 4
+    raise "Something failed while getting plev params." 4
   fi
   echo "  * Time for plev params: $(($(date +%s) - t))s."
 
@@ -162,7 +173,7 @@ params() {
   [ -r "$isenout" ] && rm "$isenout"
   ncl -n -Q "filename=\"interp_isen.$suffix\"" "output=\"$isenout\"" $isen_params &>$log
   if ! nclcheck $log; then
-    echo "Error: Something failed while getting isen params." && exit 4
+    raise "Something failed while getting isen params." 4
   fi
   echo "  * Time for isen params: $(($(date +%s) - t))s."
 }
@@ -180,7 +191,7 @@ spectra() {
   log=LOGS/log.spectra.${suffix%.nc}
   [ -r $out ] && rm $out
   $spectra interp_plev.${suffix} $out &>$log
-  [ $? -ne 0 ] && echo "Error: Something failed while getting spectra." && exit 4
+  [ $? -ne 0 ] && raise "Something failed while getting spectra." 4
   echo "  * Time for calculating spectra: $(($(date +%s) - t))s."
 }
 
@@ -188,10 +199,7 @@ spectra() {
 pidcheck() {
   for pid in $@; do
     wait $pid
-    if [ $? -ne 0 ]; then
-      echo "Error: Bad exit code from one or more of the parallel processes."
-      exit 4
-    fi
+    [ $? -ne 0 ] && raise "Bad exit code from one or more of the parallel processes." 4
   done
 }
 
@@ -199,47 +207,39 @@ pidcheck() {
 # Driver, calls above functions
 ################################################################################
 # Get files
-if $_debug; then
-  _parallel=true
-  files=(test.nc.0000) # doesn't really exist
-elif $_resume; then
-  _parallel=false
-  files=(*_full.${PWD##*/}.nc) # the preserved output file
+if $debug; then
+  parallel=true
+  prefixes=(test.nc.0000) # doesn't really exist
 else
-  _parallel=true
-  files=(*.nc.0000)
+  parallel=true
+  prefixes=(*.nc.0000)
 fi
-if [[ "$files" =~ "*" ]]; then
-  files=(*.nc) # already present?
-  [ ${#files[@]} -eq 1 ] && echo "Error: XYZ resolution files not found." && exit 1 # make sure nullglob turned off
+if [[ "$prefixes" =~ "*" ]]; then
+  prefixes=(*.nc) # already present?
+  [ ${#prefixes[@]} -eq 1 ] && raise "XYZ resolution files not found." 1 # make sure nullglob turned off
   echo "Note: Model ran on only 1 core, do not need to merge files."
 fi
+
 # Loop through each file
-for file in ${files[@]}; do
+for prefix in ${prefixes[@]}; do
   ##############################################################################
   # Initial stuff
   ##############################################################################
   # File names and such
-  base=${file%%.*}
-  if $_debug && $_resume; then
-    ncfiles=(${base}.*.nc) # check if already present
-  elif $_resume; then
-    ncfiles=(${file})
-  else
-    for part in ${base}.nc*; do
-      num=${part##*.}
-      mv $part ${base}.${num}.nc & # some programs won't recognize file without .nc extension
-    done
-    wait # in background
-    ncfiles=(${base}.*.nc)
-  fi
+  base=${prefix%%.*}
+  for part in ${base}.nc*; do
+    num=${part##*.}
+    mv $part ${base}.${num}.nc & # some programs won't recognize file without .nc extension
+  done
+  wait # in background
+  ncfiles=(${base}.*.nc)
   echo Files: ${ncfiles[@]}
   xyzfile="${base}_full.${PWD##*/}.nc"   # original data
   plev_yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
   isen_yzfile="${base}_summary_isen.${PWD##*/}.nc" # isentropic coords
   spectra_file="${base}_spectral.${PWD##*/}.nc" # spectral decomposition
   # Just want to combine files and exit?
-  if $_combine; then
+  if $combine; then
     [ -r ${base}.nc ] && rm ${base}.nc
     $mppnccombine -r ${base}.nc ${ncfiles[@]}
     continue
@@ -254,22 +254,15 @@ for file in ${files[@]}; do
   echo "Interpolating and getting means..."
   ! [ -d LOGS ] && mkdir LOGS
   for ncfile in ${ncfiles[@]}; do
-    if ! $_debug && $_resume; then
-      # Just get means
-      num=0000
-      suffix=nc # dummy value
-      plev_means "$ncfile" "nc" &>LOGS/log.$num &
-    else
-      # Number
-      num=${ncfile%.nc}
-      num=${num#*.}
-      suffix=${num}.nc
-      # Interpolate and get means
-      { interp "$ncfile" "$suffix"
-        plev_means "interp_plev.$suffix" "$suffix"
-      } &>LOGS/log.$num &
-      pids+=($!)
-    fi
+    # Number
+    num=${ncfile%.nc}
+    num=${num#*.}
+    suffix=${num}.nc
+    # Interpolate and get means
+    { interp "$ncfile" "$suffix"
+      plev_means "interp_plev.$suffix" "$suffix"
+    } &>LOGS/log.$num &
+    pids+=($!)
     suffixes+=($suffix)
   done
   pidcheck ${pids[@]}
@@ -278,7 +271,7 @@ for file in ${files[@]}; do
   # Merge zonal means
   # NOTE: Use mppnccombine -h to print help info; the -r removes files after
   # run was successful
-  if $_parallel; then
+  if $parallel; then
     # Merge params
     echo "Combining YZ files..."
     t=$(date +%s)
@@ -307,7 +300,7 @@ for file in ${files[@]}; do
   # echo "  * Time for getting spectra in parallel: $(($(date +%s) - tp))s."
   #
   # # Merge
-  # if $_parallel; then
+  # if $parallel; then
   #   echo "Combining spectral files..."
   #   t=$(date +%s)
   #   [ -r spectra.nc ] && rm spectra.nc
@@ -317,7 +310,7 @@ for file in ${files[@]}; do
   # fi
   #
   # # Save files
-  # if $_debug; then
+  # if $debug; then
   #   cp spectra.nc $spectra_file
   # else
   #   mv spectra.nc $spectra_file
@@ -344,7 +337,7 @@ for file in ${files[@]}; do
   # NOTE: Use mppnccombine -h to print help info; the -r removes files after
   # run was successful
   # TODO: Allow calculating in parallel
-  if $_parallel; then
+  if $parallel; then
     # Merge params
     echo "Combining YZ files..."
     t=$(date +%s)
@@ -361,7 +354,7 @@ for file in ${files[@]}; do
   # Append params to file; want them to show up at end of ncdump ideally
   # ncks -h --no-abc -A params_plev.nc means.nc
   ncks -h --no-abc -A means.nc params_plev.nc
-  if $_debug; then
+  if $debug; then
     cp params_plev.nc $plev_yzfile
     cp params_isen.nc $isen_yzfile
   else
@@ -381,95 +374,65 @@ for file in ${files[@]}; do
   # divide them into blocks.
   ##############################################################################
   # Delete the old files
-  if ! $_debug; then
+  if ! $debug; then
     rm ${ncfiles[@]} # original data in model coords
     rm interp_isen.*.nc # do not archive, because can be rebuilt from archived pressure level data
   fi
-  if ! $_keepxyz; then
+  if ! $keepxyz; then
     echo "Removing XYZ files..."
-    ! $_debug && rm interp_plev.*.nc
+    ! $debug && rm interp_plev.*.nc
   # Merge files
   # Will drop variables in parallel before merging
-  elif ! $_resume; then
+  else
     # Message
     t=$(date +%s)
     unset interp # empty array
     echo "Keeping XYZ files..."
     keep=plev_bnds,slp,u,v,t
 
-    # Without splitting in parts
-    if ! $_splitxyz; then
-      # Delete some vars
-      for suffix in ${suffixes[@]}; do
-        out=$file
-        file=interp_plev.${suffix}
-        $_debug && out=interp_plev_cut.${suffix}
-        ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $file $out &
-        interp+=($out)
-      done
-      wait
-      echo "  * Time for trimming variables: $(($(date +%s) - t))s."
+    # Delete some vars
+    for suffix in ${suffixes[@]}; do
+      out=$file
+      file=interp_plev.${suffix}
+      $debug && out=interp_plev_cut.${suffix}
+      ncks -O -h --no-abc -v plev_bnds,slp,u,v,t $file $out &
+      interp+=($out)
+    done
+    wait
+    echo "  * Time for trimming variables: $(($(date +%s) - t))s."
 
-      # Combine
-      t=$(date +%s)
-      echo "Combine full files."
-      [ -r $xyzfile ] && rm $xyzfile
-      $mppnccombine $xyzfile ${interp[@]}
-      [ $? -ne 0 ] && echo "Error: Failed to combine XYZ files." && exit 127
-      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
-      ! $_debug && rm interp_plev*.nc
-
-    # Split into files of *n* timesteps
-    else
-      ts=$(ncdump -h interp_plev.0000.nc | grep 'UNLIMITED' | sed 's/[^0-9]//g')
-      [ -z "$ts" ] && echo "Error: Unknown timesteps for file interp_plev.0000.nc." && exit 127
-      [ $((ts % nsplit)) -eq 1 ] && echo "Error: Incompatible number of timesteps ${ts} for ${nsplit} splits." && exit 127
-      # Bugfix; had issues with lost memory even on 109GB nodes, maybe has
-      # to do with hardware architecture or something
-      for ni in $(seq 1 $nsplit); do
-        unset outs
-        for suffix in ${suffixes[@]}; do
-          file=interp_plev.${suffix}
-          out=interp_plev_cut${ni}.${suffix}
-          t1=$(((ni - 1)*ts/nsplit)) # e.g. nsplit=10, ts=200, goes 0, 20, 40, 60
-          t2=$((ni*ts/nsplit - 1)) # e.g. nsplit=10, ts=200, goes 19, 39, 59
-          ncks -O -h --no-abc -d time,$t1,$t2 -v $keep $file $out &
-          outs+=" $out"
-        done
-        interp+=("$outs")
-      done
-      wait
-      echo "  * Time for trimming variables: $(($(date +%s) - t))s."
-      t=$(date +%s)
-
-      # Combine groups of half-files in parallel
-      unset pids xyzfiles
-      echo "Combine pieces..."
-      i=1
-      for group in "${interp[@]}"; do
-        ixyzfile=${xyzfile%.nc}_${i}.nc
-        $mppnccombine $ixyzfile $group &
-        xyzfiles+=($ixyzfile)
-        pids+=($!)
-        let i+=1
-      done; pidcheck ${pids[@]}
-      echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
-
-      # Put time blocks back together
-      t=$(date +%s)
-      echo "Put back together..."
-      ncrcat -O ${xyzfiles[@]} $xyzfile
-      echo "  * Time for putting XYZ files back together: $(($(date +%s) - t))s."
-
-      # Delete
-      ! $_debug && rm interp_plev*.nc ${xyzfiles[@]}
-    fi
+    # Split files
+    # TODO: Verify this works.
+    # WARNING: mppnccombine has issues with huge files so we run ncparallel
+    # with a split along time dimension, so ncrcat will get run.
+    t=$(date +%s)
+    echo "Combine full files."
+    [ -r $xyzfile ] && rm $xyzfile
+    unset table ifiles ofiles
+    for iinterp in ${interp[@]}; do
+      ifiles=$($ncdivide $iinterp -n=$nsplit -d=time)
+      ifiles+="$ifiles "
+      table+="$ifiles"$'\n'
+    done
+    # Merge along latitude
+    for j in $(seq 1 $nsplit); do
+      jfiles=$(echo "$table" | cut -d' ' -f$j)
+      ofile=${xyzfile%.nc}.${j}.nc
+      ofiles+="$ofile "
+      $mppnccombine $ofile ${ifiles[@]}
+    done
+    # Finally combine with ncrcat
+    # TODO: Is ncrcat or cdo concate faster?
+    $nccombine -n=$nsplit -d=time $xyzfile $ofiles
+    [ $? -ne 0 ] && raise "Failed to combine XYZ files." 127
+    echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
+    ! $debug && rm interp_plev*.nc $ifiles $ofiles &>/dev/null
   fi
 
   ##############################################################################
   # Then copy files to common directory
   ##############################################################################
-  if ! $_debug; then
+  if ! $debug; then
     ! [ -d ../netcdf ] && mkdir ../netcdf
     [ -r $plev_yzfile ] && mv $plev_yzfile ../netcdf
     [ -r $isen_yzfile ] && mv $isen_yzfile ../netcdf

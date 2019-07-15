@@ -1,59 +1,81 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ################################################################################
 # NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
 # dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
 # to logarithmically sweep space. Existing directories have been moved to their
 # closest values in this new spacing. White lie, but probably insignificant differences.
 ################################################################################
-doc="Use this to run a parameter sweep for the given input sereis and list(s) of parameters.
+usage='drycore_batch [OPTION...] "FORCING_SWEEP_RESOLUTION" --1=[prev:]value[,...] [--2=[prev:]value[,...]] '
+doc="This script runs a parameter sweep for the given input series and
+list(s) of parameters, using the 'drycore_run' script. It generates standardized
+folder names and can modify the namelist and diag_table for the parameters
+being changed.
 
-Usage:
-     drycore_batch \"force_sweep_resolution\" [flags] --1=[rvalue1:]value1,[rvalue2:]value2,... --2=...
+Usage
 
-Force specification:
-  hs,pk,dbt - Held-Suarez 1994, Polvani-Kushner 2004, or Davis, Birner, and Thompson (TBD) parameterization
+  $usage
 
-Sweep specifications:
-     base[12]           just run forcing scheme with default settings, once
-     katmos[123]        change tropospheric damping; number is boundary layer option
-     kstrat[01]         change stratospheric damping; number if troposphere-stratosphere damping transition option
-     kfric              change friction
-     tgrad              change equator-pole eqtemp difference
-     tshift             shift eqtemp meridional gradient poleward or equatorward
-     katmos[123]-tgrad  change both tropospheric damping and equator-pole eqtemp difference
-     katmos[123]-tshift change both tropospheric damping and temp gradient shift
-     katmos[123]-kfric  change both friction and tropospheric damping
-                        stratosphere option XX is the depth of
+Valid forcing specs
 
-Resolution specification: t[XX]l[YY][spe]
-    * First number is truncation number.
-    * Second number is level count.
-    * Suffix controls level spacing option: [s]imple/even [s]igma, [p]olvani
-      kushner spacing, or [e]ra-interim spacing.
+  hs   Held and Suarez, 1994
+  pk   Polvani and Kushner, 2004
+  dbt  Davis, Birner, and Thompson, TD
 
-Parameter specification flags: Use --1, --2:
-    * Which parameter(s) are being changed depends on the experiment series. Most
-      just change 1 as diagonal parameter spaces are a huge PITA.
-    * To start the run from the end of a *previous* run in the same experiment
-      series, use restart_parameter:current_parameter; e.g. call this script
-      with --1=10,20,40,40:100,100:200,200:400
-    * The final directory name for experiments will be
-          force_sweep_resolution_p[XXX]p[YYY]...
-      for each parameter. If the parameter has the *base* value (i.e.,
-      corresponding roughly to Held-Suarez standard) the sweep will be renamed
-      to 'base', and the directory will be named force_*base*_resolution.
+Valid sweep specs
 
-Other flags:
-    --test  Run quick test, just a few days, maybe 3 restarts.
-    --init  Run model for 1 second, save netcdf file with forcing scheme data.
-    --mode  The experiment mode, where:
-        * 0 is control run
-        * 1 for radiation off spindown
-        * 2 for radiation off but surface on spindown
-        * 3 for everything off (radiation, surface, and friction) spindown
-        * 4 for friction off spindown
+  In most cases, the number indicates the boundary layer option.
 
-To customize other things, make direct edits to this script.
+  base[01]            Just run forcing scheme with default settings, once
+  katmos[01]          Change tropospheric damping.
+  kfric[01]           Change friction.
+  tgrad[01]           Change equator-pole Teq difference
+  tshift[01]          Shift Teq meridional gradient poleward or equatorward
+  katmos[01]-tgrad    Change both tropospheric damping and equator-pole eqtemp difference
+  katmos[01]-tshift   Change both tropospheric damping and temp gradient shift
+  katmos[01]-kfric    Change both friction and tropospheric damping.
+  kstrat[01]          Change stratospheric damping; number is
+                      troposphere-stratosphere damping transition option.
+
+Valid resolution specs
+
+  A string with the format 't[XX]l[YY][spe]'
+
+  * XX is truncation number.
+  * YY is vertical level count.
+  * Suffix is one character controlling level spacing type:
+    * [s]imple/even [s]igma
+    * [p]olvani and kushner spacing
+    * [e]ra-interim configuration, should be 61 levels in file
+      named levels_ecwmf_{nlev}.nml in source directory
+
+Valid parameter specs
+
+  Passed with the flags --1=[prev:]value[,...] [--2=[prev:]value[,...]]
+
+  * --1 is the first parameter for the sweep spec, and --2 is the optional
+    second parameter, if this is a diagonal sweep.
+  * To run from the end of a *previous* run in the same experiment series,
+    use --1=prev:value, e.g. --1=20,40,40:100,100:200.
+  * The experiment directory names will be 'force_sweep_resolution_p[XXX][p[YYY]]'
+    for parameter 1 XXX and parameter 2 YYY Directories are renamed if
+    specified parameters correspond to the 'base' HS94 values.
+
+Options
+
+  -h|--help             Print this message.
+  -t|--test             Run quick test, just a few days, maybe 3 restarts.
+  -i|--init             Just run model to get a forcing.nc file.
+  [-c|--cores]=*        Number of cores.
+  [-n|--nodes]=*        Number of nodes, if this is a supercomputer.
+  [-dt|--timestep]=*    Number of timesteps.
+  [-d|--days]=*         Number of days.
+  [-ts|--tstart]=*      Initial day.
+  [-te|--tend]=*        Final day.
+  [-kts|--ktstart]=*    Initial day where we start keeping full-res data.
+  [-kte|--ktend]=*      Final day that we keep full-res data.
+  [-td|--testdays]=*    Number of days in each test run block.
+  [-tb|--testblocks]=*  Number of blocks for test run.
+  -*                    Unknown flags passed to drycore_run.
 "
 # Load modules
 module load impi &>/dev/null # to parallelize the combine process, need mpirun!
@@ -63,6 +85,7 @@ module load nco &>/dev/null
 
 # Error
 raise() {
+  echo "Usage: $usage" 1>&2
   echo "Error: $@" 1>&2
   exit 1
 }
@@ -77,16 +100,13 @@ secs=0 # normally is zero
 days=50
 nodes=1
 cores=8
-runmode=0
 mail=true
 dryrun=false
-# dt=600 # for T106, gives 100m/s CFL number of 0.5
-dt=600
+dt=600 # for T106, gives 100m/s CFL number of 0.5
 tstart=0  # first day of integration; set to 0 for new run.
 tend=5500 # for new experiments just do 1200 day integrations, first 200 are spinup
 walltime=12:00
 queue=economy
-# queue=regular
 # Output settings
 outfreq=12      # every 6
 frequnits=hours # hours
@@ -95,8 +115,6 @@ ktstart=1 # first day we keep XYZ data (can't keep all, too much data)
 ktend=0 # last day we keep XYZ data
 # Test settings
 testmode=false
-testname=test # default name of directory
-initname=init
 testdays=5
 testblocks=5 # number of blocks of testdays
 # For supercomputer, idea will be to submit all jobs for the series
@@ -109,23 +127,20 @@ unset series_name flags_global
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
     -h|--help) echo "$doc" && exit 0 ;;
-    -t|--test) testmode=true ;;
-    -d|--dryrun) dryrun=true ;; # just print function calls?
-    -dt=*|--timestep=2*) dt=${1#*=} ;;
-    -d=*|--days=*)      days=${1#*=} ;;
-    -ts=*|--tstart=*)   tstart=${1#*=} ;; # model start time?
-    -te=*|--tend=*)     tend=${1#*=} ;;
-    -kts=*|--ktstart=*) ktstart=${1#*=} ;; # start time for keeping XYZ files?
-    -kte=*|--ktend=*)   ktend=${1#*=} ;; # end time?
-    -td=*|--testdays=*)   testdays=${1#*=} ;;
+    -t|--test)            testmode=true ;;
+    -d|--dryrun)          dryrun=true   ;;
+    -1=|--1=*)            params1=($(echo ${1#*=} | tr ',' ' ')) ;;
+    -2=|--2=*)            params2=($(echo ${1#*=} | tr ',' ' ')) ;;
+    -c=*|--cores=*)       cores=${1#*=}      ;;
+    -n=*|--nodes=*)       nodes=${1#*=}      ;;
+    -dt=*|--timestep=*)   dt=${1#*=}         ;;
+    -d=*|--days=*)        days=${1#*=}       ;;
+    -ts=*|--tstart=*)     tstart=${1#*=}     ;;
+    -te=*|--tend=*)       tend=${1#*=}       ;;
+    -kts=*|--ktstart=*)   ktstart=${1#*=}    ;;
+    -kte=*|--ktend=*)     ktend=${1#*=}      ;;
+    -td=*|--testdays=*)   testdays=${1#*=}   ;;
     -tb=*|--testblocks=*) testblocks=${1#*=} ;;
-    -tn=*|--testname=*)   testname=${1#*=} ;;
-    -in=*|--initname=*)   initname=${1#*=} ;;
-    -c=*|-np=*|--cores=*) cores=${1#*=} ;;
-    -n=*|--nodes=*) nodes=${1#*=} ;;
-    -m=|--mode=*) runmode=${1#*=} ;;
-    -1=|--1=*) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
-    -2=|--2=*) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
     -*) flags_global+="$1 " ;;
     *) [ -n "$series_name" ] && raise "More than one experiment series specified."
        series_name="$1" ;;
@@ -502,7 +517,7 @@ exp_setup() {
   # Will raise error if string-specifier is unknown
   vert=${reso#*l}
   case $vert in
-    *e) coord=input; nlev=60; levels=$srcdir/levels_era.nml ;; # ERA-Interim coordinates
+    *e) coord=input; levels=$srcdir/levels_ecmwf_${nlev}.nml ;; # ERA-Interim coordinates
     *p) coord=pk_sigma; nlev=${vert%p} ;;
     *s) coord=even_sigma; nlev=${vert%s} ;;
     *) raise "Unknown vertical coordinate identifier \"${vert}\"." ;;
@@ -599,7 +614,7 @@ for param2 in ${params2[@]}; do
     fi
     exp_names+=($exp_name) # record in list
     if $testmode; then
-      exp_dir="$scratch/$testname"
+      exp_dir="$scratch/test"
     else
       exp_dir="$scratch/$exp_name"
     fi
@@ -612,7 +627,6 @@ for param2 in ${params2[@]}; do
     unset flags
     exp_setup $exp_name 1>>$log
     if [ -n "$exp_restart" ]; then
-      [ $runmode -ne 0 ] && echo "Warning: Mode $runmode cannot have restart experiments." && continue
       ! [ -d $scratch/${exp_restart} ] && exp_restart="${exp_restart}c"
       ! [ -d $scratch/${exp_restart} ] && echo "Warning: Restart directory $exp_restart not found." && continue
       echo "Restart from: ${exp_restart}" | tee $log
@@ -624,7 +638,7 @@ for param2 in ${params2[@]}; do
 
     # Run experiment (or just echo command for dryrun)
     let np=cores*nodes
-    exp_run="./drycore_run $exp_dir $flags_global $flags -m=$runmode -ts=$tstart -te=$tend -c=$np"
+    exp_run="./drycore_run $exp_dir $flags_global $flags -ts=$tstart -te=$tend -c=$np"
     $dryrun && echo $exp_run && continue
     # Logs
     echo "Log file: $log" # so can copy paste this

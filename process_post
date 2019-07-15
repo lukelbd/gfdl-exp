@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
-################################################################################
-# Calculates stuff on archived model data *after it has already been
-# run*, instead of as model is being run.
+usage='process_post [OPTION...]'
+doc="This script processes the parallel-produced results of GFDL model runs,
+using saved pressure-level data.
+
+Usage
+
+  $usage
+
+Options
+
+  -p=*  Number of parallel processes for splitting NetCDF files.
+  -i    Interpolate from pressure levels to isentropes in parallel.
+  -s    Calculate spectra in parallel.
+"
+# Notes
 # * Feel free to add other random tasks, e.g. deleting dud variables
 #   from existing files or re-running some analysis.
 # * For debugging/generating small spectral files use:
@@ -14,11 +26,6 @@
 #   frequencies/wavenumbers use:
 #   ncvardump t 2xdaily_inst_spectral.d0500-d0600.nc | xargs
 #   ncvardump tvar 2xdaily_inst_full.d0500-d0600.nc | xargs
-# Unused function:
-# ncvardump() {
-#   command ncdump -v "$1" "$2" | tac | egrep -m 1 -B100 "[[:space:]]$1[[:space:]]" \
-#     | sed '1,1d' | tac | tr -dc '[ 0-9]' | xargs | cut -d' ' -f1-2
-# }
 ################################################################################
 # Initial stuff
 shopt -s nullglob
@@ -28,7 +35,7 @@ fname=2xdaily # ignore the 4xdaily files for the time being
 isen_parallel=false
 spectra_parallel=false
 ncparallel=$HOME/ncparallel/ncparallel
-spectra_py=$cwd/spectra.py
+spectra_py=$cwd/pressure_spectra.py
 repair_ncl=$cwd/repair.ncl
 repair_isen_ncl=$cwd/repair_isen.ncl
 isen_interp_ncl=$cwd/isentropes_interp.ncl

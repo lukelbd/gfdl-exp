@@ -26,20 +26,24 @@ blopt='[12]'
 # for flags in '-f' '-p=1 -cp' '-p=1 -cce' '-p=1 -ci' '-p=4 -cv -ca'; do
 # for flags in '-p=4 -cp' '-p=4 -ci' '-p=4 -ce' '-p=4 -cv'; do
 # for flags in '-p=4 -ce' '-p=4 -cv'; do
+# for flags in '-f' '-p=4 -cv'; do
+# for flags in '-f' '-p=4 -cp'; do
 for flags in '-f' '-p=4 -cv'; do
   echo "Flags: $flags"
+  # "hs_katmos${blopt}-arctic*" "hs_katmos${blopt}-vortex*" "hs_katmos${blopt}-tropical*" \
+  # "hs_katmos${blopt}-global*" "hs_katmos${blopt}-surface*" \
   ./post_series \
-    "hs_katmos${blopt}-arctic*" "hs_katmos${blopt}-vortex*" "hs_katmos${blopt}-tropical*" \
-    "hs_katmos${blopt}-global*" "hs_katmos${blopt}-surface*" \
+    "hs_katmosmean${blopt}_*" \
     "hs_base${blopt}_*" "hs_katmos${blopt}_*" \
     -c1=500 -c2=3500 $flags
 done
 # Diagonal experiments and diagonal experiment base
 # for flags in '-p=4 -cp' '-p=4 -ci' '-p=4 -ce' '-p=4 -cv'; do
+# for flags in '-f' '-p=4 -cv'; do
 for flags in '-f' '-p=4 -cv'; do
   echo "Flags: $flags"
   ./post_series \
     "hs_tmean${blopt}_*" "hs_tgrad${blopt}_*" \
-    "hs_katmos${blopt}-tmean*" "hs_katmos${blopt}-tgrad*" \
     -c1=500 -c2=3500 $flags
+    # "hs_katmos${blopt}-tmean*" "hs_katmos${blopt}-tgrad*" \
 done
