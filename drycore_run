@@ -10,7 +10,7 @@ Usage
 
   $usage
 
-Positional args
+Positional arguments
 
   DIR  The directory in which model will be run. Must have 'input.nml' and
        'diag_table' files in the top level.
@@ -25,7 +25,7 @@ Run mode spec
   * 3 is everything off (radiation, surface, and friction) spindown.
   * 4 for friction off spindown.
 
-Options
+Optional arguments
 
   -h|--help                Print this message.
   -n|--new                 Exit if experiment folder already exists.
@@ -67,7 +67,7 @@ tend=0
 # Make sure module load impi has been declared by parent
 run=mpirun # for running in parallel
 fms=$cwd/fms.x # location of executables
-process=$cwd/process # *process the parallel-output nc files directly before merging*
+process=$cwd/process_inline # *process the parallel-output nc files directly before merging*
 interp=$cwd/pressure_interp.ncl # for forcing data
 ! [ -x $fms ]     && raise "The executable $fms is missing."
 ! [ -x $process ] && raise "The bash script for processing data is missing."

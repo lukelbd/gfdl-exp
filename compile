@@ -2,6 +2,11 @@
 ################################################################################
 # Script for compiling fortran source code on various machines.
 ################################################################################
+# Raise error
+raise() {
+  echo "Error: $@" 1>&2
+  exit 1
+}
 # Variables
 # Maybe need -lmpl, -lmpichf90, -lmpl, -lm, -lz
 bin='./bin'
@@ -47,7 +52,7 @@ case ${HOSTNAME%%.*} in
     cpp=pgcc
     fflags='-Ktrap=fp'
     ldflags='-Mmpi=mpich'
-  ;; *) echo "Error: Unknown host, must configure library and binary locations before running." && exit 1 ;;
+  ;; *) raise "Unknown host, must configure library and binary locations before running." ;;
 esac
 
 # Directories
@@ -58,11 +63,11 @@ mkmftemplate=$root/bin/mkmf.template           # template of most basic settings
 mppnsource=$root/postprocessing/mppnccombine.c # source code
 # Make sure necessary things tools are in path
 ! [ -d $bin ]          && mkdir $bin || echo "Warning: Leaving old compiled source."
-! [ -d $src ]          && echo "Error: Could not find source code directory $src."        && exit 1
-! [ -r $pathnames ]    && echo "Error: Could not find path_names file $pathnames."        && exit 1
-! [ -r $mppnsource ]   && echo "Error: Could not find mppnccombine source code."          && exit 1
-! [ -r $mkmftemplate ] && echo "Error: Could not find Makefile template."          && exit 1
-! [ -r $mkmf ]         && echo "Error: Could not find Makefile-generating utility $mkmf." && exit 1
+! [ -d $src ]          && raise "Could not find source code directory $src."
+! [ -r $pathnames ]    && raise "Could not find path_names file $pathnames."
+! [ -r $mppnsource ]   && raise "Could not find mppnccombine source code."
+! [ -r $mkmftemplate ] && raise "Could not find Makefile template."
+! [ -r $mkmf ]         && raise "Could not find Makefile-generating utility $mkmf."
 
 #------------------------------------------------------------------------------
 # Build executable model code and post-processing tool

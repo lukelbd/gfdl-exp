@@ -60,7 +60,7 @@ Valid parameter specs
     for parameter 1 XXX and parameter 2 YYY Directories are renamed if
     specified parameters correspond to the 'base' HS94 values.
 
-Options
+Optional arguments
 
   -h|--help             Print this message.
   -t|--test             Run quick test, just a few days, maybe 3 restarts.
@@ -77,18 +77,17 @@ Options
   [-tb|--testblocks]=*  Number of blocks for test run.
   -*                    Unknown flags passed to drycore_run.
 "
-# Load modules
-module load impi &>/dev/null # to parallelize the combine process, need mpirun!
-module load nco &>/dev/null
-# module load ncl &>/dev/null # use conda versions instead, already on path
-# module load cdo/1.9.4 &>/dev/null
-
 # Error
 raise() {
   echo "Usage: $usage" 1>&2
   echo "Error: $@" 1>&2
   exit 1
 }
+# Load modules
+# module load ncl &>/dev/null # use conda versions instead, already on path
+# module load cdo/1.9.4 &>/dev/null
+module load impi &>/dev/null # to parallelize the combine process, need mpirun!
+module load nco &>/dev/null
 # Default settings
 # NOTE: Really can't push CFL number! Shoot for around 0.5. Got almost instant
 # model blow up at 1200s with T106, since upper-level winds probably get to

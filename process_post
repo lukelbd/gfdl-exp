@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-usage='process_post [OPTION...]'
+usage='process_post [OPTION...] GLOB1 [GLOB2 ...]'
 doc="This script processes the parallel-produced results of GFDL model runs,
 using saved pressure-level data.
 
@@ -7,11 +7,17 @@ Usage
 
   $usage
 
-Options
+Required arguments
 
-  -p=*  Number of parallel processes for splitting NetCDF files.
-  -i    Interpolate from pressure levels to isentropes in parallel.
-  -s    Calculate spectra in parallel.
+  GLOB1  The quoted glob pattern for experiment directories for which we
+         want to process data. 'full' files will be searched for in the
+         'netcdf' subdirectories of the experiment directories.
+
+Optional arguments
+
+  -p=*   Number of parallel processes for splitting NetCDF files.
+  -i     Interpolate from pressure levels to isentropes in parallel.
+  -s     Calculate spectra in parallel.
 "
 # Notes
 # * Feel free to add other random tasks, e.g. deleting dud variables
@@ -26,7 +32,12 @@ Options
 #   frequencies/wavenumbers use:
 #   ncvardump t 2xdaily_inst_spectral.d0500-d0600.nc | xargs
 #   ncvardump tvar 2xdaily_inst_full.d0500-d0600.nc | xargs
-################################################################################
+# Raise error
+raise() {
+  echo "Usage: $usage" 1>&2
+  echo "Error: $1" 1>&2
+  exit $2
+}
 # Initial stuff
 shopt -s nullglob
 cwd=$(pwd)
@@ -45,18 +56,18 @@ while [ $# -gt 0 ]; do
     -p=*) pmax=${1#*=} ;;
     -i) isen_parallel=true ;;
     -s) spectra_parallel=true ;;
-    -*) echo "Error: Unknown flag $1." && exit 1 ;;
+    -*) raise "Unknown flag $1." ;;
     *)  globs+=("$1") ;;
   esac
   shift
 done
-[ -z "$pmax" ] && echo "Error: Must specify parallelization." && exit 1
+[ -z "$pmax" ] && raise "Must specify parallelization."
 
 # Files and experiment folders over which we iterate
 case ${HOSTNAME%%.*} in
   monde*)    scratches=(/mdata1/ldavis /mdata2/ldavis) ;; # mdata1 has t42l20s
   cheyenne*) scratches=/glade/scratch/davislu ;;
-  *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
+  *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
 
 #------------------------------------------------------------------------------#
@@ -91,7 +102,7 @@ background() {
   for j in $(seq 1 $npids); do
     wait ${pids[j-1]}
     logcheck ${logs[j-1]}
-    [ $? -ne 0 ] && echo "Error: One of the processes failed. Crap." && exit 1
+    [ $? -ne 0 ] && raise "One of the processes failed. Crap."
   done
   echo "Elapsed time: $(($(date +%s) - t))s."
 }

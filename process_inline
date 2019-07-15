@@ -11,7 +11,7 @@ Usage
 
   $usage
 
-Options
+Optional arguments
 
   -q|--quit     Immediately quit and do nothing. Used in 'drycore_run'.
   -c|--combine  Just combine files, do not process them.
