@@ -44,8 +44,8 @@ splitxyz=true
 nsplit=4
 while [ $# -gt 0 ]; do
   case $1 in
+    -q|--quit)    echo "Skipping processing." && exit 0 ;;
     -c|--combine) echo "Only combining files." && combine=true ;;
-    -q|--quit) echo "Skipping processing." && exit 0 ;;
     -d|--debug)   debug=true    ;;
     -k|--keep)    keepxyz=true  ;;
     -s|--split)   splitxyz=true ;;
@@ -63,7 +63,7 @@ bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from rig
 run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
 ncdivide=$HOME/ncparallel/ncdivide
 nccombine=$HOME/ncparallel/nccombine
-mppnccombine=$bin/mppnccombine.x # combine; needs to have been compiled here
+mppnccombine=$HOME/gfdl-drycore/run/mppnccombine.x # combine; needs to have been compiled here
 plev_interp=$bin/pressure_interp.ncl  # interpolate with NCL, automatic iteration
 plev_params=$bin/pressure_params.ncl # eddy and mean Lorenz energy cycle terms with NCL
 plev_means=$bin/pressure_zonmean.ncl # just gets zonal means

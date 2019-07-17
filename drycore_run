@@ -66,9 +66,9 @@ tend=0
 # when mpiexec_mpt used, MPI_SHEPHERD required, but this failed for me
 # Make sure module load impi has been declared by parent
 run=mpirun # for running in parallel
-fms=$cwd/fms.x # location of executables
-process=$cwd/process_inline # *process the parallel-output nc files directly before merging*
-interp=$cwd/pressure_interp.ncl # for forcing data
+fms=$HOME/gfdl-drycore/run/fms.x
+process=$cwd/process_inline
+interp=$cwd/pressure_interp.ncl
 ! [ -x $fms ]     && raise "The executable $fms is missing."
 ! [ -x $process ] && raise "The bash script for processing data is missing."
 ! which $run &>/dev/null && raise "$run not found in \$PATH."
@@ -81,8 +81,8 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
     -n|--new)  new=true ;; # use this to *exit* if experiment folder already exists
     -f|--fix)  fix=true ;;
     -s|--slow) slow=true ;; # slow start to prevent crash (TODO: maybe delete this)
-    -r|--resume) resume=true ;; # use this to *autodetect* last day of existing run, continue from there
     -i|--init) init=true ;; # *only* save forcing scheme data to file?
+    -r|--resume) resume=true ;; # use this to *autodetect* last day of existing run, continue from there
     -m=*|--mode=*)  mode=${1#*=} ;; # 0 is control, 1 is spindown, 2...
     -c=*|--cores=*) cores=${1#*=} ;;
     -ts=*|--tstart=*)  tstart=${1#*=} ;; # use this to continue from *particular* day of existing run
@@ -157,38 +157,6 @@ exit_check() {
 # NCL status
 ncl_check() { # input log file as argument
   cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | grep -E "^fatal:" &>/dev/null
-}
-
-################################################################################
-# Function for running the next model step from a previous step
-# applying post-processing to a previous model step in the background, and organizing
-# all the NetCDF files
-################################################################################
-run_model() {
-  # Run model in parallel
-  # Previously we set processor affinities
-  local cday=$1 # the restart direcotry
-  [ $# -ne 1 ] && raise "run_model() function takes exactly 1 argument."
-  t1=$(date +%s)
-  echo "Running model..."
-  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
-  grep -E 'EXIT CODE: [1-9]|FATAL from PE|WARNING from PE' log.model &>/dev/null && \
-    raise "Bad exit code from model run step."
-  tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
-  echo "Model time: ${tmodel%.*}s." # is just max of the two
-
-  # Remove some files
-  [ -d INPUT ] && [ $cday -gt 0 ] && rm -rf INPUT # remove input *if* this is not start of new run; in that case we want to keep input so know what's going on
-  [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
-  rm fms.x # remove executable, because takes up space
-
-  # Process new data, and remove old data
-  # Previously we set processor affinities, but didn't help much
-  echo "Calling processing script with flags: $(echo $ipflags $pflags | xargs)"
-  $process $ipflags $pflags &>log.process
-  exit_check $?
-  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
-  echo "Process time: ${tprocess%.*}s."
 }
 
 ################################################################################
@@ -313,6 +281,38 @@ dir_setup() {
   fi
   # Parent script will test return code; ensure zero here
   return 0
+}
+
+################################################################################
+# Function for running the next model step from a previous step
+# applying post-processing to a previous model step in the background, and organizing
+# all the NetCDF files
+################################################################################
+run_model() {
+  # Run model in parallel
+  # Previously we set processor affinities
+  local cday=$1 # the restart direcotry
+  [ $# -ne 1 ] && raise "run_model() function takes exactly 1 argument."
+  t1=$(date +%s)
+  echo "Running model..."
+  $run -np $cores ./fms.x &>log.model # need ./fms.x, not fms
+  grep -E 'EXIT CODE: [1-9]|FATAL from PE|WARNING from PE' log.model &>/dev/null && \
+    raise "Bad exit code from model run step."
+  tmodel=$(cat log.model | grep "Total runtime*" | xargs | cut -d " " -f 5)
+  echo "Model time: ${tmodel%.*}s." # is just max of the two
+
+  # Remove some files
+  [ -d INPUT ] && [ $cday -gt 0 ] && rm -rf INPUT # remove input *if* this is not start of new run; in that case we want to keep input so know what's going on
+  [ -r logfile.0000.out ] && mv logfile.0000.out log.init # contains init info
+  rm fms.x # remove executable, because takes up space
+
+  # Process new data, and remove old data
+  # Previously we set processor affinities, but didn't help much
+  echo "Calling processing script with flags: $(echo $ipflags $pflags | xargs)"
+  $process $ipflags $pflags &>log.process
+  exit_check $?
+  tprocess=$(tail -1 log.process | sed 's/[^0-9]*//g')
+  echo "Process time: ${tprocess%.*}s."
 }
 
 ################################################################################

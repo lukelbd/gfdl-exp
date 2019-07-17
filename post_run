@@ -38,9 +38,9 @@ climate_autocorr=false
 climate_variability=false
 climate_spectral=false
 # Scripts
-f2c=$(pwd)/f2c.py # converts frequency-wavenumber data to phase speed-wavenumber space
-eof=$(pwd)/eofs.py
-dyn=$(pwd)/dyn_timescale.py
+f2c=$(pwd)/post_f2c.py # converts frequency-wavenumber data to phase speed-wavenumber space
+eof=$(pwd)/post_eofs.py
+dyn=$(pwd)/post_dyntau.py
 # Spindown options
 spin_start=0
 spin_end=100000

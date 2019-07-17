@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 ################################################################################
-# Use this file to document the commands used to generate various experiment
-# series with the 'drycore_series' script.
+# This file is used to generate various experiment series with 'drycore_series'
+# TODO: Get spectral decompositions for control runs.
 ################################################################################
+# Test runs that just deliver forcing data
+cd ${0%/*}
+for force in pkmod pk; do
+  ./drycore_series -i ${force}1_base_t95l60p
+done
+exit 0
+
+# Main runs
 if [[ ${HOSTNAME} =~ monde ]]; then
-  # Post-thesis
   # For Jingyuan; long climatology
   # ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
   #   -te=9500 -kts=500 -kte=9500 \
-  #   --1=40 hs_katmos2_t42l20s
+  #   --1=40 hs1_katmos_t42l20s
 
   for blopt in 1 2; do
     # Placeholder
@@ -16,33 +23,33 @@ if [[ ${HOSTNAME} =~ monde ]]; then
     # # Fast damping experiments, first ones were fucked up
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=0.2,0.4,1,2 hs_katmos${blopt}_t42l20s
+    #   --1=0.2,0.4,1,2 hs${blopt}_katmos_t42l20s
     # # Continuation runs
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=60:40,40:20,20:10,10:4 hs_tgrad${blopt}_t42l20s
+    #   --1=60:40,40:20,20:10,10:4 hs${blopt}_tgrad_t42l20s
     #   # --1=10,20,40,90,120,150,200 hs_tgrad1_t42l20s
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=40:100,100:200,200:400,400:1000 hs_katmos${blopt}-mean_t42l20s
+    #   --1=40:100,100:200,200:400,400:1000 hs${blopt}_katmos-mean_t42l20s
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=40:100,100:200,200:400,400:1000 hs_katmos${blopt}_t42l20s
+    #   --1=40:100,100:200,200:400,400:1000 hs${blopt}_katmos_t42l20s
     # # Full runs
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=500 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=4,10,20,40,40:100,100:200,200:400,400:1000 hs_katmos${blopt}-mean_t42l20s
+    #   --1=4,10,20,40,40:100,100:200,200:400,400:1000 hs${blopt}_katmos-mean_t42l20s
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=500 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=4,10,20,40,40:100,100:200,200:400,400:1000 hs_katmos${blopt}-mean_t42l20s
+    #   --1=4,10,20,40,40:100,100:200,200:400,400:1000 hs${blopt}_katmos-mean_t42l20s
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=500 \
     #   -te=3500 -kts=500 -kte=3500 \
-    #   --1=4,10,20,40:100,100:200,200:400,400:1000 hs_katmos${blopt}_t42l20s
+    #   --1=4,10,20,40:100,100:200,200:400,400:1000 hs${blopt}_katmos_t42l20s
     # Global temp
     # ./drycore_series -dt=1200 -c=8 -d=100 -ts=0 \
     #   -te=1500 -kts=200 -kte=1500 \
-    #   --1=310,320 hs_tmean${blopt}_t42l20s
-    #   # --1=280,290,310,320 hs_tmean${blopt}_t42l20s
+    #   --1=310,320 hs${blopt}_tmean_t42l20s
+    #   # --1=280,290,310,320 hs${blopt}_tmean_t42l20s
   done
 
   # Again, but this time for the extreme damping changes
@@ -51,36 +58,36 @@ if [[ ${HOSTNAME} =~ monde ]]; then
   # for te in 1500 3500; do
   #   for blopt in 1 2; do
   for te in 3500; do
-    for blopt in 2; do
+    for blopt in 1; do
       for k in 40 20 60 10 100; do
         dt=1200
         # Butler re-dos
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=0.5 hs_katmos${blopt}-arctic_t42l20s
+          --1=$k:$k --2=0.5 hs${blopt}_katmos-arctic_t42l20s
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=-0.5 hs_katmos${blopt}-vortex_t42l20s
+          --1=$k:$k --2=-0.5 hs${blopt}_katmos-vortex_t42l20s
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=0.5 hs_katmos${blopt}-tropical_t42l20s
+          --1=$k:$k --2=0.5 hs${blopt}_katmos-tropical_t42l20s
         # 2xCO2 and 4xCO2 global
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=0.03 hs_katmos${blopt}-global_t42l20s
+          --1=$k:$k --2=0.03 hs${blopt}_katmos-global_t42l20s
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=0.06 hs_katmos${blopt}-global_t42l20s
+          --1=$k:$k --2=0.06 hs${blopt}_katmos-global_t42l20s
         # 2xCO2 and 4xCO2 at surface
         # NOTE: Distribute so have linear decay from surface to 0.7 sigma, i.e
         # effectively distribute heat through 0.15% of atmosphere, gives us
         # amplitude of 0.2K/day and 0.4K/day for 2xCO2 and 4xCO2
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=0.2 hs_katmos${blopt}-surface_t42l20s
+          --1=$k:$k --2=0.2 hs${blopt}_katmos-surface_t42l20s
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k:$k --2=0.4 hs_katmos${blopt}-surface_t42l20s
+          --1=$k:$k --2=0.4 hs${blopt}_katmos-surface_t42l20s
       done
       for k in 40 20 60 10 100; do
       # for k in 40 20 60 4 400; do
@@ -92,11 +99,11 @@ if [[ ${HOSTNAME} =~ monde ]]; then
         # Global warming
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k --2=300:280,300:290,300:310,300:320 hs_katmos${blopt}-tmean_t42l20s
+          --1=$k --2=300:280,300:290,300:310,300:320 hs${blopt}_katmos-tmean_t42l20s
         # Temperature gradient
         ./drycore_series -r -dt=$dt -c=8 -d=100 -ts=0 \
           -te=$te -kts=500 -kte=3500 \
-          --1=$k --2=60:40,60:90,60:120,60:150,60:20 hs_katmos${blopt}-tgrad_t42l20s
+          --1=$k --2=60:40,60:90,60:120,60:150,60:20 hs${blopt}_katmos-tgrad_t42l20s
       done
     done
   done
@@ -120,22 +127,22 @@ if [[ ${HOSTNAME} =~ monde ]]; then
   # TODO: Not done yet?
   # ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs_katmos1-mean_t42l20s
+  #   --1=40:100,100:200,200:400,400:1000 hs1_katmosmean_t42l20s
   # ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs_katmos1_t42l20s
+  #   --1=40:100,100:200,200:400,400:1000 hs1_katmos_t42l20s
   # ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs_katmos2-mean_t42l20s
+  #   --1=40:100,100:200,200:400,400:1000 hs2_katmosmean_t42l20s
   # ./drycore_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs_katmos2_t42l20s
+  #   --1=40:100,100:200,200:400,400:1000 hs2_katmos_t42l20s
 
 elif [[ $HOSTNAME =~ cheyenne ]]; then
   # Test
   # ./drycore_series -c=36 -dt=400 \
   #   --test -td=1 -tb=5 -tn=test-process \
-  #   hs_katmos2_t95l60e --1=40
+  #   hs1_katmos_t95l60e --1=40
 
   # For supercomputer
   # NOTE: We really try to tune the model step for this one!
@@ -145,24 +152,24 @@ elif [[ $HOSTNAME =~ cheyenne ]]; then
   ./drycore_series --resume -dt=400 \
     -c=36 -n=1 -d=20 -ts=0 \
     -te=3500 -kts=500 -kte=5500 --1=1,2,4,10 \
-    hs_katmos2_t95l60e
+    hs1_katmos_t95l60e
   ./drycore_series --resume -dt=600 \
     -c=36 -n=1 -d=20 -ts=0 \
     -te=3500 -kts=500 -kte=5500 --1=20 \
-    hs_katmos2_t95l60e
+    hs1_katmos_t95l60e
   # Continuation runs (wait until others have finished)
   ./drycore_series --resume -dt=800 \
     -c=36 -d=20 -ts=0 \
     -te=3500 -kts=500 -kte=5500 --1=40:100 \
-    hs_katmos2_t95l60e
+    hs1_katmos_t95l60e
   ./drycore_series --resume -dt=1000 \
     -c=36 -d=20 -ts=0 \
     -te=3500 -kts=500 -kte=5500 --1=40:200,40:400 \
-    hs_katmos2_t95l60e
+    hs1_katmos_t95l60e
   ./drycore_series --resume -dt=1200 \
     -c=36 -d=20 -ts=0 \
     -te=3500 -kts=500 -kte=5500 --1=40:1000 \
-    hs_katmos2_t95l60e
+    hs1_katmos_t95l60e
 
   # Stratosphere experiments
   # Also change damping throughout *entire atmosphere* for point
@@ -175,7 +182,7 @@ elif [[ $HOSTNAME =~ cheyenne ]]; then
   # ./drycore_series --resume -dt=800 \
   #   -c=36 -n=1 -d=20 -ts=0 \
   #   -te=3500 -kts=500 -kte=5500 --1=1,2,4,10,20,40 --2=3 \
-  #   pk_katmos2_t95l60e
+  #   pk_katmos_t95l60e
   # # Custom setup
   # ./drycore_series --resume -dt=800 \
   #   -c=36 -n=1 -d=20 -ts=0 \
@@ -184,5 +191,5 @@ elif [[ $HOSTNAME =~ cheyenne ]]; then
   # ./drycore_series --resume -dt=800 \
   #   -c=36 -n=1 -d=20 -ts=0 \
   #   -te=3500 -kts=500 -kte=5500 --1=1,2,4,10,20,40 --2=3 \
-  #   pk_katmos2_t95l60e
+  #   pk_katmos_t95l60e
 fi

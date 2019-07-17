@@ -5,7 +5,7 @@
 # to logarithmically sweep space. Existing directories have been moved to their
 # closest values in this new spacing. White lie, but probably insignificant differences.
 ################################################################################
-usage='drycore_batch [OPTION...] "FORCING_SWEEP_RESOLUTION" --1=[prev:]value[,...] [--2=[prev:]value[,...]] '
+usage='drycore_series [OPTION...] "FORCING_SWEEP_RESOLUTION" --1=[prev:]value[,...] [--2=[prev:]value[,...]] '
 doc="This script runs a parameter sweep for the given input series and
 list(s) of parameters, using the 'drycore_run' script. It generates standardized
 folder names and can modify the namelist and diag_table for the parameters
@@ -17,24 +17,30 @@ Usage
 
 Valid forcing specs
 
-  hs   Held and Suarez, 1994
-  pk   Polvani and Kushner, 2004
-  dbt  Davis, Birner, and Thompson, TD
+  The number indicates the boundary layer damping approach: 1 is constant
+  everywhere, 2 employs faster damping. Note that this script trims the numers,
+  and the model actually expects just those strings.
+
+  hs[12]     Held and Suarez, 1994
+  pk[12]     Polvani and Kushner, 2004
+  pkmod[12]  Polvani and Kushner with modified coords
 
 Valid sweep specs
 
   In most cases, the number indicates the boundary layer option.
 
-  base[01]            Just run forcing scheme with default settings, once
-  katmos[01]          Change tropospheric damping.
-  kfric[01]           Change friction.
-  tgrad[01]           Change equator-pole Teq difference
-  tshift[01]          Shift Teq meridional gradient poleward or equatorward
-  katmos[01]-tgrad    Change both tropospheric damping and equator-pole eqtemp difference
-  katmos[01]-tshift   Change both tropospheric damping and temp gradient shift
-  katmos[01]-kfric    Change both friction and tropospheric damping.
-  kstrat[01]          Change stratospheric damping; number is
-                      troposphere-stratosphere damping transition option.
+  base            Just run forcing scheme with default settings, once
+  katmos          Change tropospheric damping.
+  katmosmean      Change mean component of tropospheric damping.
+  tgrad           Change equator-pole teq difference.
+  tmean           Change global mean surface teq.
+  tshift          Shift teq meridional gradient poleward or equatorward
+  kfric           Change friction.
+  katmos-tgrad    Change both tropospheric damping and equator-pole eqtemp difference
+  katmos-tshift   Change both tropospheric damping and temp gradient shift
+  katmos-kfric    Change both friction and tropospheric damping.
+  kstrat          Change stratospheric damping; number is
+                  troposphere-stratosphere damping transition option.
 
 Valid resolution specs
 
@@ -43,10 +49,10 @@ Valid resolution specs
   * XX is truncation number.
   * YY is vertical level count.
   * Suffix is one character controlling level spacing type:
-    * [s]imple/even [s]igma
-    * [p]olvani and kushner spacing
-    * [e]ra-interim configuration, should be 61 levels in file
-      named levels_ecwmf_{nlev}.nml in source directory
+    * evenly-spaced [s]igma levels
+    * unevenly-spaced [p]olvani and kushner sigma levels
+    * [e]ra-interim hybrid levels, specified by namelist named
+      levels_ecwmf_{YY}.nml in source directory
 
 Valid parameter specs
 
@@ -67,14 +73,14 @@ Optional arguments
   -i|--init             Just run model to get a forcing.nc file.
   [-c|--cores]=*        Number of cores.
   [-n|--nodes]=*        Number of nodes, if this is a supercomputer.
-  [-dt|--timestep]=*    Number of timesteps.
   [-d|--days]=*         Number of days.
+  [-dt|--timestep]=*    Number of timesteps.
+  [-td|--testdays]=*    Number of days in each test run block.
+  [-tb|--testblocks]=*  Number of blocks for test run.
   [-ts|--tstart]=*      Initial day.
   [-te|--tend]=*        Final day.
   [-kts|--ktstart]=*    Initial day where we start keeping full-res data.
   [-kte|--ktend]=*      Final day that we keep full-res data.
-  [-td|--testdays]=*    Number of days in each test run block.
-  [-tb|--testblocks]=*  Number of blocks for test run.
   -*                    Unknown flags passed to drycore_run.
 "
 # Error
@@ -99,7 +105,7 @@ secs=0 # normally is zero
 days=50
 nodes=1
 cores=8
-mail=true
+mail=false
 dryrun=false
 dt=600 # for T106, gives 100m/s CFL number of 0.5
 tstart=0  # first day of integration; set to 0 for new run.
@@ -119,7 +125,6 @@ testblocks=5 # number of blocks of testdays
 # For supercomputer, idea will be to submit all jobs for the series
 # simultaneously, by auto-generating a PBS script
 super=false
-diag_default=diag_table_default
 [[ $HOSTNAME =~ cheyenne* ]] && super=true
 # Parse input
 unset series_name flags_global
@@ -147,8 +152,8 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
 done
 # Default experiment series
 if [ -z "$series_name" ]; then
-  echo "Warning: No experiment name specified. Running default experiment hs_base2_t42l20s."
-  series_name='hs_base2_t42l20s'
+  echo "Warning: No experiment name specified. Running default experiment hs1_base_t42l20s."
+  series_name='hs1_base_t42l20s'
 fi
 # Parse experiment series name
 # Also echo the critical parallelization info
@@ -159,6 +164,9 @@ sweep="${sweep%%_*}"
 reso="${series_name#*_}"
 reso="${reso#*_}"
 reso="${reso%%_*}"
+[[ "$force" =~ [0-9]$ ]] || raise "Forcing spec must end with a number, indicating the boundary layer damping option."
+forceopt=${force##*[a-z]} # get number
+force=${force%[0-9]}
 
 # Run really fast test run
 if $testmode; then
@@ -179,24 +187,19 @@ fi
 txyzdata=$(seq $ktstart $days $ktend | tr $'\n' ',') # for saving
 
 #------------------------------------------------------------------------------#
-# Paths
+# Storage and model path
 #------------------------------------------------------------------------------#
-# Storage information for runscript and post-processing script
+srcdir=$HOME/gfdl-drycore/run # model folder for namelists and stuff
 storage=$HOME
 scratch=$HOME # on Euclid, home is unmounted/not backed up; so disk I/O is quick
-srcdir=$HOME/gfdl-drycore # model code folder
-bindir=./bin # compiled model code folder (should be in this folder)
 case ${HOSTNAME%%.*} in
-  # olbers)
-  #   scratch=''
-  # ;; gauss)
-  #   scratch=/birner-scratch/ldavis # need to use special scratch directory
   euclid)
     storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
   ;; monde)
     case $reso in
       # t42l20s) scratch=/mdata2/ldavis ;;
-      t42l20s) scratch=/mdata1/ldavis ;;
+      t42l20?) scratch=/mdata1/ldavis ;;
+      t95l60?) scratch=/mdata1/ldavis ;;
       *) raise "Unknown scratch destination for experiment with resolution ${reso}." ;;
     esac
   ;; cheyenne*)
@@ -205,11 +208,6 @@ case ${HOSTNAME%%.*} in
   ;; *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
 ! [ -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
-# Copy over the appropriate executable file
-cp $bindir/fms.x ./ # location of executables
-[ $? -ne 0 ] && raise "fms.x not found in \"$bindir\"."
-cp $bindir/mppnccombine.x ./ # location of executables
-[ $? -ne 0 ] && raise "mppnccombine.x not found in \"$bindir\"."
 
 #------------------------------------------------------------------------------#
 # Helper functions
@@ -244,7 +242,7 @@ exp_name() {
   # NOTE: Cannot have "diagonal" continuation experiments, they should always
   # be from an adjacent run in a linear the experiment series.
   local p1 p2 p1f p2f param1 param2 rparam1 rparam2 contin
-  local isweep fsweep prefix suffix blopt
+  local isweep fsweep prefix suffix
   param1=$2
   param2=$3
   isweep=${1#*_}
@@ -263,7 +261,6 @@ exp_name() {
       # TODO: Add to these.
       prefix=${sweep%-*}
       suffix=${sweep#*-}
-      blopt=${prefix##*[a-z]} # get number
       fsweep=$isweep # by default, will be same
       # Params for this experiment name
       # WARNING: Can get issues if e.g. go from katmos-tmean base state to
@@ -275,47 +272,47 @@ exp_name() {
         # 1D parameter sweeps, pretty simple
         # TODO: Change katmos-mean and katmos-anom to katmosmean and katmosanom,
         # then can run diagonal katmosmean experiments!
-        base?) p1f= p2f= ;;
-        katmos?|katmos?-mean|katmos?-anom) [[ $p1 == 40 ]] && fsweep=base${blopt} p1f= ;; # base is 40 day zonal-mean or anomaly damping
-        tgrad?) [[ $p1 == 60 ]] && fsweep=base${blopt} p1f= ;; # base is 60K contrast
-        tmean?) [[ $p1 == 300 ]] && fsweep=base${blopt} p1f= ;; # base is 300K mean
-        kfric?) [[ $p1 == 1 ]] && fsweep=base${blopt} p1f= ;;
-        tshift?) [[ $p1 == 0 ]] && fsweep=base${blopt} p1f= ;; # zero just means no shift
-        kstrat?) [[ $p1 == 40 ]] && fsweep=base2 p1f= ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
+        base) p1f= p2f= ;;
+        katmos|katmosmean|katmosanom) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # base is 40 day zonal-mean or anomaly damping
+        tgrad) [[ $p1 == 60 ]] && fsweep=base p1f= ;; # base is 60K contrast
+        tmean) [[ $p1 == 300 ]] && fsweep=base p1f= ;; # base is 300K mean
+        kfric) [[ $p1 == 1 ]] && fsweep=base p1f= ;;
+        tshift) [[ $p1 == 0 ]] && fsweep=base p1f= ;; # zero just means no shift
+        kstrat) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
         *) [ -z "$p2" ] && raise "Need second param for diagonal experiment."
         # True 'diagonal' experiments
         # WARNING: Order is important here! Have to detect 'base' experiments
         # before the other ones.
         case "$isweep" in # diagaonal experiment
-          katmos?-tgrad)
-            [[ $p2 == 60 ]] && fsweep=katmos${blopt} p2f=
-            [[ $p1 == 40 ]] && fsweep=tgrad${blopt} p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 60 ]] && fsweep=base${blopt} p1f= p2f=
+          katmos-tgrad)
+            [[ $p2 == 60 ]] && fsweep=katmos p2f=
+            [[ $p1 == 40 ]] && fsweep=tgrad p1f=$p2 p2f=
+            [[ $p1 == 40 && $p2 == 60 ]] && fsweep=base p1f= p2f=
             ;;
-          katmos?-tmean)
-            [[ $p2 == 300 ]] && fsweep=katmos${blopt} p2f=
-            [[ $p1 == 40 ]] && fsweep=tmean${blopt} p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 300 ]] && fsweep=base${blopt} p1f= p2f=
+          katmos-tmean)
+            [[ $p2 == 300 ]] && fsweep=katmos p2f=
+            [[ $p1 == 40 ]] && fsweep=tmean p1f=$p2 p2f=
+            [[ $p1 == 40 && $p2 == 300 ]] && fsweep=base p1f= p2f=
             ;;
-          katmos?-tshift)
-            [[ $p2 == 0 ]] && fsweep=katmos${blopt} p2f=
+          katmos-tshift)
+            [[ $p2 == 0 ]] && fsweep=katmos p2f=
             [[ $p1 == 40 ]] && fsweep=tshift p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base${blopt} p1f= p2f=
+            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f= p2f=
             ;;
-          katmos?-kfric)
-            [[ $p2 == 1 ]] && fsweep=katmos${blopt} p2f=
-            [[ $p1 == 40 ]] && fsweep=kfric${blopt} p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 1 ]] && fsweep=base${blopt} p1f= p2f=
+          katmos-kfric)
+            [[ $p2 == 1 ]] && fsweep=katmos p2f=
+            [[ $p1 == 40 ]] && fsweep=kfric p1f=$p2 p2f=
+            [[ $p1 == 40 && $p2 == 1 ]] && fsweep=base p1f= p2f=
             ;;
-          tgrad?-tshift)
+          tgrad-tshift)
             [[ $p2 == 0 ]] && fsweep=tgrad p2f=
             [[ $p1 == 60 ]] && fsweep=tshift p1f=$p2 p2f=
-            [[ $p1 == 60 && $p2 == 0 ]] && fsweep=base${blopt} p1f= p2f=
+            [[ $p1 == 60 && $p2 == 0 ]] && fsweep=base p1f= p2f=
             ;;
           # Forcing experiments
-          katmos?-arctic|katmos?-tropical|katmos?-vortex|katmos?-global|katmos?-surface)
+          katmos-arctic|katmos-tropical|katmos-vortex|katmos-global|katmos-surface)
             if [ -n "$rparam1" ] && [ -z "$exp_restart" ]; then
-              [[ $p1 == 40 ]] && fsweep=base${blopt} p1f= p2f= || fsweep=katmos${blopt} p2f=
+              [[ $p1 == 40 ]] && fsweep=base p1f= p2f= || fsweep=katmos p2f=
             fi
             ;;
           *) raise "Unknown sweep \"${isweep}\"." ;;
@@ -326,7 +323,7 @@ exp_name() {
       [ "$p2f" == 'na' ] && unset -v p2f
       [ -n "$p1f" ] && p1f="_p$(printf "%08.3f" $p1f)"
       [ -n "$p2f" ] && p2f="p$(printf "%08.3f" $p2f)"
-      exp_name=${force}_${fsweep}_${reso}${p1f}${p2f}${contin}
+      exp_name=${force}${forceopt}_${fsweep}_${reso}${p1f}${p2f}${contin}
     done
   done
 }
@@ -339,8 +336,7 @@ exp_name() {
 exp_setup() {
   # Parse the experiment name, figure out what needs to be written
   # The 'p values' are values specified in experiment name as pXXXpYYYpZZZ
-  local kbl ktrop kstrat kmeso kdepth kfric levels blopt damp delh exph tmean params sweep message
-  local butler_arctic butler_tropical butler_vortex forcing_global forcing_surface
+  local kbl ktrop kstrat kmeso kdepth kfric levels damp delh exph tmean params sweep message
   local q0_arctic q0_tropical q0_vortex q0_global q0_surface
   unset nml_params nml_values
   sweep=${1#*_}
@@ -353,120 +349,20 @@ exp_setup() {
   #----------------------------------------------------------------------------#
   # Add to this as you design new experiment series
   #----------------------------------------------------------------------------#
+  # First the boundary layer options
   prefix=${sweep%-*}
   suffix=${sweep#*-}
-  blopt=${prefix##*[a-z]} # get number
+  [[ $forceopt -lt 1 || $forceopt -gt 3 ]] && raise "Invalid forcing scheme option ${forceopt}."
+  [ $forceopt -eq 2 ] && kbl=-40 # simple default
   case $sweep in
-    # Base
-    base1)
-      kbl=-40
-      ;;
-    base2)
-      ;;
+    # Simple
+    base) ;;
+    kfric)  kfric=-${params[0]} ;; # change friction damping
+    tshift) exph=${params[0]} ;; # shift meridional temp gradient
+    tmean)  tmean=${params[0]} ;; # change mean surface temp
 
-    # Friction
-    kfric?*) # friction experiments
-      kfric=-${params[0]}
-      ;;
-
-    # Damp full atmosphere
-    # Also includes diagonal experiments where multiple params changed
-    katmos?*)
-      # Check experiments with 'dash' in name, make sure enough params were
-      # specified or set the other param ourselves.
-      ktrop=-${params[0]}
-      if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
-        case "$suffix" in
-          # Special configurations
-          anom) ktrop=-40,$ktrop ;;
-          mean) ktrop=$ktrop,-40 ;;
-          *) [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
-          # True 'diagonal' experiments
-          case "$suffix" in # diagaonal experiment
-            kfric) kfric=-${params[1]} ;;
-            tgrad) delh=${params[1]} ;;
-            tmean) tmean=${params[1]} ;;
-            tshift) exph=${params[1]} ;;
-            global) forcing_global=.true. q0_global=${params[1]} ;;
-            surface) forcing_surface=.true. q0_surface=${params[1]} ;;
-            arctic) butler_arctic=.true. q0_arctic=${params[1]} ;;
-            vortex) butler_vortex=.true. q0_vortex=${params[1]} ;;
-            tropical) butler_tropical=.true. q0_tropical=${params[1]} ;;
-            *) raise "Unknown sweep ${sweep}." ;;
-          esac
-          ;;
-        esac
-      fi
-      # Match strat and meso forcing to ktrop, but this should not change anything
-      # for Held-Suarez forcing
-      kstrat=$ktrop
-      kmeso=$ktrop
-      # Next, separately scale boundary layer damping rate
-      for iktrop in ${ktrop/,/ }; do
-        case $blopt in
-          [01]) ikbl=$iktrop ;; # keep surface boundary layer equal to value in rest of atmosphere
-          2) ikbl=-$(bc -l <<< "scale=3; ${iktrop#-}/10") ;; # hold ratio constant; i.e. keep it at 10
-          3) ikbl=-$(bc -l <<< "scale=3; (4^-1 + (${iktrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
-          *) raise "Unknown blopt ${blopt}." ;;
-        esac
-        kbl=$kbl,$ikbl # mean and anomaly components
-      done
-      kbl=${kbl#,} # trim leading comma
-      ;;
-
-    # Damp stratosphere
-    kstrat?*) # stratosphere damping experiments
-      # Parse the depth and stuff
-      kstrat=-${params[0]}
-      kdepth=${params[1]} # param 2 is depth of transition region
-      [ -z "$kdepth" ] && raise "Need to specify transition depth as second parameter."
-      # Whether to damp mesosphere more stronly
-      damp=${prefix#*[^12]}
-      case "$damp" in
-        1) damp=constant ;;
-        2) damp=linear ;;
-        *) raise "Unknown stratosphere damping option ${damp}." ;;
-      esac
-      # Detect other options
-      case "$suffix" in
-        anom) kstrat=-40,$kstrat ;;
-        mean) kstrat=$kstrat,-40 ;;
-        *) raise "Unknown suffix option ${suffix}." ;;
-      esac
-      ;;
-
-    # Perturb the equator-pole temp gradient
-    tshift?)
-      exph=${params[0]}
-      # Boundary layer
-      case "$blopt" in
-        [01]) kbl=-40 ;; # keep surface boundary layer equal to value in rest of atmosphere ;;
-        [23]) ;; # do nothing
-        *) raise "Unknown blopt ${blopt}."
-      esac
-      ;;
-
-    # The mean temp ones
-    tmean?*)
-      tmean=${params[0]}
-      # Boundary layer
-      case "$blopt" in
-        [01]) kbl=-40 ;; # keep surface boundary layer equal to value in rest of atmosphere ;;
-        [23]) ;; # do nothing
-        *) raise "Unknown blopt ${blopt}."
-      esac
-      ;;
-
-    # The equator-pole equilibrium difference
-    tgrad?*) # temp gradient experiments
-      delh=${params[0]}
-      # Boundary layer
-      case "$blopt" in
-        [01]) kbl=-40 ;; # keep surface boundary layer equal to value in rest of atmosphere ;;
-        [23]) ;; # do nothing
-        *) raise "Unknown blopt ${blopt}."
-      esac
-      # Diagonal experiments
+    # Tgrad, and related diagonal experiments
+    tgrad|tgrad-*) delh=${params[0]}
       if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
         [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
         case "$suffix" in
@@ -476,9 +372,66 @@ exp_setup() {
       fi
       ;;
 
-    # Unknown
-    *) raise "Unknown experiment series \"$sweep\"."
+    # Damp full atmosphere, and related diagonal experiments
+    katmos|katmosmean|katmosanom|katmos-*|katmosmean-*|katmosanom-*)
+      ktrop=-${params[0]}
+      # Mean and anomaly components
+      case $sweep in
+        katmosmean) ktrop=-40,$ktrop ;;
+        katmosanom) ktrop=$ktrop,-40 ;;
+      esac
+      # Diagonal experiments
+      if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
+        [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
+        case "$suffix" in # diagaonal experiment
+          kfric) kfric=-${params[1]} ;;
+          tgrad) delh=${params[1]} ;;
+          tmean) tmean=${params[1]} ;;
+          tshift) exph=${params[1]} ;;
+          global) q0_global=${params[1]} ;;
+          surface) q0_surface=${params[1]} ;;
+          arctic) q0_arctic=${params[1]} ;;
+          vortex) q0_vortex=${params[1]} ;;
+          tropical) q0_tropical=${params[1]} ;;
+          *) raise "Unknown sweep ${sweep}." ;;
+        esac
+      fi
+      # Scale boundary layer damping rates
+      # TODO: Delete option 3 cuz it was dumb.
+      unset kbl
+      for itrop in ${ktrop/,/ }; do
+        case $forceopt in
+          1) ibl=-$(bc -l <<< "scale=3; ${itrop#-}/10") ;; # hold ratio constant
+          2) ibl=$itrop ;; # keep surface boundary layer equal to value in rest of atmosphere
+          3) ibl=-$(bc -l <<< "scale=3; (4^-1 + (${itrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
+          *) raise "Unknown forcing option ${forceopt}." ;;
+        esac
+        kbl=$kbl,$ibl
+      done
+      kbl=${kbl#,} # trim leading comma
+      # Match strat and meso forcing, no matter whether this is hs or pk
+      kstrat=$ktrop
+      kmeso=$ktrop
       ;;
+
+    # Damp stratosphere
+    kstrat|kstratmean|kstratanom) # stratosphere damping experiments
+      # Get two parameters
+      [ -z "${params[1]}" ] && raise "Need to specify transition depth as second parameter."
+      kstrat=-${params[0]}
+      kdepth=${params[1]} # param 2 is depth of transition region
+      # Mean and anomaly components
+      case "$name" in
+        kstratanom) kstrat=-40,$kstrat ;;
+        kstratmean) kstrat=$kstrat,-40 ;;
+      esac
+      # Whether to damp mesosphere more stronly
+      # TODO: Add this as forcing scheme prefix? For now just fix to constant.
+      damp=constant
+      ;;
+
+    # Unknown
+    *) raise "Unknown experiment series \"$sweep\"." ;;
   esac
 
   #----------------------------------------------------------------------------#
@@ -489,11 +442,8 @@ exp_setup() {
   nml_add teq_mode "'$force'" damp_mode "'$force'" strat_damp "'$damp'" # modes
   nml_add delh "$delh" t_mean "$tmean" exp_h "$exph" # equilibrium temp stuff
   nml_add ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping
-  nml_add butler_arctic "$butler_arctic" q0_arctic "$q0_arctic"
-  nml_add butler_tropical "$butler_tropical" q0_tropical "$q0_tropical"
-  nml_add butler_vortex "$butler_vortex" q0_vortex "$q0_vortex"
-  nml_add forcing_global "$forcing_global" q0_global "$q0_global"
-  nml_add forcing_surface "$forcing_surface" q0_surface "$q0_surface" # global constant forcing
+  nml_add q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex"
+  nml_add q0_global "$q0_global" q0_surface "$q0_surface" # global constant forcing
   # Timing variables
   # These ones are not experiment dependent so far, and are *global*
   nml_add dt_atmos "$dt" days "$days" seconds "$secs"
@@ -516,9 +466,9 @@ exp_setup() {
   # Will raise error if string-specifier is unknown
   vert=${reso#*l}
   case $vert in
-    *e) coord=input; levels=$srcdir/levels_ecmwf_${nlev}.nml ;; # ERA-Interim coordinates
-    *p) coord=pk_sigma; nlev=${vert%p} ;;
-    *s) coord=even_sigma; nlev=${vert%s} ;;
+    *e) coord=input levels=$srcdir/levels_ecmwf_${nlev}.nml ;; # ERA-Interim coordinates
+    *p) coord=pk_sigma nlev=${vert%p} ;;
+    *s) coord=even_sigma nlev=${vert%s} ;;
     *) raise "Unknown vertical coordinate identifier \"${vert}\"." ;;
   esac
   nml_add num_levels "$nlev" vert_coord_option "'$coord'"
@@ -528,7 +478,8 @@ exp_setup() {
   #----------------------------------------------------------------------------#
   # Copy over the default namelist
   nml=$exp_dir/input.nml
-  nml_default=$srcdir/general_default.nml
+  nml_default=$srcdir/input.nml
+  ! [ -r "$nml_default" ] && raise "File \"$nml_forcing\" not found."
   cp $nml_default $nml # move over defaut
   echo "Copied $nml_default to $nml"
   # Message
@@ -543,12 +494,6 @@ exp_setup() {
   # Also print CFL number
   # 100m/s is around 200mph, which is feasible in jet stream
   echo "CFL num for 100m/s wind: $(echo "scale=3; 100 / ((3.14 * 6371000.0 / $nlat ) / $dt)" | bc | awk '{printf "%f", $0}')."
-  # Add forcing namelist
-  nml_forcing=$srcdir/forcing_default.nml
-  if [ ! -r "$nml_forcing" ]; then
-    raise "File \"$nml_forcing\" not found."
-  fi
-  cat $nml_forcing >>$nml # append that shit
   # Add coordinate namelist, potentially
   if [ -n "$levels" ]; then
     if ! [ -r "$levels" ]; then 
@@ -578,7 +523,7 @@ exp_setup() {
   # Set up diag table; so far this is kept very simple
   #------------------------------------------------------------------------#
   diag=$exp_dir/diag_table
-  cp $srcdir/$diag_default $diag
+  cp $srcdir/diag_table $diag
   sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' $diag
   sed -i 's/#.*$//g;/^[ \t]*$/d' $diag # remove comments, empty lines, for clarity
 }
