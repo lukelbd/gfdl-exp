@@ -18,32 +18,36 @@ fi
 # ./post_series 'hs_katmos[12]-mean_*' 'hs_katmos[12]_*' \
 #   -c1=500 -c2=1500 -auto
 
-# Global warming runs
-# WARNING: Pretty slow! For now just get 1000 days
-blopt='[12]'
-# Forcing experiments and bases
-# for flags in '-f' '-p=1 -cp'; do
+# Forcing experiments and bases, or locked runs
 # for flags in '-f' '-p=1 -cp' '-p=1 -cce' '-p=1 -ci' '-p=4 -cv -ca'; do
 # for flags in '-p=4 -cp' '-p=4 -ci' '-p=4 -ce' '-p=4 -cv'; do
 # for flags in '-p=4 -ce' '-p=4 -cv'; do
 # for flags in '-f' '-p=4 -cv'; do
 # for flags in '-f' '-p=4 -cp'; do
-for flags in '-f' '-p=4 -cv'; do
+# for flags in '-f' '-p=4 -cv'; do
+# for flags in '-f' '-p=4 -cp'; do
+lock=''
+# lock='[LC]'
+blopt='[12]'
+for flags in '-p=4 -ce'; do
   echo "Flags: $flags"
   # "hs_katmos${blopt}-arctic*" "hs_katmos${blopt}-vortex*" "hs_katmos${blopt}-tropical*" \
   # "hs_katmos${blopt}-global*" "hs_katmos${blopt}-surface*" \
   ./post_series \
-    "hs_katmosmean${blopt}_*" \
-    "hs_base${blopt}_*" "hs_katmos${blopt}_*" \
-    -c1=500 -c2=3500 $flags
+    "hs${blopt}${lock}_base_*" "hs${blopt}${lock}_katmos_*" \
+    "hs${blopt}${lock}_katmosmean_*" \
+    "hs${blopt}${lock}_tgrad_*" \
+    "hs${blopt}${lock}_tmean_*" \
+    -c1=0 -c2=3500 $flags
 done
+
 # Diagonal experiments and diagonal experiment base
 # for flags in '-p=4 -cp' '-p=4 -ci' '-p=4 -ce' '-p=4 -cv'; do
 # for flags in '-f' '-p=4 -cv'; do
-for flags in '-f' '-p=4 -cv'; do
-  echo "Flags: $flags"
-  ./post_series \
-    "hs_tmean${blopt}_*" "hs_tgrad${blopt}_*" \
-    -c1=500 -c2=3500 $flags
-    # "hs_katmos${blopt}-tmean*" "hs_katmos${blopt}-tgrad*" \
-done
+# for flags in '-f' '-p=4 -cv'; do
+#   echo "Flags: $flags"
+#   ./post_series \
+#     "hs_tmean_*" "hs_tgrad_*" \
+#     -c1=500 -c2=3500 $flags
+#     # "hs_katmos-tmean*" "hs_katmos-tgrad*" \
+# done

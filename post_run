@@ -1,19 +1,50 @@
 #!/bin/bash
-################################################################################
-# This script post-processes the raw model output files generated from the
-# GFDL dry core model. Needs to be supplied with a source and destination directory.
+usage="post_run [OPTION...] FILE_PREFIX INPUT_DIR OUTPUT_DIR"
+doc="
+This script post-processes the raw model output files generated from the
+GFDL dry core model. Needs to be supplied with a source and destination directory.
+
+Usage
+
+  $usage
+
+Required arguments
+
+  FILE_PREFIX  The filename prefix used to search for relevant NetCDF files.
+  INPUT_DIR    The input directory used to search for these files. We search
+               the 'netcdf' subfolder inside this directory.
+  OUTPUT_DIR   The output directory to which averages will be sent.
+
+Optional arguments
+
+  -f     Copy forcing data from experiment scratch disk to data folder
+  -cp    Average climate stats from pressure lev data.
+  -cs    Average climate stats from 2D-spectral decomps.
+  -ci    Average climate stats from isentropic lev data.
+  -ce    Global Lorenz energy budget time series.
+  -cv    EOF decomps from pressure lev data.
+  -ca    Temperature autocorrelation from pressure lev data.
+  -se    Ensemble mean spindown cross-section from pressure lev data.
+  -sr    Spindown data from each ensemble averaged over some region.
+  -st    Spindown dynamical timescale calculated from each ensemble (?)
+  -m=*   Spindown mode (see drycore_series).
+  -r=*   Restart days blocks.
+  -c1=*  Start day for climate averages.
+  -c2=*  End day for climate averages.
+  -s1=*  Start day for spindown stats, relative to spindown start.
+  -s2=*  End day for spindown stats, relative to spindown start.
+"
+# Notes
 # WARNING: Destination directory should really be on a backed up disk.
 # WARNING: CDO has hard-coded maximum chained processes of 64. Horrible. Use
 # commands like 'select,key=value' to merge multiple files in one command instead
 # of constructing massive chained commands in single bash string.
-################################################################################
-# Raise error and exit
 shopt -s nullglob # will return empty if no match
 raise() {
+  echo "Usage: $usage"
   echo "Error: $@" 1>&2
   exit 1
 }
-# Python heredoc header
 header="
 import time
 t1 = time.time()
@@ -25,11 +56,14 @@ def timer(message):
     t1 = t2
 "
 # Environmental variables, with defaults
-# The flag names should be descriptive enough, but feel free to read comments
+subfolder=true # use subfolder? have this so if we just got forcing data and have no real data yet
 flags='-s -O' # overwrite, and only issue warnings
-netcdf=true # use subfolder? have this so if we just got forcing data and have no real data yet
+smode=0
+rdays=100
 climo_start=500
-climo_end=1500
+climo_end=5500
+spin_start=0
+spin_end=9900 # just get all of them
 forcing=false
 climate_plev=false
 climate_isen=false
@@ -48,17 +82,8 @@ spindown_timescale=false
 spindown_ensemble_ts=false
 spindown_regional_ts=false
 # Parse user input
-mode=2 # spindown mode
 while [ $# -gt 0 ]; do
   case $1 in
-    # Params
-    -m=*) mode=${1##*=} ;;
-    -r=*) rdays=${1##*=} ;;
-    -c1=*) climo_start=${1##*=} ;;
-    -c2=*) climo_end=${1##*=} ;;
-    -s1=*) spin_start=${1##*=} ;;
-    -s2=*) spin_end=${1##*=} ;;
-    # Flags
     -f) forcing=true ;;
     -cp) climate_plev=true ;;
     -cs) climate_spectral=true ;;
@@ -69,6 +94,12 @@ while [ $# -gt 0 ]; do
     -se) spindown_ensemble_ts=true ;;
     -sr) spindown_regional_ts=true ;;
     -st) spindown_timescale=true ;;
+    -m=*) smode=${1##*=} ;;
+    -r=*) rdays=${1##*=} ;;
+    -c1=*) climo_start=${1##*=} ;;
+    -c2=*) climo_end=${1##*=} ;;
+    -s1=*) spin_start=${1##*=} ;;
+    -s2=*) spin_end=${1##*=} ;;
     -*) raise "Unknown flag \"${1}\".";;
     *) # 3 required arguments, set in this order
       if [ -z $filename ]; then
@@ -77,17 +108,14 @@ while [ $# -gt 0 ]; do
         input="$1"
       elif [ -z $output ]; then
         output="$1"
-      else raise "Too many arguments."
+      else raise "Too many arguments. Got $filename $input $output"
       fi ;;
   esac
   shift
 done
-# Require restart days because may have some old 5-day tests or whatever
-# in that experiment folder.
-[ -z "$rdays" ] && raise "You must specify the restart day spacing with -r=N or --restart=N."
 # Requirements
-if $netcdf; then
-  ! [ -d "$input/netcdf" ] && [ -d "$input" ] && mkdir "$input/netcdf"
+if $subfolder; then
+  [ -d "$input/netcdf" ] || { [ -d "$input" ] && mkdir "$input/netcdf"; }
   input="$input/netcdf"
 fi
 if [ -z "$filename" ] || [ -z "$input" ] || [ -z "$output" ]; then
@@ -113,14 +141,14 @@ fclimate_isen=${filename}_climate_isen.${days}.nc
 fregion=${filename}_timeseries.${days}.nc
 fregion_isen=${filename}_timeseries_isen.${days}.nc
 fenergy=${filename}_energy.${days}.nc
-fspinclimate=${filename}_spindown${mode}xs.${days}.nc # cross-section
-fspindownpoles=${filename}_spindown${mode}poles.${days}.nc # spindown rate at the poles
-fdyntimescale=${filename}_dynamical_timescale${mode}.${days}.nc # the timescale stuff
+fspinclimate=${filename}_spindown${smode}xs.${days}.nc # cross-section
+fspindownpoles=${filename}_spindown${smode}poles.${days}.nc # spindown rate at the poles
+fdyntimescale=${filename}_dynamical_timescale${smode}.${days}.nc # the timescale stuff
 
 # Directory management; move to save directory
 cwd=$(pwd) # directory where scripts stored (you must run this script from current directory!)
-! [ -d "$input" ] && raise "Cannot find input directory \"$input\"."
-! [ -d "$output" ] && mkdir $output
+[ -d "$input" ] || raise "Cannot find input directory \"$input\"."
+[ -d "$output" ] || mkdir $output
 cd $output # move here
 
 # Energy terms
@@ -328,7 +356,7 @@ get_files() {
 spindown_files_by_init() {
   echo "Getting list of spindown files within days $spin_start to $spin_end, grouped by control run initiation day."
   startdays=()
-  for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+  for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$smode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
     startday=${file#$input/${psummary}.}
     startday=${startday%%-*} # the spindown day
     startdays+=($startday)
@@ -337,8 +365,8 @@ spindown_files_by_init() {
   spindowntsfiles=()
   for startday in ${startdays[@]}; do
     spindowngroup="" # for particular days
-    for file in $input/${psummary}.${startday}-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
-      daystring=${file#$input/${psummary}.${startday}-spindown$mode-} # trim leading pattern
+    for file in $input/${psummary}.${startday}-spindown$smode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+      daystring=${file#$input/${psummary}.${startday}-spindown$smode-} # trim leading pattern
       daystring=${daystring%.nc}
       day1=${daystring%%-*} day1=${day1#d}
       day2=${daystring##*-} day2=${day2#d}
@@ -355,8 +383,8 @@ spindown_files_by_init() {
 spindown_files_by_day() {
   echo "Getting list of spindown files within days $spin_start to $spin_end, grouped by run day."
   daystrings=()
-  for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
-    daystring=${file#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-} # trim leading pattern
+  for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$smode-d[0-9][0-9][0-9][0-9]-d[0-9][0-9][0-9][0-9].nc; do
+    daystring=${file#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$smode-} # trim leading pattern
     daystring=${daystring%.nc}
     day1=${daystring%%-*} day1=${day1#d}
     day2=${daystring##*-} day2=${day2#d}
@@ -366,7 +394,7 @@ spindown_files_by_day() {
   spindowndayfiles=()
   for daystring in ${daystrings[@]}; do
     spindowngroup="" # for particular days
-    for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-${daystring}.nc; do
+    for file in $input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$smode-${daystring}.nc; do
       spindowngroup+=" $file"
     done
     spindowndayfiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
@@ -723,7 +751,7 @@ spindown_ensemble_mean_ts() {
       raise "$newcount spindown runs in this group, but $count files in previous groups."
     count=$newcount
     # Next get ensemble mean of files; timesteps will be adopted from the first input file
-    daystring=${spindowngroup[0]#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$mode-}
+    daystring=${spindowngroup[0]#$input/${psummary}.d[0-9][0-9][0-9][0-9]-spindown$smode-}
     daystring=${daystring%.nc}
     outfile=$input/spindown${daystring}.nc
     echo "Spindown runs in the ${daystring} group: ${members[@]}."
@@ -777,7 +805,7 @@ spindown_regional_mean_ts() {
     # From results, create ensemble file of spindown process
     # CDO can't read 5-D files so no more CDO processing hereafter
     echo "Getting ensemble record of spindown runs from files: ${outfiles[@]##*/}."
-    ensfile=${filename}_spindown${mode}${region}.nc
+    ensfile=${filename}_spindown${smode}${region}.nc
     ncecat -O -u member ${outfiles[@]} $ensfile
     ncks --no-abc -O -4 --fix_rec_dmn member $ensfile $ensfile
     ncks --no-abc -O -4 --mk_rec_dmn time $ensfile $ensfile
@@ -801,8 +829,8 @@ spindown_regional_mean_ts() {
 # Timescale stuff
 dynamical_timescale() {
   echo "Esimating dynamical timescale."
-  ! [ -r $fspindownpoles ] && raise "Spindown file over poles $fspindownpoles is not available."
-  ! [ -r $fclimate ] && raise "The climate file $fclimate is not available."
+  [ -r $fspindownpoles ] || raise "Spindown file over poles $fspindownpoles is not available."
+  [ -r $fclimate ] || raise "The climate file $fclimate is not available."
   # Python approach due to illegible ensemble data
   # python3 -c | tee ${input}/timescale.log << EOF
   export PYTHONUNBUFFERED=1
@@ -817,9 +845,9 @@ dynamical_timescale() {
 driver() {
   # Forcing data
   if $forcing; then
-    if ! newer $output/forcing.nc $input/../forcing.nc; then
+    if ! newer $output/constants.nc $input/../constants.nc; then
       echo "Copying forcing data."
-      cp $input/../forcing.nc $output
+      cp $input/../constants.nc $output
     fi
   fi
 
@@ -862,19 +890,19 @@ driver() {
   # Get the full cross-section
   if $spindown_ensemble_ts; then
     echo "Spindown ensemble mean time series."
-    log=$input/spindown${mode}_mean.log
+    log=$input/spindown${smode}_mean.log
     parallel spindown_ensemble_mean_ts
   fi
   # Preserve each record but take area averages
   if $spindown_regional_ts; then
     echo "Spindown regional average time series for each branch."
-    log=$input/spindown${mode}_ensemble.log
+    log=$input/spindown${smode}_ensemble.log
     parallel spindown_regional_mean_ts
   fi
   # Timescale
   if $spindown_timescale; then
     echo "Spindown dynamical timescale."
-    log=$input/spindown${mode}_timescale.log
+    log=$input/spindown${smode}_timescale.log
     parallel dynamical_timescale
   fi
 }

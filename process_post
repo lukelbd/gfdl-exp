@@ -10,14 +10,13 @@ Usage
 Required arguments
 
   GLOB1  The quoted glob pattern for experiment directories for which we
-         want to process data. 'full' files will be searched for in the
-         'netcdf' subdirectories of the experiment directories.
+         want to process data.
 
 Optional arguments
 
-  -p=*   Number of parallel processes for splitting NetCDF files.
   -i     Interpolate from pressure levels to isentropes in parallel.
   -s     Calculate spectra in parallel.
+  -p=*   Number of parallel processes for splitting NetCDF files.
 "
 # Notes
 # * Feel free to add other random tasks, e.g. deleting dud variables

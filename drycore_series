@@ -7,7 +7,7 @@
 ################################################################################
 usage='drycore_series [OPTION...] "FORCING_SWEEP_RESOLUTION" --1=[prev:]value[,...] [--2=[prev:]value[,...]] '
 doc="This script runs a parameter sweep for the given input series and
-list(s) of parameters, using the 'drycore_run' script. It generates standardized
+list(s) of parameters, using the 'run' script. It generates standardized
 folder names and can modify the namelist and diag_table for the parameters
 being changed.
 
@@ -18,12 +18,12 @@ Usage
 Valid forcing specs
 
   The number indicates the boundary layer damping approach: 1 is constant
-  everywhere, 2 employs faster damping. Note that this script trims the numers,
-  and the model actually expects just those strings.
+  everywhere, 2 employs faster damping, and 'L' stands for 'locked'. Note that
+  this script trims the suffix, and the model actually expects just those strings.
 
-  hs[12]     Held and Suarez, 1994
-  pk[12]     Polvani and Kushner, 2004
-  pkmod[12]  Polvani and Kushner with modified coords
+  hs[12][LC]     Held and Suarez, 1994
+  pk[12][LC]     Polvani and Kushner, 2004
+  pkmod[12][LC]  Polvani and Kushner with modified coords
 
 Valid sweep specs
 
@@ -71,6 +71,7 @@ Optional arguments
   -h|--help             Print this message.
   -t|--test             Run quick test, just a few days, maybe 3 restarts.
   -i|--init             Just run model to get a forcing.nc file.
+  -s|--save             Save thermal damping tendency tdt for every run?
   [-c|--cores]=*        Number of cores.
   [-n|--nodes]=*        Number of nodes, if this is a supercomputer.
   [-d|--days]=*         Number of days.
@@ -81,44 +82,41 @@ Optional arguments
   [-te|--tend]=*        Final day.
   [-kts|--ktstart]=*    Initial day where we start keeping full-res data.
   [-kte|--ktend]=*      Final day that we keep full-res data.
-  -*                    Unknown flags passed to drycore_run.
+  -*                    Unknown flags passed to run script.
 "
-# Error
-raise() {
-  echo "Usage: $usage" 1>&2
-  echo "Error: $@" 1>&2
-  exit 1
-}
-# Load modules
+# Notes
+# * Really can't push CFL number! Shoot for around 0.5. Got almost instant
+#   model blow up at 1200s with T106, since upper-level winds probably get to
+#   around 100m/s (about 200mph)
+# * Working times so far 20 days, 40 days: 600s, even 800s too fast;
+#   100 days: 800s.
+rundir=$HOME/gfdl-fms/exp # model folder for namelists and stuff
+source $rundir/header.sh
+cwd=${0%/*}
+cd $cwd
+[ $? -ne 0 ] && echo "Error: Header file not found." && exit 1
+module load impi &>/dev/null
+module load nco &>/dev/null
 # module load ncl &>/dev/null # use conda versions instead, already on path
 # module load cdo/1.9.4 &>/dev/null
-module load impi &>/dev/null # to parallelize the combine process, need mpirun!
-module load nco &>/dev/null
 # Default settings
-# NOTE: Really can't push CFL number! Shoot for around 0.5. Got almost instant
-# model blow up at 1200s with T106, since upper-level winds probably get to
-# around 100m/s (about 200mph)
-# NOTE: Working times so far:
-# 20 days, 40 days: 600s, even 800s too fast
-# 100 days: 800s
-secs=0 # normally is zero
-days=50
+rdays=50
 nodes=1
 cores=8
 mail=false
 dryrun=false
+locked=false # locked heating run
+savetdt=false
 dt=600 # for T106, gives 100m/s CFL number of 0.5
-tstart=0  # first day of integration; set to 0 for new run.
-tend=5500 # for new experiments just do 1200 day integrations, first 200 are spinup
+tstart=0
+tend=5500
 walltime=12:00
 queue=economy
-# Output settings
 outfreq=12      # every 6
 frequnits=hours # hours
 filename=2xdaily_inst # name for output files
 ktstart=1 # first day we keep XYZ data (can't keep all, too much data)
 ktend=0 # last day we keep XYZ data
-# Test settings
 testmode=false
 testdays=5
 testblocks=5 # number of blocks of testdays
@@ -127,55 +125,63 @@ testblocks=5 # number of blocks of testdays
 super=false
 [[ $HOSTNAME =~ cheyenne* ]] && super=true
 # Parse input
-unset series_name flags_global
+gflags="-p=$cwd/process_inline -pi=$cwd/process_init "
 while [ $# -gt 0 ]; do # echo "Flag: $1"
   case "$1" in
     -h|--help) echo "$doc" && exit 0 ;;
-    -t|--test)            testmode=true ;;
-    -d|--dryrun)          dryrun=true   ;;
-    -1=|--1=*)            params1=($(echo ${1#*=} | tr ',' ' ')) ;;
-    -2=|--2=*)            params2=($(echo ${1#*=} | tr ',' ' ')) ;;
-    -c=*|--cores=*)       cores=${1#*=}      ;;
-    -n=*|--nodes=*)       nodes=${1#*=}      ;;
-    -dt=*|--timestep=*)   dt=${1#*=}         ;;
-    -d=*|--days=*)        days=${1#*=}       ;;
-    -ts=*|--tstart=*)     tstart=${1#*=}     ;;
-    -te=*|--tend=*)       tend=${1#*=}       ;;
-    -kts=*|--ktstart=*)   ktstart=${1#*=}    ;;
-    -kte=*|--ktend=*)     ktend=${1#*=}      ;;
-    -td=*|--testdays=*)   testdays=${1#*=}   ;;
+    -t|--test) testmode=true ;;
+    -d|--dryrun) dryrun=true ;;
+    -s|--save) savetdt=true ;;
+    -1=|--1=*) params1=($(echo ${1#*=} | tr ',' ' ')) ;;
+    -2=|--2=*) params2=($(echo ${1#*=} | tr ',' ' ')) ;;
+    -c=*|--cores=*) cores=${1#*=} ;;
+    -n=*|--nodes=*) nodes=${1#*=} ;;
+    -d=*|--days=*) rdays=${1#*=} ;;
+    -dt=*|--timestep=*) dt=${1#*=} ;;
+    -ts=*|--tstart=*) tstart=${1#*=} ;;
+    -te=*|--tend=*) tend=${1#*=} ;;
+    -kts=*|--ktstart=*) ktstart=${1#*=} ;;
+    -kte=*|--ktend=*) ktend=${1#*=} ;;
+    -td=*|--testdays=*) testdays=${1#*=} ;;
     -tb=*|--testblocks=*) testblocks=${1#*=} ;;
-    -*) flags_global+="$1 " ;;
-    *) [ -n "$series_name" ] && raise "More than one experiment series specified."
-       series_name="$1" ;;
-  esac; shift # shift by at least one
+    -*) gflags+="$1 " ;;
+    *) [ -n "$series" ] && raise "More than one experiment series specified."
+       series="$1" ;;
+  esac
+  shift
 done
 # Default experiment series
-if [ -z "$series_name" ]; then
+if [ -z "$series" ]; then
   echo "Warning: No experiment name specified. Running default experiment hs1_base_t42l20s."
-  series_name='hs1_base_t42l20s'
+  series='hs1_base_t42l20s'
 fi
 # Parse experiment series name
 # Also echo the critical parallelization info
 echo "Nodes: $nodes, Cores: $cores"
-force="${series_name%%_*}"
-sweep="${series_name#*_}"
+force="${series%%_*}"
+sweep="${series#*_}"
 sweep="${sweep%%_*}"
-reso="${series_name#*_}"
+reso="${series#*_}"
 reso="${reso#*_}"
 reso="${reso%%_*}"
+# Forcing options, not part of the parameter sweep but representing
+# qualitative variations of the model forcing scheme
+locked=false
+[[ "$force" =~ L$ ]] && force="${force%L}" lock=L cold=false
+[[ "$force" =~ C$ ]] && force="${force%C}" lock=C cold=true
 [[ "$force" =~ [0-9]$ ]] || raise "Forcing spec must end with a number, indicating the boundary layer damping option."
+[ -n "$lock" ] && locked=true savetdt=false
 forceopt=${force##*[a-z]} # get number
 force=${force%[0-9]}
 
 # Run really fast test run
 if $testmode; then
-  # exp_restart="${force}_base2_t95l60e" # override previous directory
-  # rdays=d0450-d0500 # set restart directory days (leave empty to just use the last subfolder in directory)
+  # exprestart="${force}_base2_t95l60e" # override previous directory
+  gflags+=' -d'
   outfreq=12
   frequnits=hours
   filename=test
-  days=$testdays
+  rdays=$testdays
   tstart=0
   tend=$((testdays * testblocks))
   ktstart=$tstart
@@ -183,13 +189,10 @@ if $testmode; then
   walltime=01:00 # real quick test
   queue=regular
 fi
-# Days for keeping
-txyzdata=$(seq $ktstart $days $ktend | tr $'\n' ',') # for saving
 
 #------------------------------------------------------------------------------#
 # Storage and model path
 #------------------------------------------------------------------------------#
-srcdir=$HOME/gfdl-drycore/run # model folder for namelists and stuff
 storage=$HOME
 scratch=$HOME # on Euclid, home is unmounted/not backed up; so disk I/O is quick
 case ${HOSTNAME%%.*} in
@@ -207,34 +210,14 @@ case ${HOSTNAME%%.*} in
     scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
   ;; *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
-! [ -d "$storage/data" ] && { mkdir "$storage/data"; echo "Created storage directory."; }
+[ -d "$storage/data" ] || { mkdir "$storage/data"; echo "Created storage directory."; }
 
 #------------------------------------------------------------------------------#
 # Helper functions
 #------------------------------------------------------------------------------#
-# Array membership
-member() {
-  [[ " ${@:2} " =~ " ${1} " ]]
-}
-
-# Add to arrays storing namelist parameters. Fugly but works.
-# * If the <value> part is empty (e.g., if this particular experiment
-#   series does not change that value), will not add to arrays
-# * Function accounts for situation when you pass an empty string parameter
-#   or negative number, and have weird strings like "v-" and "v''"
-nml_add() {
-  while [ $# -ne 0 ]; do
-    if [ -n "$2" ] && [ "$2" != "-" ] && [ "$2" != "''" ]; then
-      nml_params+=("$1")
-      nml_values+=("$2")
-    fi
-    shift 2
-  done
-}
-
 # Determine model run name, accounting for "intersection" of experiment series
 # and specifying named parameter values for forcing experiments
-# Sets global model run variables 'exp_restart' and 'exp_name'
+# Sets global model run variables 'exprestart' and 'expname'
 exp_name() {
   # Get params for this experiment and the "continuation" experiment, e.g.
   # --1=40:100 means run this experiment with parmeter 100, from experiment
@@ -255,7 +238,7 @@ exp_name() {
   for p1 in $rparam1 $param1; do
     for p2 in $rparam2 $param2; do
       # Continuation experiments get a special suffx
-      [ -n "$exp_name" ] && exp_restart="$exp_name" contin=c
+      [ -n "$expname" ] && exprestart="$expname" contin=c
       # Get experiment sweep name, *ensuring that we avoid duplicating runs
       # by deferring to different names when possible*
       # TODO: Add to these.
@@ -311,7 +294,7 @@ exp_name() {
             ;;
           # Forcing experiments
           katmos-arctic|katmos-tropical|katmos-vortex|katmos-global|katmos-surface)
-            if [ -n "$rparam1" ] && [ -z "$exp_restart" ]; then
+            if [ -n "$rparam1" ] && [ -z "$exprestart" ]; then
               [[ $p1 == 40 ]] && fsweep=base p1f= p2f= || fsweep=katmos p2f=
             fi
             ;;
@@ -323,9 +306,21 @@ exp_name() {
       [ "$p2f" == 'na' ] && unset -v p2f
       [ -n "$p1f" ] && p1f="_p$(printf "%08.3f" $p1f)"
       [ -n "$p2f" ] && p2f="p$(printf "%08.3f" $p2f)"
-      exp_name=${force}${forceopt}_${fsweep}_${reso}${p1f}${p2f}${contin}
+      expname=${force}${forceopt}${lock}_${fsweep}_${reso}${p1f}${p2f}${contin}
     done
   done
+  # Override
+  if $locked; then
+    expname=${expname%c} # ignore trailing c
+    expheating=${expname/[LC]/}
+    [ -d $scratch/$expheating ] || expheating=${expheating}c
+    [ -d $scratch/$expheating ] || raise "Heating directory \"$scratch/${expheating}c\" or \"$scratch/$expheating\" not found."
+    if $cold; then
+      unset exprestart
+    else
+      exprestart=$expheating
+    fi
+  fi
 }
 
 # Determine namelist changes and diag table changes
@@ -346,26 +341,26 @@ exp_setup() {
     params=${params%c}
     params=($(echo $params | tr -t 'p' ' ' | xargs printf "%.3f "))
   fi
-  #----------------------------------------------------------------------------#
-  # Add to this as you design new experiment series
-  #----------------------------------------------------------------------------#
   # First the boundary layer options
   prefix=${sweep%-*}
   suffix=${sweep#*-}
   [[ $forceopt -lt 1 || $forceopt -gt 3 ]] && raise "Invalid forcing scheme option ${forceopt}."
   [ $forceopt -eq 2 ] && kbl=-40 # simple default
+
+  # Experiments
   case $sweep in
-    # Simple
+    # Simple experiments
     base) ;;
-    kfric)  kfric=-${params[0]} ;; # change friction damping
     tshift) exph=${params[0]} ;; # shift meridional temp gradient
-    tmean)  tmean=${params[0]} ;; # change mean surface temp
+    tmean) tmean=${params[0]} ;; # change mean surface temp
+    kfric) kfric=-${params[0]} ;; # change friction damping
 
     # Tgrad, and related diagonal experiments
-    tgrad|tgrad-*) delh=${params[0]}
-      if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
+    tgrad|tgrad-*)
+      delh=${params[0]}
+      if [ $sweep != $suffix ]; then # i.e. experiment had a 'dash' in it
         [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
-        case "$suffix" in
+        case $suffix in
           tshift) exph=${params[1]} ;;
           *) raise "Unknown sweep ${sweep}." ;;
         esac
@@ -381,13 +376,13 @@ exp_setup() {
         katmosanom) ktrop=$ktrop,-40 ;;
       esac
       # Diagonal experiments
-      if [ "$suffix" != "$sweep" ]; then # i.e. experiment had a 'dash' in it
+      if [ $sweep != $suffix ]; then # i.e. experiment had a 'dash' in it
         [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
-        case "$suffix" in # diagaonal experiment
-          kfric) kfric=-${params[1]} ;;
+        case $suffix in # diagaonal experiment
           tgrad) delh=${params[1]} ;;
           tmean) tmean=${params[1]} ;;
           tshift) exph=${params[1]} ;;
+          kfric) kfric=-${params[1]} ;;
           global) q0_global=${params[1]} ;;
           surface) q0_surface=${params[1]} ;;
           arctic) q0_arctic=${params[1]} ;;
@@ -403,8 +398,8 @@ exp_setup() {
         case $forceopt in
           1) ibl=-$(bc -l <<< "scale=3; ${itrop#-}/10") ;; # hold ratio constant
           2) ibl=$itrop ;; # keep surface boundary layer equal to value in rest of atmosphere
-          3) ibl=-$(bc -l <<< "scale=3; (4^-1 + (${itrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
           *) raise "Unknown forcing option ${forceopt}." ;;
+          # 3) ibl=-$(bc -l <<< "scale=3; (4^-1 + (${itrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
         esac
         kbl=$kbl,$ibl
       done
@@ -430,113 +425,96 @@ exp_setup() {
       damp=constant
       ;;
 
-    # Unknown
     *) raise "Unknown experiment series \"$sweep\"." ;;
   esac
 
-  #----------------------------------------------------------------------------#
-  # Store namelist changes in two arrays, so we can also
-  # nicely print those changes
-  #----------------------------------------------------------------------------#
+  # Apply namelist changes
+  nml=$expdir/input.nml
+  nml_default=$rundir/input.nml
+  cp $nml_default $nml # move over defaut
   # Forcing settings
-  nml_add teq_mode "'$force'" damp_mode "'$force'" strat_damp "'$damp'" # modes
-  nml_add delh "$delh" t_mean "$tmean" exp_h "$exph" # equilibrium temp stuff
-  nml_add ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping
-  nml_add q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex"
-  nml_add q0_global "$q0_global" q0_surface "$q0_surface" # global constant forcing
-  # Timing variables
-  # These ones are not experiment dependent so far, and are *global*
-  nml_add dt_atmos "$dt" days "$days" seconds "$secs"
-  # Set horizontal coordinates
+  nml_replace $nml teq_mode "'$force'" damp_mode "'$force'" strat_damp "'$damp'"
+  nml_replace $nml delh "$delh" t_mean "$tmean" exp_h "$exph" # equilibrium temp stuff
+  nml_replace $nml ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping stuff
+  nml_replace $nml q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex" q0_global "$q0_global" q0_surface "$q0_surface" # global constant forcing
+  # Timing variables, not experiment dependent so far
+  nml_replace $nml dt_atmos "$dt" days "$rdays"
+  # Horizontal coordinates
   ntrunc=${reso%l*}
   ntrunc=${ntrunc#t}
   case $ntrunc in
-    42)  nlat=64  ;;
-    63)  nlat=96  ;;
-    85)  nlat=128 ;;
-    95)  nlat=144 ;; # for 36-core Cheyenne nodes
+    42) nlat=64 ;;
+    63) nlat=96 ;;
+    85) nlat=128 ;;
+    95) nlat=144 ;; # for 36-core Cheyenne nodes
     106) nlat=160 ;;
     170) nlat=256 ;;
     *) raise "Invalid truncation number \"$ntrunc\"." ;;
   esac
   nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
   nlon=$(($nlat * 2)) # always twice the res
-  nml_add num_fourier "$ntrunc" num_spherical "$nsphere" lat_max "$nlat" lon_max "$nlon"
+  nml_replace $nml num_fourier "$ntrunc" num_spherical "$nsphere" lat_max "$nlat" lon_max "$nlon"
   # Now vertical resolution options
   # Will raise error if string-specifier is unknown
   vert=${reso#*l}
   case $vert in
-    *e) coord=input levels=$srcdir/levels_ecmwf_${nlev}.nml ;; # ERA-Interim coordinates
+    *e) coord=input levels=$rundir/levels_ecmwf_${nlev}.nml ;; # ERA-Interim coordinates
     *p) coord=pk_sigma nlev=${vert%p} ;;
     *s) coord=even_sigma nlev=${vert%s} ;;
     *) raise "Unknown vertical coordinate identifier \"${vert}\"." ;;
   esac
-  nml_add num_levels "$nlev" vert_coord_option "'$coord'"
-
-  #----------------------------------------------------------------------------#
-  # Add arrays to namelist
-  #----------------------------------------------------------------------------#
-  # Copy over the default namelist
-  nml=$exp_dir/input.nml
-  nml_default=$srcdir/input.nml
-  ! [ -r "$nml_default" ] && raise "File \"$nml_forcing\" not found."
-  cp $nml_default $nml # move over defaut
-  echo "Copied $nml_default to $nml"
-  # Message
-  index=0
-  width=6
-  while [ $index -le ${#nml_params[@]} ]; do
-    message+="${nml_params[@]:$index:$width}\n${nml_values[@]:$index:$width}\n\n"
-    let index+=$width
-  done
-  echo "Updated namelist with:"
-  printf "$message" | column -t
-  # Also print CFL number
-  # 100m/s is around 200mph, which is feasible in jet stream
-  echo "CFL num for 100m/s wind: $(echo "scale=3; 100 / ((3.14 * 6371000.0 / $nlat ) / $dt)" | bc | awk '{printf "%f", $0}')."
-  # Add coordinate namelist, potentially
-  if [ -n "$levels" ]; then
-    if ! [ -r "$levels" ]; then 
-      raise "File \"$levels\" not found."
-    fi
+  nml_replace $nml num_levels "$nlev" vert_coord_option "'$coord'"
+  if [ -n "$levels" ]; then # add vert coord namelist
+    [ -r "$levels" ] || raise "File \"$levels\" not found."
     cat $levels >>$nml
   fi
-  # Now loop through variables and assign them
-  # Only modify the parameter sweep variables, resolution variables, and
-  # timing variables. For others, just change in the namelist file directly.
-  [ ${#nml_params[@]} -ne ${#nml_values[@]} ] && raise "One of the batch script namelist params is unset."
-  for i in $(seq 0 $((${#nml_params[@]}-1))); do
-    key=${nml_params[$i]}
-    val=${nml_values[$i]}
-    [ -z "$key" ] && continue # e.g. stratosphere timescale should be empty
-    if ! grep '^[ \t]*\b'${key}'\b' $nml &>/dev/null; then
-      raise "Param \"${key}\" not found in namelist."
-    fi
-    space='\([ \t]*\)' # space atom; more readable to set it as a variable
-    sed -i 's/^'"${space}${key}${space}"'='"${space}"'.*$/\1'${key}'\2=\3'${val}',/g' $nml
-    sed -i 's/^'"${space}${key}${space}"'='"${space}"'.*$/\1'${key}'\2=\3'${val}',/g' $nml
-  done
-  # Remove comments to be safe
-  sed -i 's/!.*$//g;/^[ \t]*$/d' $nml # remove comments
+  # Print nicely formatted message showing the things we changed
+  nml_clean $nml
+  nml_print
 
-  #------------------------------------------------------------------------#
-  # Set up diag table; so far this is kept very simple
-  #------------------------------------------------------------------------#
-  diag=$exp_dir/diag_table
-  cp $srcdir/diag_table $diag
-  sed -i 's/filename/"'$filename'"/g;s/outfreq/'$outfreq'/g;s/frequnits/"'$frequnits'"/g' $diag
-  sed -i 's/#.*$//g;/^[ \t]*$/d' $diag # remove comments, empty lines, for clarity
+  # Copy diag table and apply settings
+  diag=$expdir/diag_table
+  cp $rundir/diag_table $diag
+  diag_replace $diag $filename $outfreq $frequnits
+  diag_clean $diag
+
+  # Copy field table
+  field=$expdir/field_table
+  cp $rundir/field_table $field
+
+  # Add tdt line for some experiments
+  # if false; then
+  if $savetdt; then
+    diag_add $diag \
+      '"mean_tdt", -1, "hours", 1, "days", "time",' \
+      '"forcing", "tdt", "tdt", "mean_tdt", "all", .true., "none", 2,'
+  fi
+
+  # Copy input topography and heating
+  if $locked; then
+    nml_replace $nml locked_heating '.true.'
+    unset tdtfiles
+    for tdtfile in $scratch/$expheating/netcdf/mean_tdt.*.nc; do
+      days=${tdtfile%.nc}
+      days=${days##*.}
+      day1=${days%-*}
+      day2=${days#*-}
+      [ ${day1#d} -ge $ktstart ] && [ ${day2#d} -le $ktend ] && tdtfiles+=($tdtfile)
+    done
+    [ ${#tdtfiles[@]} -eq 0 ] && raise "No tdt files found in $scratch/$expheating/netcdf directory."
+    tdtfile=${expdir}/heating.data.nc
+    echo "Locked heating data: ${tdtfiles[@]##*/}"
+    ncra -h -O ${tdtfiles[@]} $tdtfile || raise "Average of $scratch/$expheating/netcdf/mean_tdt.*.nc files failed."
+    ncks -h --no-abc -O -v tdt $tdtfile $tdtfile || raise "Cutting $tdtfile variables failed."
+  fi
 }
 
 #------------------------------------------------------------------------------#
-# Loop through different parameters
-# Settings to run entire loop as concurrent qsub processes, or run
-# serially on a normal server
+# Run model, looping through different parameters. We can run entire loop as
+# concurrent qsub processes, or run serially on a normal server.
 #------------------------------------------------------------------------------#
 # First set looping params
 echo "Forcing: $force, Sweep: $sweep, Resolution: $reso"
-exp_names=() # record completed experiments
-cwd=$(pwd)
 if [[ $sweep =~ base ]]; then
   params1=(na)
   params2=(na)
@@ -546,47 +524,49 @@ elif [ -z "$params2" ]; then
   params2=(na)
 fi
 # Parameter sweeps
+let np=cores*nodes
+gflags+="-c=$np -ts=$tstart -te=$tend "
 for param2 in ${params2[@]}; do
   for param1 in ${params1[@]}; do
-    # Set the exp_name and exp_restart variables
+    # Set the expname and exprestart variables
     # Prevent repeating experiments during diagonal param sweeps
-    unset -v exp_name exp_restart # restart, then exp_name may set it again
+    echo
+    unset -v expflags expname exprestart # restart, then exp_name may set it again
     exp_name $sweep $param1 $param2
-    if member $exp_name ${exp_names[@]}; then
-      echo "Already ran ${exp_name} in this loop."
+    if [[ " ${expnames[@]} " =~ " ${expname} " ]]; then
+      echo "Already ran ${expname} in this loop."
       continue
     fi
-    exp_names+=($exp_name) # record in list
+    expnames+=($expname) # record in list
     if $testmode; then
-      exp_dir="$scratch/test"
+      expdir="$scratch/test"
     else
-      exp_dir="$scratch/$exp_name"
+      expdir="$scratch/$expname"
     fi
-    ! [ -d "$exp_dir" ] && mkdir "$exp_dir"
-    log="$exp_dir/run.log" # e.g use the testing name
-    echo "Experiment name: ${exp_name}." | tee $log
+    [ -d "$expdir" ] || mkdir "$expdir"
+    log="$expdir/run.log" # e.g use the testing name
+    echo "Experiment name: ${expname}." | tee $log
+    if [ -n "$exprestart" ]; then
+      [ -d $scratch/$exprestart ] || exprestart="${exprestart}c"
+      [ -d $scratch/$exprestart ] || { echo "Warning: Restart directory $exprestart not found."; continue; }
+      echo "Restart from: ${exprestart}" | tee $log
+      expflags+="-rd=$scratch/$exprestart " # override with this restart directory
+    fi
 
     # Prepare namelist, diag table, and flags for experiment
-    # NOTE: This sets global variables 'exp_name' and 'exp_dir'
-    unset flags
-    exp_setup $exp_name 1>>$log
-    if [ -n "$exp_restart" ]; then
-      ! [ -d $scratch/${exp_restart} ] && exp_restart="${exp_restart}c"
-      ! [ -d $scratch/${exp_restart} ] && echo "Warning: Restart directory $exp_restart not found." && continue
-      echo "Restart from: ${exp_restart}" | tee $log
-      flags+="-rd=$scratch/$exp_restart/$rdays " # override with this restart directory
-    fi
-    ! [ -z "$txyzdata" ]  && flags+="-dxyz=$txyzdata " # keep XYZ data
-    ! [ -z "$tnodata" ]   && flags+="-dn=$tnodata "    # record zero data
-    ! [ -z "$tspindown" ] && flags+="-ds=$tspindown "  # record zero data
+    # NOTE: This sets global variables expname, nml, diag, and tdtfile
+    # WARNING: Cannot pipe output, because that means function before the pipe
+    # is a subprocess with its own varaibles, and global variables are deleted!
+    exp_setup $expname >>$log
+    expflags+="-nml=$nml -diag=$diag "
+    $locked && expflags+="-tdt=$tdtfile "
 
     # Run experiment (or just echo command for dryrun)
-    let np=cores*nodes
-    exp_run="./drycore_run $exp_dir $flags_global $flags -ts=$tstart -te=$tend -c=$np"
-    $dryrun && echo $exp_run && continue
+    exp_run="$rundir/run spectral $expdir $gflags $expflags"
+    $dryrun && cat $log && echo $exp_run && echo && continue
     # Logs
     echo "Log file: $log" # so can copy paste this
-    echo "Run flags: $flags_global"
+    echo "Run flags: $gflags $expflags"
     # On server
     # NOTE: Need the eval so the quotes in the -p argument are evaluated
     if ! $super; then
@@ -595,12 +575,12 @@ for param2 in ${params2[@]}; do
       if ! $testmode; then
         echo "Exit status: ${stat}"
         if $mail; then
-          printf "Experiment ${exp_name} finished with exit status ${stat}. The call signature was '${exp_run}'.\n\nThe logfile is pasted below.\n\n$(cat $log)\n\nThe namelist is pasted below.\n\n$(cat $exp_dir/input.nml)" \
-            | mail -s "${exp_name} status: ${stat}" lukelbd@gmail.com
+          printf "Experiment ${expname} finished with exit status ${stat}. The call signature was '${exp_run}'.\n\nThe logfile is pasted below.\n\n$(cat $log)\n\nThe namelist is pasted below.\n\n$(cat $expdir/input.nml)" \
+            | mail -s "${expname} status: ${stat}" lukelbd@gmail.com
         fi
       fi
       if [ $stat -ne 0 ]; then
-        echo "Warning: $exp_name integration failed."
+        echo "Warning: $expname integration failed."
         continue # keyboard interruption does not trigger this
       fi
     # On supercomputer, submit via qsub
@@ -608,11 +588,11 @@ for param2 in ${params2[@]}; do
     # NOTE: Use economy queue because I work at weird times, have never
     # really noticed big slowdowns or wait times
     else
-      ! [ -d jobs ] && mkdir jobs
+      [ -d jobs ] || mkdir jobs
       qsub <<EOF
 #!/usr/bin/env bash
 # Job name, account, email
-#PBS -N $exp_name
+#PBS -N $expname
 #PBS -A UCSU0071
 #PBS -M lukelbd@gmail.com
 #PBS -m ae
@@ -628,12 +608,11 @@ $exp_run &>>$log
 EOF
     fi
     # Wrap up
-    ! [ -d $HOME/data ] && mkdir $HOME/data
-    ! [ -d $HOME/data/forcing ] && mkdir $HOME/data/forcing
+    [ -d $HOME/data ] || mkdir $HOME/data
+    [ -d $HOME/data/forcing ] || mkdir $HOME/data/forcing
     unset flags
     let counter+=1
     cd $cwd # ensure are still in same directory
-    echo
   done
 done
 # echo # space

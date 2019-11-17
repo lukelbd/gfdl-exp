@@ -1,59 +1,60 @@
 #!/usr/bin/env bash
-################################################################################
-# NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
-# dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
-# to logarithmically sweep space. Existing directories have been moved to their
-# closest values in this new spacing. White lie, but probably insignificant differences.
-################################################################################
-# Error
-raise() {
-  echo "Error: $@" 1>&2
-  exit 1
-}
+usage='post_series [OPTION...] GLOB1 [GLOB2 ...]'
+doc="This script performs post-processing calculations using all experiments
+matching a quoted input glob pattern.
+
+Usage
+
+  $usage
+
+Required arguments
+
+  GLOB  The quoted glob pattern(s) for experiment directories for which we
+        want to process data.
+
+Optional arguments
+
+  -d    Dry run.
+  -p=*  Maximum number of parallel threads used to run ./post_run.
+  -f=*  The filename prefix sent to ./post_run. Defaults to '2xdaily_inst'.
+  -*    Extra flags passed to post_run.
+"
 # Processes files in directories matching some glob pattern
 shopt -s nullglob
 cwd=$(pwd)
 storage=$HOME/data
+raise() {
+  echo "Usage: $usage"
+  echo "Error: $@" 1>&2
+  exit 1
+}
 case ${HOSTNAME%%.*} in
   monde*)    scratches=(/mdata1/ldavis /mdata2/ldavis) ;;
   cheyenne*) scratches=/glade/scratch/davislu ;;
   *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
-! [ -d $storage ] && mkdir $storage
+[ -d $storage ] || mkdir $storage
 storage="$storage/timescales" # put in this subdirectory
-! [ -d $storage ] && mkdir $storage
+[ -d $storage ] || mkdir $storage
 
 # Command-line options
 pmax=1 # paralelization
-runmode=0 # 0 is control run, the rest are different spindown modes:
-rdays=100
 dryrun=false
 filename=2xdaily_inst
-climo_start=500
-climo_end=5500
-spin_start=0
-spin_end=9900 # just get all of them
 unset flags
 while [ $# -gt 0 ]; do
   case "$1" in
-    -d) dryrun=true ;;
+    -d)   dryrun=true ;;
     -p=*) pmax=${1#*=} ;;
     -f=*) filename=${1#*=} ;;
-    -r=*) rdays=${1#*=} ;; # restart day blocks
-    -m=*) runmode=${1#*=} ;;
-    -c1=*) climo_start=${1#*=} ;;
-    -c2=*) climo_end=${1#*=} ;;
-    -s1=*) spin_start=${1#*=} ;;
-    -s2=*) spin_end=${1#*=} ;;
-    -*) flags+="$1 " ;;
-    *)  globs+=("$1") ;;
+    -*)   flags+="$1 " ;;
+    *)    globs+=("$1") ;;
   esac
   shift
 done
 # Defaults
 post=$cwd/post_run
 $dryrun && post="echo $post"
-flags="$flags -r=$rdays -m=$runmode -c1=$climo_start -c2=$climo_end -s1=$spin_start -s2=$spin_end"
 echo "Using flags: $flags"
 
 # Iterate
@@ -73,7 +74,7 @@ for scratch in ${scratches[@]}; do
         echo
         echo "Experiment: \"${folder##*/}\"."
         dest="$storage/${folder##*/}" # saving processed data
-        ! [ -d "$dest" ] && mkdir $dest
+        [ -d "$dest" ] || mkdir $dest
 
         # Opionally run in parallel, or just linearly
         log=$folder/post.log

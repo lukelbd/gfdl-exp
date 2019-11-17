@@ -129,7 +129,9 @@ do i=0,dimsizes(varnames)-1
     ; currently on file
     delete(var&lat)
     delete(var&lon)
-    delete(var&time)
+    if any("time" .eq. getvardims(var)) then
+      delete(var&time)
+    end if
     if .not. any("mlev" .eq. getvardims(var)) then
       print("Variable " + qq + varname + qq + " does not have pressure levels.")
       o->$varname$ = var

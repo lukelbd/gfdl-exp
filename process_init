@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+usage="process_init"
+doc="This script is used to process the initial 1-second model run used
+for generating a NetCDF file of constants.
+
+Usage
+
+    $usage
+"
+# Initial stuff
+shopt -s nullglob
+source ${0%/*}/header.sh
+t0=$(date +%s) # starting time
+file=(*.nc)
+[ ${#file[@]} -eq 0 ] && raise 1 "Found no NetCDF files in directory $(pwd)."
+[ ${#file[@]} -gt 1 ] && raise 1 "Expected 1 NetCDF file in directory $(pwd), found ${#file[@]}: ${file[@]}."
+ncrename -h -d pfull,mlev $file
+ncrename -h -d phalf,ilev $file
+ncrename -h -v pfull,mlev $file
+ncrename -h -v phalf,ilev $file
+ncatted -h -O -a bounds,mlev,o,c,"ilev" $file
+
+# Interpolate and move $file to top-level of directory
+log=interp.log
+interp=${0%/*}/pressure_interp.ncl  # interpolate with NCL, automatic iteration
+[ -r ../$file ] && rm ../$file
+ncl -n -Q 'filename="'$file'"' 'output="../'$file'"' $interp &>$log
+sed -i '/^.*warning:.*$/d;/^$/d' $log
+if ! nclcheck $log || ! [ -r ../$file ]; then
+  raise 1 "Something failed during NCL interpolation of constants."
+fi
+echo "TOTAL ELAPSED TIME: $(($(date +%s) - t0))s."
