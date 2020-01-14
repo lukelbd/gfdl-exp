@@ -7,15 +7,15 @@
 # Calculate spectral data
 if false; then
   ./process_post -p=8 -s \
-    'hs_base[12]_*' 'hs_tgrad[12]_*' 'hs_katmos[12]-mean_*' 'hs_katmos[12]_*'
+    'hs_base[12]_*' 'hs_tgrad[12]_*' 'hs_tdamp[12]-mean_*' 'hs_tdamp[12]_*'
   exit $?
 fi
 # Basic runs
-# ./post_series -p=4 'hs_base[12]_*' 'hs_tmean[12]_*' 'hs_tgrad[12]_*' 'hs_katmos[12]-mean_*' 'hs_katmos[12]_*' \
+# ./post_series -p=4 'hs_base[12]_*' 'hs_tmean[12]_*' 'hs_tgrad[12]_*' 'hs_tdamp[12]-mean_*' 'hs_tdamp[12]_*' \
 #   -c1=500 -c2=3500 -cc -cci -cce
-# ./post_series 'hs_base[12]_*' 'hs_tmean[12]_*' 'hs_tgrad[12]_*' 'hs_katmos[12]-mean_*' 'hs_katmos[12]_*'\
+# ./post_series 'hs_base[12]_*' 'hs_tmean[12]_*' 'hs_tgrad[12]_*' 'hs_tdamp[12]-mean_*' 'hs_tdamp[12]_*'\
 #   -c1=500 -c2=1500 -eof -auto
-# ./post_series 'hs_katmos[12]-mean_*' 'hs_katmos[12]_*' \
+# ./post_series 'hs_tdamp[12]-mean_*' 'hs_tdamp[12]_*' \
 #   -c1=500 -c2=1500 -auto
 
 # Forcing experiments and bases, or locked runs
@@ -31,11 +31,11 @@ lock=''
 blopt='[12]'
 for flags in '-p=4 -ce'; do
   echo "Flags: $flags"
-  # "hs_katmos${blopt}-arctic*" "hs_katmos${blopt}-vortex*" "hs_katmos${blopt}-tropical*" \
-  # "hs_katmos${blopt}-global*" "hs_katmos${blopt}-surface*" \
+  # "hs_tdamp${blopt}-arctic*" "hs_tdamp${blopt}-vortex*" "hs_tdamp${blopt}-tropical*" \
+  # "hs_tdamp${blopt}-global*" "hs_tdamp${blopt}-surface*" \
   ./post_series \
-    "hs${blopt}${lock}_base_*" "hs${blopt}${lock}_katmos_*" \
-    "hs${blopt}${lock}_katmosmean_*" \
+    "hs${blopt}${lock}_base_*" "hs${blopt}${lock}_tdamp_*" \
+    "hs${blopt}${lock}_tdampmean_*" \
     "hs${blopt}${lock}_tgrad_*" \
     "hs${blopt}${lock}_tmean_*" \
     -c1=0 -c2=3500 $flags
@@ -49,5 +49,5 @@ done
 #   ./post_series \
 #     "hs_tmean_*" "hs_tgrad_*" \
 #     -c1=500 -c2=3500 $flags
-#     # "hs_katmos-tmean*" "hs_katmos-tgrad*" \
+#     # "hs_tdamp-tmean*" "hs_tdamp-tgrad*" \
 # done

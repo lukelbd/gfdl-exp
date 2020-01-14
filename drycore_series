@@ -30,16 +30,16 @@ Valid sweep specs
   In most cases, the number indicates the boundary layer option.
 
   base            Just run forcing scheme with default settings, once
-  katmos          Change tropospheric damping.
-  katmosmean      Change mean component of tropospheric damping.
+  tdamp           Change tropospheric damping.
+  tdampmean       Change mean component of tropospheric damping.
   tgrad           Change equator-pole teq difference.
   tmean           Change global mean surface teq.
   tshift          Shift teq meridional gradient poleward or equatorward
-  kfric           Change friction.
-  katmos-tgrad    Change both tropospheric damping and equator-pole eqtemp difference
-  katmos-tshift   Change both tropospheric damping and temp gradient shift
-  katmos-kfric    Change both friction and tropospheric damping.
-  kstrat          Change stratospheric damping; number is
+  fdamp           Change friction.
+  tdamp-tgrad     Change both tropospheric damping and equator-pole eqtemp difference
+  tdamp-tshift    Change both tropospheric damping and temp gradient shift
+  tdamp-fdamp     Change both friction and tropospheric damping.
+  tdampstrat      Change stratospheric damping; number is
                   troposphere-stratosphere damping transition option.
 
 Valid resolution specs
@@ -99,6 +99,7 @@ module load impi &>/dev/null
 module load nco &>/dev/null
 # module load ncl &>/dev/null # use conda versions instead, already on path
 # module load cdo/1.9.4 &>/dev/null
+
 # Default settings
 rdays=50
 nodes=1
@@ -120,10 +121,12 @@ ktend=0 # last day we keep XYZ data
 testmode=false
 testdays=5
 testblocks=5 # number of blocks of testdays
+
 # For supercomputer, idea will be to submit all jobs for the series
 # simultaneously, by auto-generating a PBS script
 super=false
 [[ $HOSTNAME =~ cheyenne* ]] && super=true
+
 # Parse input
 gflags="-p=$cwd/process_inline -pi=$cwd/process_init "
 while [ $# -gt 0 ]; do # echo "Flag: $1"
@@ -150,11 +153,13 @@ while [ $# -gt 0 ]; do # echo "Flag: $1"
   esac
   shift
 done
+
 # Default experiment series
 if [ -z "$series" ]; then
   echo "Warning: No experiment name specified. Running default experiment hs1_base_t42l20s."
   series='hs1_base_t42l20s'
 fi
+
 # Parse experiment series name
 # Also echo the critical parallelization info
 echo "Nodes: $nodes, Cores: $cores"
@@ -164,6 +169,7 @@ sweep="${sweep%%_*}"
 reso="${series#*_}"
 reso="${reso#*_}"
 reso="${reso%%_*}"
+
 # Forcing options, not part of the parameter sweep but representing
 # qualitative variations of the model forcing scheme
 locked=false
@@ -229,10 +235,11 @@ exp_name() {
   param1=$2
   param2=$3
   isweep=${1#*_}
-  isweep=${isweep%%_*} # e.g. katmos, tgrad
+  isweep=${isweep%%_*} # e.g. tdamp, tgrad
   [[ $param1 =~ : ]] && rparam1=${param1%:*} param1=${param1#*:}
   [[ $param2 =~ : ]] && rparam2=${param2%:*} param2=${param2#*:}
   [ -n "$rparam1" ] && [ -n "$rparam2" ] && raise "Cannot do 'diagonal' continuation experiments."
+
   # Detect whether this is a 'base' experiment. Experiment series can
   # 'intersect' each other, and this ensures we aren't duplicating model runs
   for p1 in $rparam1 $param1; do
@@ -246,45 +253,43 @@ exp_name() {
       suffix=${sweep#*-}
       fsweep=$isweep # by default, will be same
       # Params for this experiment name
-      # WARNING: Can get issues if e.g. go from katmos-tmean base state to
-      # pure tmean or katmos experiment. Never overwrite the 'p1' and 'p2' input
+      # WARNING: Can get issues if e.g. go from tdamp-tmean base state to
+      # pure tmean or tdamp experiment. Never overwrite the 'p1' and 'p2' input
       # parameters we are looping through.
       p1f=$p1
       p2f=$p2
       case $isweep in
         # 1D parameter sweeps, pretty simple
-        # TODO: Change katmos-mean and katmos-anom to katmosmean and katmosanom,
-        # then can run diagonal katmosmean experiments!
         base) p1f= p2f= ;;
-        katmos|katmosmean|katmosanom) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # base is 40 day zonal-mean or anomaly damping
         tgrad) [[ $p1 == 60 ]] && fsweep=base p1f= ;; # base is 60K contrast
         tmean) [[ $p1 == 300 ]] && fsweep=base p1f= ;; # base is 300K mean
-        kfric) [[ $p1 == 1 ]] && fsweep=base p1f= ;;
+        fdamp) [[ $p1 == 1 ]] && fsweep=base p1f= ;;
         tshift) [[ $p1 == 0 ]] && fsweep=base p1f= ;; # zero just means no shift
-        kstrat) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
+        tdampstrat) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
+        tdamp|tdampmean|tdampanom) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # base is 40 day zonal-mean or anomaly damping
         *) [ -z "$p2" ] && raise "Need second param for diagonal experiment."
         # True 'diagonal' experiments
         # WARNING: Order is important here! Have to detect 'base' experiments
         # before the other ones.
         case "$isweep" in # diagaonal experiment
-          katmos-tgrad)
-            [[ $p2 == 60 ]] && fsweep=katmos p2f=
+          tdamp-tgrad)
+            [[ $p2 == 60 ]] && fsweep=tdamp p2f=
             [[ $p1 == 40 ]] && fsweep=tgrad p1f=$p2 p2f=
             [[ $p1 == 40 && $p2 == 60 ]] && fsweep=base p1f= p2f=
             ;;
-          katmos-tmean)
-            [[ $p2 == 300 ]] && fsweep=katmos p2f=
+          tdamp-tmean)
+            [[ $p2 == 300 ]] && fsweep=tdamp p2f=
             [[ $p1 == 40 ]] && fsweep=tmean p1f=$p2 p2f=
             [[ $p1 == 40 && $p2 == 300 ]] && fsweep=base p1f= p2f=
             ;;
-          katmos-tshift)
-            [[ $p2 == 0 ]] && fsweep=katmos p2f=
+          tdamp-tshift)
+            [[ $p2 == 0 ]] && fsweep=tdamp p2f=
             [[ $p1 == 40 ]] && fsweep=tshift p1f=$p2 p2f=
             [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f= p2f=
             ;;
-          katmos-kfric)
-            [[ $p2 == 1 ]] && fsweep=katmos p2f=
-            [[ $p1 == 40 ]] && fsweep=kfric p1f=$p2 p2f=
+          tdamp-fdamp)
+            [[ $p2 == 1 ]] && fsweep=tdamp p2f=
+            [[ $p1 == 40 ]] && fsweep=fdamp p1f=$p2 p2f=
             [[ $p1 == 40 && $p2 == 1 ]] && fsweep=base p1f= p2f=
             ;;
           tgrad-tshift)
@@ -293,10 +298,10 @@ exp_name() {
             [[ $p1 == 60 && $p2 == 0 ]] && fsweep=base p1f= p2f=
             ;;
           # Forcing experiments
-          katmos-arctic|katmos-tropical|katmos-vortex|katmos-global|katmos-surface)
-            if [ -n "$rparam1" ] && [ -z "$exprestart" ]; then
-              [[ $p1 == 40 ]] && fsweep=base p1f= p2f= || fsweep=katmos p2f=
-            fi
+          tdamp-arctic|tdamp-tropical|tdamp-vortex|tdamp-global|tdamp-surface)
+            [[ $p2 == 0 ]] && fsweep=tdamp p2f=
+            [[ $p1 == 40 ]] && fsweep=${isweep#*-} p1f=$p2 p2f=
+            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f= p2f=
             ;;
           *) raise "Unknown sweep \"${isweep}\"." ;;
         esac
@@ -309,6 +314,7 @@ exp_name() {
       expname=${force}${forceopt}${lock}_${fsweep}_${reso}${p1f}${p2f}${contin}
     done
   done
+
   # Override
   if $locked; then
     expname=${expname%c} # ignore trailing c
@@ -353,7 +359,7 @@ exp_setup() {
     base) ;;
     tshift) exph=${params[0]} ;; # shift meridional temp gradient
     tmean) tmean=${params[0]} ;; # change mean surface temp
-    kfric) kfric=-${params[0]} ;; # change friction damping
+    fdamp) kfric=-${params[0]} ;; # change friction damping
 
     # Tgrad, and related diagonal experiments
     tgrad|tgrad-*)
@@ -368,21 +374,21 @@ exp_setup() {
       ;;
 
     # Damp full atmosphere, and related diagonal experiments
-    katmos|katmosmean|katmosanom|katmos-*|katmosmean-*|katmosanom-*)
+    tdamp|tdampmean|tdampanom|tdamp-*|tdampmean-*|tdampanom-*)
       ktrop=-${params[0]}
       # Mean and anomaly components
       case $sweep in
-        katmosmean) ktrop=-40,$ktrop ;;
-        katmosanom) ktrop=$ktrop,-40 ;;
+        tdampmean) ktrop=-40,$ktrop ;;
+        tdampanom) ktrop=$ktrop,-40 ;;
       esac
       # Diagonal experiments
       if [ $sweep != $suffix ]; then # i.e. experiment had a 'dash' in it
         [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
         case $suffix in # diagaonal experiment
+          fdamp) kfric=-${params[1]} ;;
           tgrad) delh=${params[1]} ;;
           tmean) tmean=${params[1]} ;;
           tshift) exph=${params[1]} ;;
-          kfric) kfric=-${params[1]} ;;
           global) q0_global=${params[1]} ;;
           surface) q0_surface=${params[1]} ;;
           arctic) q0_arctic=${params[1]} ;;
@@ -410,15 +416,15 @@ exp_setup() {
       ;;
 
     # Damp stratosphere
-    kstrat|kstratmean|kstratanom) # stratosphere damping experiments
+    tdampstrat|tdampmeanstrat|tdampanomstrat) # stratosphere damping
       # Get two parameters
       [ -z "${params[1]}" ] && raise "Need to specify transition depth as second parameter."
       kstrat=-${params[0]}
       kdepth=${params[1]} # param 2 is depth of transition region
       # Mean and anomaly components
       case "$name" in
-        kstratanom) kstrat=-40,$kstrat ;;
-        kstratmean) kstrat=$kstrat,-40 ;;
+        tdampanomstrat) kstrat=-40,$kstrat ;;
+        tdampmeanstrat) kstrat=$kstrat,-40 ;;
       esac
       # Whether to damp mesosphere more stronly
       # TODO: Add this as forcing scheme prefix? For now just fix to constant.
@@ -432,13 +438,21 @@ exp_setup() {
   nml=$expdir/input.nml
   nml_default=$rundir/input.nml
   cp $nml_default $nml # move over defaut
+
   # Forcing settings
-  nml_replace $nml teq_mode "'$force'" damp_mode "'$force'" strat_damp "'$damp'"
-  nml_replace $nml delh "$delh" t_mean "$tmean" exp_h "$exph" # equilibrium temp stuff
-  nml_replace $nml ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping stuff
-  nml_replace $nml q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex" q0_global "$q0_global" q0_surface "$q0_surface" # global constant forcing
+  nml_replace $nml \
+    teq_mode "'$force'" damp_mode "'$force'" strat_damp "'$damp'"
+  nml_replace $nml \
+    delh "$delh" t_mean "$tmean" exp_h "$exph" # equilibrium temp stuff
+  nml_replace $nml \
+    ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping stuff
+  nml_replace $nml \
+    q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex" q0_global "$q0_global" q0_surface "$q0_surface" # global constant forcing
+
   # Timing variables, not experiment dependent so far
-  nml_replace $nml dt_atmos "$dt" days "$rdays"
+  nml_replace $nml \
+    dt_atmos "$dt" days "$rdays"
+
   # Horizontal coordinates
   ntrunc=${reso%l*}
   ntrunc=${ntrunc#t}
@@ -454,6 +468,7 @@ exp_setup() {
   nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
   nlon=$(($nlat * 2)) # always twice the res
   nml_replace $nml num_fourier "$ntrunc" num_spherical "$nsphere" lat_max "$nlat" lon_max "$nlon"
+
   # Now vertical resolution options
   # Will raise error if string-specifier is unknown
   vert=${reso#*l}
@@ -468,6 +483,7 @@ exp_setup() {
     [ -r "$levels" ] || raise "File \"$levels\" not found."
     cat $levels >>$nml
   fi
+
   # Print nicely formatted message showing the things we changed
   nml_clean $nml
   nml_print
