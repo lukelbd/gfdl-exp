@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# shellcheck disable=2206,2068,2086
+#-----------------------------------------------------------------------------#
+# Get model and processing runtimes
+#-----------------------------------------------------------------------------#
+# name=hs_base_t106l60e
+cwd=$(pwd)
+log=$cwd/${0%_log}.log
+rm $log 2>/dev/null
+
+# Input args
+name=$1
+# [ -z "$1" ] && name="*t95l60e*"
+[ -z "$1" ] && name="*t42l20s*"
+
+# Iterate through patterns
+# globs=(~/scratch/$name)
+globs=(~/scratch1/$name)
+for dir in ${globs[@]}; do
+  cd $dir || continue
+  echo "Dir: $dir" | tee -a $log
+  sleep 3
+
+  # Parse model runtimes
+  folders=(d????-d????)
+  for folder in ${folders[@]}; do
+    mlog=$folder/model.log  # new style
+    [ -r $mlog ] || mlog=$folder/log.model  # old style
+    [ -r $mlog ] || continue
+    tmodel=$(cat $mlog | grep 'Total runtime*' | xargs | cut -d ' ' -f 5)
+    [ -z "$tmodel" ] && tmodel='XXX (interrupted)'
+    echo "    $folder model time: $tmodel" &>> $log
+  done
+
+  # And processing times
+  for folder in ${folders[@]}; do
+    plog=$folder/process.log
+    [ -r $plog ] || plog=$folder/log.process  # old style
+    [ -r $plog ] || continue
+    tprocess=$(tail -1 $plog | sed 's/[^0-9]*//g')
+    [ -z "$tprocess" ] && tprocess='XXX (interrupted)'
+    echo "    $folder processing time: $tprocess" &>> $log
+  done
+done

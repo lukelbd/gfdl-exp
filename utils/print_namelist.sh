@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 #------------------------------------------------------------------------------#
-# Checks namelist params
+# Print the forcing parameter magnitudes from the experiment namelists. And
+# only print the *initial* day or when it is *changed* from a preceding day.
 # NOTE: Can extend this to checking any param, but for now is specalized
 # to just check forcing params
 #------------------------------------------------------------------------------#
 shopt -s nullglob
-globs='hs*' # all experiments
 root=(/mdata1/ldavis /mdata2/ldavis)
 forcings=(arctic tropical vortex)
-# for glob in "${globs[@]}"; do
 for forcing in ${forcings[@]}; do
   for base in ${root[@]}; do
     for dir in $base/*$forcing*; do

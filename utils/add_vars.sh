@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# NOTE: This file adds simple stuff that can just be calculated
-# from the summary file alone!
 # Iterate through a bunch of glob patterns
 # in the scratch directory
 source ../header.sh
-repair=./add_repair2.ncl
+repair=./add_repair.ncl
 case ${HOSTNAME%%.*} in
   monde)
     scratch=/mdata1/ldavis
@@ -12,10 +10,12 @@ case ${HOSTNAME%%.*} in
     scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
   ;; *) echo "Error: Unknown host, must edit batch script before continuing." && exit 1 ;;
 esac
+
 # Loop
-globs=('*t95l60e*')
 # globs=('*troprad3*p0020*')
-dayglob='3600'
+log=add_vars.log
+globs=('*t95l60e*')
+dayglob=3600
 for glob in "${globs[@]}"; do
   for dir in $scratch/$glob; do
     echo "Dir: ${dir##*/}"
@@ -25,8 +25,8 @@ for glob in "${globs[@]}"; do
       if [ -z "$dayglob" ] || [[ ${filename##*/} =~ "$dayglob" ]]; then
         # output=${filename%.nc}_tmp.nc # try again
         # [ -r $output ] && rm $output
-        ncl "filename=\"$filename\"" $repair 2>&1 | tee log.fix #2> /dev/null
-        nclcheck log.fix
+        ncl "filename=\"$filename\"" $repair 2>&1 | tee $log #2> /dev/null
+        nclcheck $log
         [ $? -eq 0 ] && echo "Error: Failed." && exit 1
       fi
     done
