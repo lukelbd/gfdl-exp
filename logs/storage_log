@@ -5,9 +5,10 @@ shopt -s nullglob
 #------------------------------------------------------------------------------#
 log=${0%_log}.log
 root=~/data/timescales
-prefix=2xdaily
+prefix=2xdaily_inst_
 rm $log 2>/dev/null
-globs=("*t42l20s*" "*t42l10s*")
+globs=("$@")
+[ "${#globs[@]}" -eq 0 ] && globs=("*t42l20s*")
 for glob in "${globs[@]}"; do
   for folder in $root/$glob; do
     # Get params corresponding to that parameter series
@@ -26,19 +27,26 @@ for glob in "${globs[@]}"; do
       params="$(echo $params | tr p ' ' | sed 's/ 0*/ /g' | sed 's/ \./ 0./g' | xargs | sed 's/ /, /g')"
     fi
     echo $params &>> $log # parameters
+
     # Print if file available
-    unset message
-    for file in forcing autocorr climate climate_isen spectral spectral_phase eofs_nh eofs_nh_vert energy; do
     # for file in autocorr; do
-      if [ $file == forcing ]; then
-        ncfile=($folder/*${file}*.nc)
+    unset message
+    for suffix in \
+        constants \
+        autocorr \
+        climate climate_isen \
+        series spectral spectral_phase \
+        eofs_nh eofs_nh_vert \
+        energy; do
+      if [ $suffix == constants ]; then
+        ncfiles=($folder/${suffix}.nc*)
       else
-        ncfile=($folder/${prefix}*${file}*.nc)
+        ncfiles=($folder/${prefix}${suffix}.*.nc)
       fi
-      for ncf in ${ncfile[@]}; do
-        name=${ncf%.nc}
-        name=${ncf##*/}
-        message+="$name: $(date -u -r $ncf)\n"
+      for ncfile in ${ncfiles[@]}; do
+        name=${ncfile%.nc}
+        name=${ncfile##*/}
+        message+="$name $(du -h "$ncfile" | awk '{print $1}') $(date -u -r $ncfile)\n"
       done
     done
     printf "$message" | column -t -o' ' | awk '{print "    "$0}' &>> $log

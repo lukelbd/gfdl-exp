@@ -10,21 +10,23 @@ data=~/data
 dryrun=true
 datas=false  # remove unmatching data directories?
 days=false  # delete days that don't match?
-files=false  # remove files?
+files=true  # remove files in storage?
 folders=false  # remove folders?
 spectral=true
 
 # Glob patterns
 # files=('*energy*d0500*' '*_energy.*')
-# files=('4xdaily*')
+# files=('*series.nc')
 paths=('*global*p0[40]0[40].000p*' '*surface*p0[40]0[40].000p*' '*arctic*p0[40]0[40].000p*' '*tropical*p0[40]0[40].000p*' '*vortex*p0[40]0[40].000p*' '*katmos*tmean*p0[40]0[40].000p*' '*katmos*tgrad*p0[40]0[40].000p*')  # r and 40
 paths=('*_katmos?-tgrad*0' '*_katmos?-tmean*0')  # non continuation
 paths=('*vortex*0' '*arctic*0' '*tropical*0' '*xco2*0' '*global*0')
 paths=('*2xdaily_inst_spectral.nc' '*2xdaily_inst_spectral_phase.nc')
+paths=('*2xdaily_inst_series.nc')
 
 # Spectral
 if $spectral; then
-  for dir in $root/hs*; do
+  # for dir in $root/hs*; do
+  for dir in $root/hs2*tdampmean*; do
     for file in $dir/netcdf/*spectral*; do
       echo "rm ${dir##*/}/netcdf/${file##*/}"
       $dryrun || rm $file

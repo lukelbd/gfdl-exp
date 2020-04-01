@@ -19,21 +19,27 @@ root=(~/scratch*)
 # non-existent paths!
 for src in ${root[@]} ${data[@]}; do
   echo "Source: $src"
-  for name in $(find -L $src -mindepth 1 -maxdepth 3 -type d -or -type f); do
+  for name in $(find -L $src -mindepth 1 -maxdepth 1 -type d -or -type f); do
+  # for name in $(find -L $src -mindepth 1 -maxdepth 3 -type d -or -type f); do
     # Info
     dir=${name%/*}
     name=${name##*/}
     unset dest
     case $name in
+        # Lower case
+        hs1C*|hs1L*)
+        dest=${name,,}
+      ;;
+
       # Rename d????-d???? to d?????-d?????
-      *d????-d????*)  # includes folder *and* files
-        prefix=${name%d????-d????*}
-        suffix=${name#*d????-d????}
-        daystring=${name#$prefix}
-        daystring=${daystring%$suffix}
-        daystring=${daystring//d/d0}  # need to be careful not to replace extra d's
-        dest=${prefix}${daystring}${suffix}
-        ;;
+      # *d????-d????*)  # includes folder *and* files
+      #   prefix=${name%d????-d????*}
+      #   suffix=${name#*d????-d????}
+      #   daystring=${name#$prefix}
+      #   daystring=${daystring%$suffix}
+      #   daystring=${daystring//d/d0}  # need to be careful not to replace extra d's
+      #   dest=${prefix}${daystring}${suffix}
+      #   ;;
 
       # Rename katmos, katmosmean, tdampmean to tdamp and tdampmean
       # *katmos*)

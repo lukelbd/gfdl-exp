@@ -4,7 +4,7 @@
 # directory.
 #------------------------------------------------------------------------------#
 shopt -s nullglob
-names=($@) # remember $@ is special, nothing gets expanded
+names=("$@")
 forcing=(arctic tropical vortex global surface)
 roots=(~/scratch*)  # put symlinks to scratch in home directory
 [ -z "$1" ] && names=("hs[12]_*")
@@ -83,11 +83,11 @@ for root in ${roots[@]}; do
 
     # Get day range for folders
     unset -v message
-    dd=($(message d????-d????))
+    dd=($(message d?????-d?????))
 
     # Get day range for files
     for suffix in full summary full_isen summary_isen spectral; do
-      fd=($(message netcdf/${prefix}_${suffix}.d????-d????.nc))
+      fd=($(message netcdf/${prefix}_${suffix}.d?????-d?????.nc))
       if [ ${fd[1]} -gt 0 ]; then
         message+=", ${suffix}: ${fd[0]}-${fd[1]}"
       fi

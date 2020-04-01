@@ -10,7 +10,7 @@ roots=(~/scratch*)  # symlinks to scratch
 
 # Relevant naemlist parameters
 nmlvalues() {
-  cat "$1" | grep -E 'ktrop|kbl|delh'  | xargs
+  cat "$1" | grep -E 'ktrop|kbl|delh|do_energy_correction'  | xargs
 }
 
 # Netcdf tools
@@ -70,9 +70,9 @@ for root in ${roots[@]}; do
 
     # Loop through days
     unset day1 day2 vars1 vars2 params1 params2
-    pday1=0000
-    vday1=0000
-    ddirs=($path/d????-d????)
+    pday1=00000
+    vday1=00000
+    ddirs=($path/d?????-d?????)
     ndays=${#ddirs[@]}
     for i in $(seq 1 $ndays); do
       # Get summary file and namelist file

@@ -1,0 +1,87 @@
+Root: /home/ldavis/scratch1
+
+Series: hs1n_tdamp-tropical_t42l20s
+
+10.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -1.000, ktrop = -10.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+20.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -2.000, ktrop = -20.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+60.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -6.000, ktrop = -60.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+100.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -10.000, ktrop = -100.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs1n_tropical_t42l20s
+
+0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -4.0, ktrop = -40.0,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs1_tdamp-tropical_t42l20s
+
+10.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -1.000, ktrop = -10.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+20.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -2.000, ktrop = -20.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+60.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -6.000, ktrop = -60.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+100.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -10.000, ktrop = -100.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs1_tropical_t42l20s
+
+0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -4.000, ktrop = -40.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs2n_tdamp-tropical_t42l20s
+
+10.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -10.000, ktrop = -10.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+20.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -20.000, ktrop = -20.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+60.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -60.000, ktrop = -60.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+100.000, 0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -100.000, ktrop = -100.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs2n_tropical_t42l20s
+
+0.500c
+  d00000-d03500: do_energy_correction = .false., delh = 60.0, kbl = -40, ktrop = -40.0,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs2_tdamp-tropical_t42l20s
+
+10.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -10.000, ktrop = -10.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+20.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -20.000, ktrop = -20.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+60.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -60.000, ktrop = -60.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+100.000, 0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -100.000, ktrop = -100.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Series: hs2_tropical_t42l20s
+
+0.500c
+  d00000-d03500: do_energy_correction = .true., delh = 60., kbl = -40.000, ktrop = -40.000,
+  d00000-d03500: ckekm cpeke cpmkm cpmpe dke dkm ehf emf gpe gpm ke ke_clinic ke_tropic km km_clinic km_tropic omega pe pm slp t tdt tvar u udt uvar v vdt vvar
+
+Root: /home/ldavis/scratch2
