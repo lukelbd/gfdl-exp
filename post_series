@@ -15,9 +15,9 @@ Required arguments
 Optional arguments
 
   -d    Dry run.
-  -p=*  Maximum number of parallel threads used to run ./post_run.
-  -f=*  The filename prefix sent to ./post_run. Defaults to '2xdaily_inst'.
-  -*    Extra flags passed to post_run.
+  -p=*  Maximum number of parallel threads used to run ./post_experiment.
+  -f=*  The filename prefix sent to ./post_experiment. Defaults to '2xdaily_inst'.
+  -*    Extra flags passed to post_experiment.
 "
 # Processes files in directories matching some glob pattern
 shopt -s nullglob
@@ -25,13 +25,13 @@ cwd=$(pwd)
 storage=$HOME/data
 raise() {
   echo "Usage: $usage"
-  echo "Error: $@" 1>&2
+  echo "Error: $*" 1>&2
   exit 1
 }
 case ${HOSTNAME%%.*} in
-  monde*)    scratches=(/mdata1/ldavis /mdata2/ldavis) ;;
-  cheyenne*) scratches=/glade/scratch/davislu ;;
-  *) raise "Unknown host, must edit batch script before continuing." ;;
+  cheyenne*) scratches=(/glade/scratch/davislu) ;;
+  monde*) scratches=(/mdata1/ldavis) ;;
+  *) raise "Unknown host. Please edit this script before continuing." ;;
 esac
 [ -d $storage ] || mkdir $storage
 storage="$storage/timescales" # put in this subdirectory
@@ -44,6 +44,7 @@ filename=2xdaily_inst
 unset flags
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h)   echo "$doc"; exit 0; ;;
     -d)   dryrun=true ;;
     -p=*) pmax=${1#*=} ;;
     -f=*) filename=${1#*=} ;;
@@ -52,10 +53,10 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
 # Defaults
-post=$cwd/post_run
+post=$cwd/post_experiment
 $dryrun && post="echo $post"
-echo "Using flags: $flags"
 
 # Iterate
 # NOTE: May get 'different parameter names' cdo warnings; this generally means
@@ -67,6 +68,7 @@ for scratch in ${scratches[@]}; do
   subfolders=($scratch $scratch/timescales-*) # subfolders contain some older experiment series
   for subfolder in ${subfolders[@]}; do
     for glob in "${globs[@]}"; do
+      echo "Glob: $glob"
       unset folder
       for folder in $subfolder/$glob; do
         # Run stuff; will generate individual logs for each 'type' of
@@ -77,26 +79,26 @@ for scratch in ${scratches[@]}; do
         [ -d "$dest" ] || mkdir $dest
 
         # Opionally run in parallel, or just linearly
-        log=$folder/post.log
-        echo "Log file: $log"
         echo "Flags: $flags"
         if [ $pmax -eq 1 ]; then
-          $post "$filename" "$folder" "$dest" $flags
-          [ $? -ne 0 ] && raise "A post-processing step failed."
+          $post "$filename" "$folder" "$dest" $flags \
+            || echo "A post-processing step failed."
+            # || raise "A post-processing step failed."
         else
-          # $post "$filename" "$folder" "$dest" $flags &>$log &
+          # $post "$filename" "$folder" "$dest" $flags &
           $post "$filename" "$folder" "$dest" $flags &
           pids+=($!) # record process
         fi
 
         # Crude parallelization across multiple experiments
         if [ $pmax -ne 1 ]; then
-          let counter+=1
+          counter=$((counter + 1))
           if [ $((counter % pmax)) -eq 0 ]; then
-            echo "Waiting for processes: ${pids[@]}."
+            echo "Waiting for processes: ${pids[*]}."
             for pid in ${pids[@]}; do
-              wait $pid
-              [ $? -ne 0 ] && raise "A post-processing step failed."
+              wait $pid \
+                || echo "A post-processing step failed."
+                # || raise "A post-processing step failed."
             done
             echo "Elapsed time: $(($(date +%s) - t))s."
             t=$(date +%s)
