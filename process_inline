@@ -30,6 +30,7 @@ nsplit=0
 dir=$(pwd)
 while [ $# -gt 0 ]; do
   case $1 in
+    -h) echo "$doc"; exit 0 ;;
     -q) echo "Skipping processing." && exit 0 ;;
     -c) echo "Only combining files." && combine=true ;;
     -d) debug=true    ;;
