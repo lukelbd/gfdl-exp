@@ -5,7 +5,7 @@
 # to logarithmically sweep space. Existing directories have been moved to their
 # closest values in this new spacing. White lie, but probably insignificant differences.
 ################################################################################
-usage='drycore_series [OPTION...] "FORCING_SWEEP_RESOLUTION" --1=[prev:]value[,...] [--2=[prev:]value[,...]] '
+usage='run_series [OPTION...] "FORCING_SWEEP_RESOLUTION" --1=[prev:]value[,...] [--2=[prev:]value[,...]] '
 doc="This script runs a parameter sweep for the given input series and
 list(s) of parameters, using the 'run' script. It generates standardized
 folder names and can modify the namelist and diag_table for the parameters
@@ -17,61 +17,71 @@ Usage
 
 Valid forcing specs
 
-  The number indicates the boundary layer damping approach: 1 is constant
-  everywhere, 2 employs faster damping, and 'L' stands for 'locked'. Note that
-  this script trims the suffix, and the model actually expects just those strings.
+  hs[12][nlc]     Held and Suarez, 1994
+  pk[12][nlc]     Polvani and Kushner, 2004
+  pkmod[12][nlc]  Polvani and Kushner with modified coords
 
-  hs[12][LC]     Held and Suarez, 1994
-  pk[12][LC]     Polvani and Kushner, 2004
-  pkmod[12][LC]  Polvani and Kushner with modified coords
+  The number indicates the boundary layer damping approach:
+
+  * 1 is faster damping in boundary layer.
+  * 2 is constant damping everywhere.
+
+  The flags control other optional forcing settings:
+
+  * n stands for [n]o conserve energy, i.e. allow total energy to change.
+  * l stands for [l]ocked heating, continuing from the previous experiment.
+  * c stands for [c]old start locked heating, which is the same as 'l'
+    except the model is initiated from a cold start.
+
+  Note that the forcing scheme is specified in the model namelist with only
+  the first part of these strings.
+
 
 Valid sweep specs
 
-  In most cases, the number indicates the boundary layer option.
+  This is simply one of the following strings:
 
-  base            Just run forcing scheme with default settings, once
+  base            Model run with default HS94 settings.
   tdamp           Change tropospheric damping.
   tdampmean       Change mean component of tropospheric damping.
+  tdampstrat      Change stratospheric damping.
   tgrad           Change equator-pole teq difference.
   tmean           Change global mean surface teq.
   tshift          Shift teq meridional gradient poleward or equatorward
   fdamp           Change friction.
   tdamp-tgrad     Change both tropospheric damping and equator-pole eqtemp difference
   tdamp-tshift    Change both tropospheric damping and temp gradient shift
-  tdamp-fdamp     Change both friction and tropospheric damping.
-  tdampstrat      Change stratospheric damping; number is
-                  troposphere-stratosphere damping transition option.
 
 Valid resolution specs
 
-  A string with the format 't[XX]l[YY][spe]'
+  A string with the format t[XX]l[YY][spe], where XX is the trunction number
+  and YY is the vertical level count. The suffix is a single character
+  controlling the level spacing configuration:
 
-  * XX is truncation number.
-  * YY is vertical level count.
-  * Suffix is one character controlling level spacing type:
-    * evenly-spaced [s]igma levels
-    * unevenly-spaced [p]olvani and kushner sigma levels
-    * [e]ra-interim hybrid levels, specified by namelist named
-      levels_ecwmf_{YY}.nml in source directory
+  * Evenly spaced [s]igma levels.
+  * Unevenly spaced [p]olvani and kushner sigma levels.
+  * [e]RA Interim hybrid levels, specified by namelist named
+    levels_ecwmf_{YY}.nml in source directory.
 
 Valid parameter specs
 
-  Passed with the flags --1=[prev:]value[,...] [--2=[prev:]value[,...]]
+  Passed with the flags: --1=[prev:]value[,...] [--2=[prev:]value[,...]]
 
-  * --1 is the first parameter for the sweep spec, and --2 is the optional
-    second parameter, if this is a diagonal sweep.
-  * To run from the end of a *previous* run in the same experiment series,
-    use --1=prev:value, e.g. --1=20,40,40:100,100:200.
-  * The experiment directory names will be 'force_sweep_resolution_p[XXX][p[YYY]]'
-    for parameter 1 XXX and parameter 2 YYY Directories are renamed if
-    specified parameters correspond to the 'base' HS94 values.
+  --1 is the first parameter for the sweep spec, and --2 is the optional
+  second parameter, if this is a diagonal sweep. To run from the end of a
+  *previous* run in the same experiment series, use --1=prev:value,
+  e.g. --1=20,40,40:100,100:200. The experiment directory names will be
+  'force_sweep_resolution_p[XXX][p[YYY]]' for parameter 1 XXX and parameter
+  2 YYY. Directories are renamed if the specified parameters correspond to
+  the 'base' HS94 values.
 
 Optional arguments
 
+  -*                    Unknown flags passed to run script.
   -h|--help             Print this message.
   -t|--test             Run quick test, just a few days, maybe 3 restarts.
-  -i|--init             Just run model to get a forcing.nc file.
   -s|--save             Save thermal damping tendency tdt for every run?
+  -d|--dryrun           A dry run.
   [-c|--cores]=*        Number of cores.
   [-n|--nodes]=*        Number of nodes, if this is a supercomputer.
   [-d|--days]=*         Number of days.
@@ -82,9 +92,12 @@ Optional arguments
   [-te|--tend]=*        Final day.
   [-kts|--ktstart]=*    Initial day where we start keeping full-res data.
   [-kte|--ktend]=*      Final day that we keep full-res data.
-  -*                    Unknown flags passed to run script.
 "
-# Notes
+# TODO: Specify *parameters* from which continuation was carried
+# out with filename that look like: hs1_tdamp_t42l20s_p0040.000:0100.000
+# Maybe not important though because there is *always* ambiguity, e.g.
+# from which day continuation run began.
+# NOTE:
 # * Really can't push CFL number! Shoot for around 0.5. Got almost instant
 #   model blow up at 1200s with T106, since upper-level winds probably get to
 #   around 100m/s (about 200mph)
@@ -93,8 +106,7 @@ Optional arguments
 rundir=$HOME/gfdl-fms/exp # model folder for namelists and stuff
 source $rundir/header.sh
 cwd=${0%/*}
-cd $cwd
-[ $? -ne 0 ] && echo "Error: Header file not found." && exit 1
+cd "$cwd" || raise 1 "Header file not found."
 module load impi &>/dev/null
 module load nco &>/dev/null
 # module load ncl &>/dev/null # use conda versions instead, already on path
@@ -162,6 +174,7 @@ fi
 
 # Parse experiment series name
 # Also echo the critical parallelization info
+echo
 echo "Nodes: $nodes, Cores: $cores"
 force="${series%%_*}"
 sweep="${series#*_}"
@@ -171,13 +184,18 @@ reso="${reso#*_}"
 reso="${reso%%_*}"
 
 # Forcing options, not part of the parameter sweep but representing
-# qualitative variations of the model forcing scheme
+# qualitative variations of the model forcing scheme.
 locked=false
-[[ "$force" =~ L$ ]] && force="${force%L}" lock=L cold=false
-[[ "$force" =~ C$ ]] && force="${force%C}" lock=C cold=true
-[[ "$force" =~ [0-9]$ ]] || raise "Forcing spec must end with a number, indicating the boundary layer damping option."
-[ -n "$lock" ] && locked=true savetdt=false
-forceopt=${force##*[a-z]} # get number
+conserve=true
+fopts=${force#*[0-9]}
+force=${force%${fopts}}
+unknown=${fopts}  # track unknown option
+[ -z "$force" ] && raise "Forcing spec must end with a number, indicating the boundary layer damping option."  # e.g. empty
+[[ "$fopts" =~ n ]] && unknown=${unknown/n/} conserve=false
+[[ "$fopts" =~ l ]] && unknown=${unknown/l/} cold=false locked=true savetdt=false
+[[ "$fopts" =~ c ]] && unknown=${unknown/c/} cold=true locked=true savetdt=false
+[ -n "$unknown" ] && raise "Unknown forcing spec options '$unknown'. Valid options are [lcn]."
+blopt=${force##*[a-z]} # get number
 force=${force%[0-9]}
 
 # Run really fast test run
@@ -185,8 +203,8 @@ if $testmode; then
   # exprestart="${force}_base2_t95l60e" # override previous directory
   gflags+=' -d'
   outfreq=12
-  frequnits=hours
-  filename=test
+  frequnits='hours'
+  filename='test'
   rdays=$testdays
   tstart=0
   tend=$((testdays * testblocks))
@@ -231,7 +249,7 @@ exp_name() {
   # NOTE: Cannot have "diagonal" continuation experiments, they should always
   # be from an adjacent run in a linear the experiment series.
   local p1 p2 p1f p2f param1 param2 rparam1 rparam2 contin
-  local isweep fsweep prefix suffix
+  local isweep fsweep suffix
   param1=$2
   param2=$3
   isweep=${1#*_}
@@ -245,13 +263,17 @@ exp_name() {
   for p1 in $rparam1 $param1; do
     for p2 in $rparam2 $param2; do
       # Continuation experiments get a special suffx
-      [ -n "$expname" ] && exprestart="$expname" contin=c
+      # NOTE: For now no-conserve-energy experiments are only forcing
+      # experiments, and always want to continue from energy-conserving
+      # control experiments. So always continue from "raw" experiment name.
+      [ -n "$expname" ] && exprestart="$expraw" contin=c
+
       # Get experiment sweep name, *ensuring that we avoid duplicating runs
       # by deferring to different names when possible*
       # TODO: Add to these.
-      prefix=${sweep%-*}
       suffix=${sweep#*-}
       fsweep=$isweep # by default, will be same
+
       # Params for this experiment name
       # WARNING: Can get issues if e.g. go from tdamp-tmean base state to
       # pure tmean or tdamp experiment. Never overwrite the 'p1' and 'p2' input
@@ -260,48 +282,48 @@ exp_name() {
       p2f=$p2
       case $isweep in
         # 1D parameter sweeps, pretty simple
-        base) p1f= p2f= ;;
-        tgrad) [[ $p1 == 60 ]] && fsweep=base p1f= ;; # base is 60K contrast
-        tmean) [[ $p1 == 300 ]] && fsweep=base p1f= ;; # base is 300K mean
-        fdamp) [[ $p1 == 1 ]] && fsweep=base p1f= ;;
-        tshift) [[ $p1 == 0 ]] && fsweep=base p1f= ;; # zero just means no shift
-        tdampstrat) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
-        tdamp|tdampmean|tdampanom) [[ $p1 == 40 ]] && fsweep=base p1f= ;; # base is 40 day zonal-mean or anomaly damping
+        base) p1f='' p2f='' ;;
+        tgrad) [[ $p1 == 60 ]] && fsweep=base p1f='' ;; # base is 60K contrast
+        tmean) [[ $p1 == 300 ]] && fsweep=base p1f='' ;; # base is 300K mean
+        fdamp) [[ $p1 == 1 ]] && fsweep=base p1f='' ;;
+        tshift) [[ $p1 == 0 ]] && fsweep=base p1f='' ;; # zero just means no shift
+        tdampstrat) [[ $p1 == 40 ]] && fsweep=base p1f='' ;; # always use classic Held-Suarez for these, i.e. non-constant boundary layer damping
+        tdamp|tdampmean|tdampanom) [[ $p1 == 40 ]] && fsweep=base p1f='' ;; # base is 40 day zonal-mean or anomaly damping
         *) [ -z "$p2" ] && raise "Need second param for diagonal experiment."
         # True 'diagonal' experiments
         # WARNING: Order is important here! Have to detect 'base' experiments
         # before the other ones.
         case "$isweep" in # diagaonal experiment
           tdamp-tgrad)
-            [[ $p2 == 60 ]] && fsweep=tdamp p2f=
-            [[ $p1 == 40 ]] && fsweep=tgrad p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 60 ]] && fsweep=base p1f= p2f=
+            [[ $p2 == 60 ]] && fsweep=tdamp p2f=''
+            [[ $p1 == 40 ]] && fsweep=tgrad p1f=$p2 p2f=''
+            [[ $p1 == 40 && $p2 == 60 ]] && fsweep=base p1f='' p2f=''
             ;;
           tdamp-tmean)
-            [[ $p2 == 300 ]] && fsweep=tdamp p2f=
-            [[ $p1 == 40 ]] && fsweep=tmean p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 300 ]] && fsweep=base p1f= p2f=
+            [[ $p2 == 300 ]] && fsweep=tdamp p2f=''
+            [[ $p1 == 40 ]] && fsweep=tmean p1f=$p2 p2f=''
+            [[ $p1 == 40 && $p2 == 300 ]] && fsweep=base p1f='' p2f=''
             ;;
           tdamp-tshift)
-            [[ $p2 == 0 ]] && fsweep=tdamp p2f=
-            [[ $p1 == 40 ]] && fsweep=tshift p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f= p2f=
+            [[ $p2 == 0 ]] && fsweep=tdamp p2f=''
+            [[ $p1 == 40 ]] && fsweep=tshift p1f=$p2 p2f=''
+            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f='' p2f=''
             ;;
           tdamp-fdamp)
-            [[ $p2 == 1 ]] && fsweep=tdamp p2f=
-            [[ $p1 == 40 ]] && fsweep=fdamp p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 1 ]] && fsweep=base p1f= p2f=
+            [[ $p2 == 1 ]] && fsweep=tdamp p2f=''
+            [[ $p1 == 40 ]] && fsweep=fdamp p1f=$p2 p2f=''
+            [[ $p1 == 40 && $p2 == 1 ]] && fsweep=base p1f='' p2f=''
             ;;
           tgrad-tshift)
-            [[ $p2 == 0 ]] && fsweep=tgrad p2f=
-            [[ $p1 == 60 ]] && fsweep=tshift p1f=$p2 p2f=
-            [[ $p1 == 60 && $p2 == 0 ]] && fsweep=base p1f= p2f=
+            [[ $p2 == 0 ]] && fsweep=tgrad p2f=''
+            [[ $p1 == 60 ]] && fsweep=tshift p1f=$p2 p2f=''
+            [[ $p1 == 60 && $p2 == 0 ]] && fsweep=base p1f='' p2f=''
             ;;
           # Forcing experiments
-          tdamp-arctic|tdamp-tropical|tdamp-vortex|tdamp-global|tdamp-surface)
-            [[ $p2 == 0 ]] && fsweep=tdamp p2f=
-            [[ $p1 == 40 ]] && fsweep=${isweep#*-} p1f=$p2 p2f=
-            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f= p2f=
+          tdamp-arctic|tdamp-tropical|tdamp-vortex|tdamp-global|tdamp-surface|tdamp-realistic)
+            [[ $p2 == 0 ]] && fsweep=tdamp p2f=''
+            [[ $p1 == 40 ]] && fsweep=${isweep#*-} p1f=$p2 p2f=''
+            [[ $p1 == 40 && $p2 == 0 ]] && fsweep=base p1f='' p2f=''
             ;;
           *) raise "Unknown sweep \"${isweep}\"." ;;
         esac
@@ -311,20 +333,21 @@ exp_name() {
       [ "$p2f" == 'na' ] && unset -v p2f
       [ -n "$p1f" ] && p1f="_p$(printf "%08.3f" $p1f)"
       [ -n "$p2f" ] && p2f="p$(printf "%08.3f" $p2f)"
-      expname=${force}${forceopt}${lock}_${fsweep}_${reso}${p1f}${p2f}${contin}
+      expname=${force}${blopt}${fopts}_${fsweep}_${reso}${p1f}${p2f}${contin}
+      expraw=${force}${blopt}_${fsweep}_${reso}${p1f}${p2f}  # for locked heating run
     done
   done
 
   # Override
   if $locked; then
-    expname=${expname%c} # ignore trailing c
-    expheating=${expname/[LC]/}
-    [ -d $scratch/$expheating ] || expheating=${expheating}c
-    [ -d $scratch/$expheating ] || raise "Heating directory \"$scratch/${expheating}c\" or \"$scratch/$expheating\" not found."
+    [ -d "$scratch/$expraw" ] \
+      || expraw=${expraw}c
+    [ -d "$scratch/$expraw" ] \
+      || raise "Heating directory '${scratch}/${expraw}[c]' not found."
     if $cold; then
       unset exprestart
     else
-      exprestart=$expheating
+      exprestart=$expraw
     fi
   fi
 }
@@ -337,8 +360,8 @@ exp_name() {
 exp_setup() {
   # Parse the experiment name, figure out what needs to be written
   # The 'p values' are values specified in experiment name as pXXXpYYYpZZZ
-  local kbl ktrop kstrat kmeso kdepth kfric levels damp delh exph tmean params sweep message
-  local q0_arctic q0_tropical q0_vortex q0_global q0_surface
+  local kbl ktrop kstrat kmeso kdepth kfric levels damp delh exph tmean params sweep
+  local q0_arctic q0_tropical q0_vortex q0_global q0_surface q0_realistic
   unset nml_params nml_values
   sweep=${1#*_}
   sweep=${sweep%%_*}
@@ -348,18 +371,24 @@ exp_setup() {
     params=($(echo $params | tr -t 'p' ' ' | xargs printf "%.3f "))
   fi
   # First the boundary layer options
-  prefix=${sweep%-*}
+  # prefix=${sweep%-*}
   suffix=${sweep#*-}
-  [[ $forceopt -lt 1 || $forceopt -gt 3 ]] && raise "Invalid forcing scheme option ${forceopt}."
-  [ $forceopt -eq 2 ] && kbl=-40 # simple default
+  [[ $blopt -lt 1 || $blopt -gt 3 ]] && raise "Invalid boundary layer option ${blopt}."
+  [ $blopt -eq 2 ] && kbl=-40 # simple default
 
   # Experiments
   case $sweep in
     # Simple experiments
-    base) ;;
-    tshift) exph=${params[0]} ;; # shift meridional temp gradient
-    tmean) tmean=${params[0]} ;; # change mean surface temp
-    fdamp) kfric=-${params[0]} ;; # change friction damping
+    base)      ;;
+    tshift)    exph=${params[0]} ;;        # shift meridional temp gradient
+    tmean)     tmean=${params[0]} ;;       # change mean surface temp
+    fdamp)     kfric=-${params[0]} ;;      # change friction damping
+    global)    q0_global=${params[0]} ;;
+    surface)   q0_surface=${params[0]} ;;
+    arctic)    q0_arctic=${params[0]} ;;
+    vortex)    q0_vortex=${params[0]} ;;
+    tropical)  q0_tropical=${params[0]} ;;
+    realistic) q0_realistic=${params[0]} ;;
 
     # Tgrad, and related diagonal experiments
     tgrad|tgrad-*)
@@ -378,22 +407,23 @@ exp_setup() {
       ktrop=-${params[0]}
       # Mean and anomaly components
       case $sweep in
-        tdampmean) ktrop=-40,$ktrop ;;
-        tdampanom) ktrop=$ktrop,-40 ;;
+        tdampmean) ktrop=$ktrop,-40 ;;
+        tdampanom) ktrop=-40,$ktrop ;;
       esac
       # Diagonal experiments
       if [ $sweep != $suffix ]; then # i.e. experiment had a 'dash' in it
         [ -z "${params[1]}" ] && raise "Need second param for diagonal experiment."
         case $suffix in # diagaonal experiment
-          fdamp) kfric=-${params[1]} ;;
-          tgrad) delh=${params[1]} ;;
-          tmean) tmean=${params[1]} ;;
-          tshift) exph=${params[1]} ;;
-          global) q0_global=${params[1]} ;;
-          surface) q0_surface=${params[1]} ;;
-          arctic) q0_arctic=${params[1]} ;;
-          vortex) q0_vortex=${params[1]} ;;
-          tropical) q0_tropical=${params[1]} ;;
+          fdamp)     kfric=-${params[1]}      ;;
+          tgrad)     delh=${params[1]}        ;;
+          tmean)     tmean=${params[1]}       ;;
+          tshift)    exph=${params[1]}        ;;
+          global)    q0_global=${params[1]}   ;;
+          surface)   q0_surface=${params[1]}  ;;
+          arctic)    q0_arctic=${params[1]}   ;;
+          vortex)    q0_vortex=${params[1]}   ;;
+          tropical)  q0_tropical=${params[1]} ;;
+          realistic) q0_realistic=${params[1]} ;;
           *) raise "Unknown sweep ${sweep}." ;;
         esac
       fi
@@ -401,10 +431,10 @@ exp_setup() {
       # TODO: Delete option 3 cuz it was dumb.
       unset kbl
       for itrop in ${ktrop/,/ }; do
-        case $forceopt in
+        case $blopt in
           1) ibl=-$(bc -l <<< "scale=3; ${itrop#-}/10") ;; # hold ratio constant
           2) ibl=$itrop ;; # keep surface boundary layer equal to value in rest of atmosphere
-          *) raise "Unknown forcing option ${forceopt}." ;;
+          *) raise "Invalid boundary layer option ${blopt}." ;;
           # 3) ibl=-$(bc -l <<< "scale=3; (4^-1 + (${itrop#-}^-1 - 40^-1))^-1") ;; # preserve 'boundary layer' component
         esac
         kbl=$kbl,$ibl
@@ -422,9 +452,9 @@ exp_setup() {
       kstrat=-${params[0]}
       kdepth=${params[1]} # param 2 is depth of transition region
       # Mean and anomaly components
-      case "$name" in
-        tdampanomstrat) kstrat=-40,$kstrat ;;
+      case $sweep in
         tdampmeanstrat) kstrat=$kstrat,-40 ;;
+        tdampanomstrat) kstrat=-40,$kstrat ;;
       esac
       # Whether to damp mesosphere more stronly
       # TODO: Add this as forcing scheme prefix? For now just fix to constant.
@@ -447,7 +477,8 @@ exp_setup() {
   nml_replace $nml \
     ktrop "$ktrop" kfric "$kfric" kbl "$kbl" kstrat "$kstrat" kmeso "$kmeso" z_kdepth "$kdepth" # damping stuff
   nml_replace $nml \
-    q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex" q0_global "$q0_global" q0_surface "$q0_surface" # global constant forcing
+    q0_arctic "$q0_arctic" q0_tropical "$q0_tropical" q0_vortex "$q0_vortex" \
+    q0_global "$q0_global" q0_surface "$q0_surface" q0_realistic "$q0_realistic"
 
   # Timing variables, not experiment dependent so far
   nml_replace $nml \
@@ -465,8 +496,8 @@ exp_setup() {
     170) nlat=256 ;;
     *) raise "Invalid truncation number \"$ntrunc\"." ;;
   esac
-  nsphere=$(($ntrunc + 1)) # forget what difference between num fourier and num spherical means
-  nlon=$(($nlat * 2)) # always twice the res
+  nsphere=$((ntrunc + 1)) # forget what difference between num fourier and num spherical means
+  nlon=$((nlat * 2)) # always twice the res
   nml_replace $nml num_fourier "$ntrunc" num_spherical "$nsphere" lat_max "$nlat" lon_max "$nlon"
 
   # Now vertical resolution options
@@ -498,30 +529,34 @@ exp_setup() {
   field=$expdir/field_table
   cp $rundir/field_table $field
 
-  # Add tdt line for some experiments
-  # if false; then
-  if $savetdt; then
-    diag_add $diag \
-      '"mean_tdt", -1, "hours", 1, "days", "time",' \
-      '"forcing", "tdt", "tdt", "mean_tdt", "all", .true., "none", 2,'
+  # Energy conservation
+  if ! $conserve; then
+    nml_replace $nml do_energy_correction '.false.'
   fi
 
-  # Copy input topography and heating
+  # Copy input heating
   if $locked; then
     nml_replace $nml locked_heating '.true.'
     unset tdtfiles
-    for tdtfile in $scratch/$expheating/netcdf/mean_tdt.*.nc; do
+    for tdtfile in "$scratch/$expraw"/netcdf/mean_tdt.*.nc; do
       days=${tdtfile%.nc}
       days=${days##*.}
       day1=${days%-*}
       day2=${days#*-}
-      [ ${day1#d} -ge $ktstart ] && [ ${day2#d} -le $ktend ] && tdtfiles+=($tdtfile)
+      [ ${day1#d} -ge $ktstart ] && [ ${day2#d} -le $ktend ] && tdtfiles+=("$tdtfile")
     done
-    [ ${#tdtfiles[@]} -eq 0 ] && raise "No tdt files found in $scratch/$expheating/netcdf directory."
+    [ ${#tdtfiles[@]} -eq 0 ] && raise "No tdt files found in $scratch/$expraw/netcdf directory."
     tdtfile=${expdir}/heating.data.nc
-    echo "Locked heating data: ${tdtfiles[@]##*/}"
-    ncra -h -O ${tdtfiles[@]} $tdtfile || raise "Average of $scratch/$expheating/netcdf/mean_tdt.*.nc files failed."
-    ncks -h --no-abc -O -v tdt $tdtfile $tdtfile || raise "Cutting $tdtfile variables failed."
+    echo "Locked heating data: ${tdtfiles[*]##*/}"
+    ncra -h -O "${tdtfiles[@]}" "$tdtfile" || raise "Average of $scratch/$expraw/netcdf/mean_tdt.*.nc files failed."
+    ncks -h --no-abc -O -v tdt "$tdtfile" "$tdtfile" || raise "Cutting $tdtfile variables failed."
+  fi
+
+  # Add entry to diag_table for saving tdt data
+  if $savetdt; then
+    diag_add $diag \
+      '"mean_tdt", -1, "hours", 1, "days", "time",' \
+      '"forcing", "tdt", "tdt", "mean_tdt", "all", .true., "none", 2,'
   fi
 }
 
@@ -534,13 +569,14 @@ echo "Forcing: $force, Sweep: $sweep, Resolution: $reso"
 if [[ $sweep =~ base ]]; then
   params1=(na)
   params2=(na)
-elif [ -z "$params1" ]; then
+elif [ "${#params1[@]}" -eq 0 ]; then
   raise "You must define an array of parameters with e.g. --1=10,20,30"
-elif [ -z "$params2" ]; then
+elif [ "${#params2[@]}" -eq 0 ]; then
   params2=(na)
 fi
+
 # Parameter sweeps
-let np=cores*nodes
+np=$((cores * nodes))
 gflags+="-c=$np -ts=$tstart -te=$tend "
 for param2 in ${params2[@]}; do
   for param1 in ${params1[@]}; do
@@ -549,7 +585,8 @@ for param2 in ${params2[@]}; do
     echo
     unset -v expflags expname exprestart # restart, then exp_name may set it again
     exp_name $sweep $param1 $param2
-    if [[ " ${expnames[@]} " =~ " ${expname} " ]]; then
+    # shellcheck disable=2076
+    if [[ " ${expnames[*]} " =~ " ${expname} " ]]; then
       echo "Already ran ${expname} in this loop."
       continue
     fi
@@ -591,8 +628,19 @@ for param2 in ${params2[@]}; do
       if ! $testmode; then
         echo "Exit status: ${stat}"
         if $mail; then
-          printf "Experiment ${expname} finished with exit status ${stat}. The call signature was '${exp_run}'.\n\nThe logfile is pasted below.\n\n$(cat $log)\n\nThe namelist is pasted below.\n\n$(cat $expdir/input.nml)" \
-            | mail -s "${expname} status: ${stat}" lukelbd@gmail.com
+          mail -s "${expname} status: ${stat}" lukelbd@gmail.com <<EOF
+Experiment ${expname} finished with exit status ${stat}. The call signature was:
+
+${exp_run}
+
+The logfile is pasted below:
+
+$(cat $log)
+
+The namelist is pasted below:
+
+$(cat $expdir/input.nml)
+EOF
         fi
       fi
       if [ $stat -ne 0 ]; then
@@ -627,8 +675,8 @@ EOF
     [ -d $HOME/data ] || mkdir $HOME/data
     [ -d $HOME/data/forcing ] || mkdir $HOME/data/forcing
     unset flags
-    let counter+=1
-    cd $cwd # ensure are still in same directory
+    counter=$((counter + 1))
+    cd $cwd || raise "Return to $cwd failed."  # ensure are still in same directory
   done
 done
 # echo # space

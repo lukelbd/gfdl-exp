@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#------------------------------------------------------------------------------#
+# Add the top-level 'constants.nc' file to all experiment directories
+#------------------------------------------------------------------------------#
+shopt -s nullglob
+cmd=$(pwd)/run
+
+# Iterate through *all* experiments!
+scratches=(/mdata2/ldavis /mdata1/ldavis)
+for scratch in "${scratches[@]}"; do
+  for dir in ${scratch}/{hs,pk,dbt}_*; do
+    if ! [ -r $dir/constants.nc ]; then
+      echo "Experiment: ${dir##*/}"
+
+      # Fix issue where older experiments had no top-level namelist
+      if ! [ -r $dir/input.nml ]; then
+        days=($dir/d0000-d????)
+        if [ ${#days[@]} -eq 0 ] || ! [ -r ${days[0]}/input.nml ]; then
+          echo "No namelist or experiment folders found."
+          continue
+        fi
+        echo "Adding namelist to top-level folder."
+        cp ${days[0]}/input.nml $dir
+      fi
+
+      # Call drycore_run with the 'forcing only' option
+      $cmd --constants $dir
+    fi
+  done
+done
