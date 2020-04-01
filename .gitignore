@@ -1,54 +1,21 @@
-# Special for this directory #
-##############################
-.nfs*
-  # ignore those .nfs files generated in /birner-home/ldavis when syncing stuff
+# Temporary files and logs
+tmp.*
+[0-9][0-9][0-9][0-9].log
 
-# Deliberately ignored #
-########################
-.vim/plugged
-
-# Batch scripts #
-#################
+# Batch scripts
 *.pbs
 *.sbatch
 
-# VIM extras #
-##############
-.session.vim
+# VIM extras
 .vimsession
 .*.sw[a-z]
 
-# R history #
-#############
-.Rhistory
-
-# iPython history #
-###################
-.ipython/**/history.sqlite
-
-# Storage #
-###########
-__old__
-__trash__
+# Python
 __pycache__
+.ipynb_checkpoints
 
-# Compiled source #
-###################
-bin
-*.x
-*.mod
-*.o
-*.so
-*.cppdefs
-
-# Logs and databases #
-######################
-*.log
-*.sql
-*.sqlite
-
-# OS generated files #
-######################
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
+.nfs*
