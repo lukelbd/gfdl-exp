@@ -25,9 +25,8 @@ source ${0%/*}/header.sh
 debug=false
 combine=false
 keepfull=false
-nsplit=0
+nsplit=0  # split time dimension into this many pieces and merge with nccombine
 # nsplit=4
-dir=$(pwd)
 while [ $# -gt 0 ]; do
   case $1 in
     -h) echo "$doc"; exit 0 ;;
@@ -43,9 +42,9 @@ done
 $debug && keepfull=true
 
 # Global vars
+# run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
 t0=$(date +%s) # starting time
 bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from right
-run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
 ncdivide=$HOME/ncparallel/ncdivide
 nccombine=$HOME/ncparallel/nccombine
 mppnccombine=$HOME/gfdl-fms/exp/mppnccombine.x # combine; needs to have been compiled here
@@ -55,7 +54,7 @@ plev_means=$bin/pressure_zonmean.ncl # just gets zonal means
 isen_interp=$bin/isentropes_interp.ncl
 isen_params=$bin/isentropes_params.ncl
 spectra=$bin/pressure_spectra.py # spectral decompositions
-cd $dir # optionally pass dir argument
+[ -z "$dir" ] || cd "$dir" || raise 127 "Failed to move to directory \"$dir\"."
 
 # Double check some stuff
 [ -r $plev_params ]   || raise 127 "The script \"$plev_params\" is missing."
@@ -85,7 +84,7 @@ levfix() {
 }
 
 # Function for interpolating model levels
-interp() {
+plev_isen_interp() {
   # Interplolate to pressure levels from model levels
   local t log file plevout isenout suffix
   file="$1"
@@ -138,7 +137,7 @@ plev_means() {
 
 # Once, this function also accepted averaged data; not anymore, but these are
 # some approaches for testing if file has averaged data
-params() {
+plev_isen_params() {
   # Ouput file names
   local t log plevout isenout suffix
   suffix="$1"
@@ -180,16 +179,16 @@ spectra() {
   echo "Calculating spectra..." # -Q = no banner, -n = do not enumerate print statements
   log=LOGS/log.spectra.${suffix%.nc}
   [ -r $out ] && rm $out
-  $spectra interp_plev.${suffix} $out &>$log
-  [ $? -ne 0 ] && raise 4 "Something failed while getting spectra."
+  $spectra interp_plev.${suffix} $out &>$log \
+    || raise 4 "Something failed while getting spectra."
   echo "  * Time for calculating spectra: $(($(date +%s) - t))s."
 }
 
 # Check exit codes
 pidcheck() {
   for pid in $@; do
-    wait $pid
-    [ $? -ne 0 ] && raise 4 "Bad exit code from one or more of the parallel processes."
+    wait $pid \
+      || raise 4 "Bad exit code from one or more of the parallel processes."
   done
 }
 
@@ -227,9 +226,8 @@ for prefix in ${prefixes[@]}; do
   # Just want to combine files and exit?
   if $combine || [ ${base##*/} == "mean_tdt" ]; then
     [ -r ${base}.nc ] && rm ${base}.nc
-    $mppnccombine ${base}.nc ${ncfiles[@]}
+    $mppnccombine ${base}.nc ${ncfiles[@]} || raise "mppnccombine failed."
     $debug || rm ${ncfiles[@]}
-    [ $? -eq 0 ] || raise "mppnccombine failed."
     levfix ${base}.nc
     $cmd ${base}.nc ../netcdf/${base}.${PWD##*/}.nc
     continue
@@ -258,7 +256,8 @@ for prefix in ${prefixes[@]}; do
     num=${num#*.}
     suffix=${num}.nc
     # Interpolate and get means
-    { interp "$ncfile" "$suffix"
+    {
+      plev_isen_interp "$ncfile" "$suffix"
       plev_means "interp_plev.$suffix" "$suffix"
     } &>LOGS/log.$num &
     pids+=($!)
@@ -282,7 +281,7 @@ for prefix in ${prefixes[@]}; do
 
   #----------------------------------------------------------------------------#
   # 2) Get spectra, and merge them
-  # WARNING: Now we just save full resolution files, and get spectra later
+  # NOTE: Now we just save full resolution files, and get spectra later
   # and combine *overlapping* windows of days, with process_post.
   #----------------------------------------------------------------------------#
   # # Calculate
@@ -326,7 +325,7 @@ for prefix in ${prefixes[@]}; do
   for suffix in ${suffixes[@]}; do
     num=${suffix%.nc}
     [ "$suffix" == "nc" ] && num=0000
-    params "$suffix" &>>LOGS/log.${num} &
+    plev_isen_params "$suffix" &>>LOGS/log.${num} &
     pids+=($!)
   done
   pidcheck ${pids[@]}
@@ -353,14 +352,9 @@ for prefix in ${prefixes[@]}; do
   # Append params to file; want them to show up at end of ncdump ideally
   # ncks -h --no-abc -A params_plev.nc means.nc
   ncks -h --no-abc -A means.nc params_plev.nc
-  if $debug; then
-    cp params_plev.nc $plev_yzfile
-    cp params_isen.nc $isen_yzfile
-  else
-    mv params_plev.nc $plev_yzfile
-    mv params_isen.nc $isen_yzfile
-    rm means.nc means.*.nc params_plev.*.nc params_isen.*.nc
-  fi
+  $cmd params_plev.nc $plev_yzfile
+  $cmd params_isen.nc $isen_yzfile
+  $debug || rm means.nc means.*.nc params_plev.*.nc params_isen.*.nc
 
   #----------------------------------------------------------------------------#
   # 4) Optionally merge the full-resolution pressure-interpolated files
@@ -387,8 +381,6 @@ for prefix in ${prefixes[@]}; do
     t=$(date +%s)
     unset interp # empty array
     echo "Keeping XYZ files..."
-    keep=plev_bnds,slp,u,v,t
-
     # Delete some vars
     for suffix in ${suffixes[@]}; do
       file=interp_plev.${suffix}
@@ -404,43 +396,16 @@ for prefix in ${prefixes[@]}; do
     # Split files
     # WARNING: mppnccombine has issues with huge files so we run ncparallel
     # with a split along time dimension, so ncrcat will get run.
+    # NOTE: This uses new nccombine feature where it accepts arbitrarily many
+    # input files. We also use -r flag to reverse order of arguments.
     if [ $nsplit -le 1 ]; then
-      $mppnccombine $xyzfile ${interp[@]}
-      [ $? -ne 0 ] && raise 127 "Failed to combine XYZ files."
+      $mppnccombine $xyzfile ${interp[@]} || raise 127 "Failed to combine XYZ files."
     else
-      t=$(date +%s)
-      echo "Combine full files..."
-      [ -r $xyzfile ] && rm $xyzfile
-      unset table ifiles ofiles
-      echo "  * Dividing files along time..."
-      for jinterp in ${interp[@]}; do
-        jfiles=$($ncdivide $jinterp -n=$nsplit -d=time)
-        [ $? -ne 0 ] && raise 127 "Failed to divide XYZ files."
-        table+="$jfiles"$'\n'
-      done
-      # Merge along latitude
-      echo "  * Combining files along lat..."
-      for j in $(seq 1 $nsplit); do
-        jfiles=($(echo "$table" | cut -d' ' -f1))
-        jdecomp=$(ncdump -h ${jfiles[0]} | grep 'time:domain_decomposition' | awk -F'[=;]' '{print $2}' | tr -d ' ')
-        ofile=${xyzfile%.nc}.${j}.nc
-        ofiles+="$ofile "
-        # Merge files for each time slice
-        $mppnccombine $ofile ${jfiles[@]}
-        [ $? -ne 0 ] && raise 127 "Failed to combine XYZ files."
-        # Add back domain_decomp attribute to time dim
-        # mppnccombine silently deletes it but obviously does nothing because
-        # all input files were using the same time slice, just like behavior with longitudes
-        ncatted -O -h -a domain_decomposition,time,o,l,"$jdecomp" $ofile
-      done
-      # Finally combine with ncrcat
-      # TODO: Is ncrcat or cdo concat faster?
-      echo "  * Combining files along time..."
-      $nccombine $xyzfile $ofiles || raise 127 "Failed to combine XYZ files."
-      [ $? -ne 0 ] && raise 127 "Failed to combine XYZ files."
+      ncparallel -r -d=time -n=$nsplit $mppnccombine $xyzfile ${interp[@]} \
+        || raise 127 "Failed to combine XYZ files with nccombine."
     fi
     echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
-    ! $debug && rm interp_plev*.nc $ifiles $ofiles &>/dev/null
+    $debug || rm interp_plev*.nc $jfiles $ofiles &>/dev/null
   fi
 
   #----------------------------------------------------------------------------#
