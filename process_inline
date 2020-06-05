@@ -257,8 +257,8 @@ for prefix in ${prefixes[@]}; do
     suffix=${num}.nc
     # Interpolate and get means
     {
-      plev_isen_interp "$ncfile" "$suffix"
-      plev_means "interp_plev.$suffix" "$suffix"
+      plev_isen_interp "$ncfile" "$suffix"  # generate interp_plev.nc and interp_isen.nc files
+      plev_means "interp_plev.$suffix" "$suffix"  # generate means.nc files
     } &>LOGS/log.$num &
     pids+=($!)
     suffixes+=($suffix)
@@ -266,7 +266,7 @@ for prefix in ${prefixes[@]}; do
   pidcheck ${pids[@]}
   echo "  * Time for interpolating and getting zonal means in parallel: $(($(date +%s) - tp))s."
 
-  # Merge zonal means
+  # Merge just the zonal means so we can get global means
   # NOTE: Use mppnccombine -h to print help info; the -r removes files after
   # run was successful
   if $parallel; then
@@ -349,7 +349,7 @@ for prefix in ${prefixes[@]}; do
     echo "  * Time for combining isen params: $(($(date +%s) - t))s."
   fi
 
-  # Append params to file; want them to show up at end of ncdump ideally
+  # Append params to means; want them to show up at end of ncdump ideally
   # ncks -h --no-abc -A params_plev.nc means.nc
   ncks -h --no-abc -A means.nc params_plev.nc
   $cmd params_plev.nc $plev_yzfile

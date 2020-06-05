@@ -40,11 +40,16 @@ raise() {
 # Initial stuff
 shopt -s nullglob
 cwd=$(pwd)
+np=0
 nmax=8
 daily=2xdaily # ignore the 4xdaily files for the time being
-isen_parallel=false
-spectra_parallel=false
+fix_lorenz=false
+calc_geo=false
+calc_isen=false
+calc_spectra=false
 ncparallel=$HOME/ncparallel/ncparallel
+geo_py=$cwd/pressure_heights.py
+lorenz_py=$cwd/pressure_lorenz.py
 spectra_py=$cwd/pressure_spectra.py
 isen_interp_ncl=$cwd/isentropes_interp.ncl
 isen_params_ncl=$cwd/isentropes_params.ncl
@@ -54,8 +59,10 @@ while [ $# -gt 0 ]; do
   case $1 in
     -h|-help) echo "$doc"; exit ;;
     -n=*) nmax=${1#*=} ;;
-    -i) isen_parallel=true ;;
-    -s) spectra_parallel=true ;;
+    -l) fix_lorenz=true ;;
+    -g) calc_geo=true ;;
+    -i) calc_isen=true ;;
+    -s) calc_spectra=true ;;
     -*) raise "Unknown flag $1." ;;
     *)  globs+=("$1") ;;
   esac
@@ -80,12 +87,12 @@ logcheck() { # WARNING: NCL adds '^M' before fatal: messages, so a search for ^f
 }
 
 # NetCDF tools
-ncin() {
+contains() {
   command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
     | cut -d '(' -f 1 | sed 's/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs \
-    | grep $2 &>/dev/null
+    | grep "$2" &>/dev/null
 }
-ndims() { # just dimensions and their numbers
+dimsize() { # just dimensions and their numbers
   command ncdump -h "$1" | sed -n '/dimensions:/,$p' | sed '/variables:/q'  | sed '1d;$d' \
     | tr -d ';' | tr -s ' ' | column -t \
     | grep "$2" | cut -d'(' -f2 | cut -d' ' -f1
@@ -109,10 +116,9 @@ background() {
 }
 
 #------------------------------------------------------------------------------#
-# 2D spectral decomposition
+# Driver functions that calculate stuff on existing archived data
 #------------------------------------------------------------------------------#
-# NOTE: This also gives is half-files!
-spectra_parallel() {
+calc_spectra() {
   # Generate half-file
   if [ -z "$full_half" ] && [ -z "$spectral_half" ]; then
     n=0
@@ -163,11 +169,10 @@ spectra_parallel() {
   [ -n "$full_half" ] && rm "$full_half" 2>/dev/null
 }
 
-#------------------------------------------------------------------------------#
-# Isentropic interpolation and summary statistics
-#------------------------------------------------------------------------------#
-# TODO: Make this work with ncparallel
-isen_parallel() {
+# Isentropic interpolation and summary statistics from full resolution
+# *pressure level* data. NCL scripts can accept either model levels or
+# pressure levels, interpolate from either.
+calc_isen() {
   # Message
   echo ${full_isen##*/}
   echo ${summary_isen##*/}
@@ -175,7 +180,7 @@ isen_parallel() {
   # Loop through segments
   unset ilogs ipids
   rm full.*.nc isen1.*.nc isen2.*.nc 2>/dev/null # make sure deleted
-  nt=$(ndims $full time)
+  nt=$(dimsize $full time)
   for ii in $(seq 1 $nmax); do
     # NCL times
     # NOTE: Pass stratosphere=1 for stratosphere layers
@@ -212,77 +217,93 @@ isen_parallel() {
 # Iterate through experiment folders
 #------------------------------------------------------------------------------#
 for scratch in "${scratches[@]}"; do
-  subfolders=($scratch/. $scratch/timescales-*) # subfolders contain some older experiment series
-  for subfolder in ${subfolders[@]}; do
-    for glob in "${globs[@]}"; do
-      for dir in $subfolder/$glob; do
-        # Find full resolution files
-        # TODO: Remove hardcoded minimum start day of 500
-        # filenames=($dir/netcdf/$daily*full.d?????-d?????.nc)
-        echo
-        echo "Experiment: ${dir##*/}"
-        t=$(date +%s)
-        filenames=( \
-          $dir/netcdf/$daily*full.d00[5-9]??-d?????.nc \
-          $dir/netcdf/$daily*full.d0[1-9]???-d?????.nc \
-        )
-        if [ ${#filenames[@]} -eq 0 ]; then
-          echo "Warning: No files found."
-          continue
+  for glob in "${globs[@]}"; do
+    for dir in $scratch/$glob; do
+      # Find full resolution files
+      # TODO: Remove hardcoded minimum start day of 500
+      # filenames=($dir/netcdf/$daily*full.d?????-d?????.nc)
+      echo
+      echo "Experiment: ${dir##*/}"
+      t=$(date +%s)
+      filenames=( \
+        $dir/netcdf/$daily*full.d00[5-9]??-d?????.nc \
+        $dir/netcdf/$daily*full.d0[1-9]???-d?????.nc \
+      )
+      if [ ${#filenames[@]} -eq 0 ]; then
+        echo "Warning: No files found."
+        continue
+      fi
+
+      # Loop through files, try to parallelize because very slow
+      unset full_prev full_half spectral_half
+      for full in ${filenames[@]}; do
+        # Input file names
+        i=$((i + 1))
+        dir=${full%/*}
+        summary=${full/full/summary} # YZ file
+        [ -r $summary ] || { echo "Error: File ${summary##*/} not found."; continue; }
+        summary_base=${summary##*/} # XYZ file
+        full_base=${full##*/} # XYZ file
+
+        # For full files
+        # full_qgpv=${full/full/qgpv} # file that only stores 2D QGPV
+        prefix=${full_base%%.*}
+        suffix=${full_base#*.}
+        spectral=${full/full/spectral}
+        full_isen=${dir}/${prefix}_isen.${suffix}
+
+        # For summary files
+        prefix=${summary_base%%.*}
+        suffix=${summary_base#*.}
+        summary_isen=${dir}/${prefix}_isen.${suffix}
+
+        # For spectral data need the "in-between" files
+        if [ -n "$full_prev" ]; then
+          days=${full_prev%.nc}
+          days=${days##*.} # should be e.g. d00000-d00100
+          days=(${days//[^0-9]/ }) # store in array variable
+          delta=$(bc <<< "(${days[1]} - ${days[0]}) / 2")
+          day1=$(bc <<< "${days[0]} + $delta")
+          day2=$(bc <<< "${days[1]} + $delta")
+          daystring=d$(printf "%05d" $day1)-d$(printf "%05d" $day2)
+          full_half=${full%.d?????-d?????.nc}.${daystring}.nc
+          spectral_half=${spectral%.d?????-d?????.nc}.${daystring}.nc
+        fi
+        full_prev="$full"
+
+        # Call functions
+        if $fix_lorenz && contains $summary ke; then
+          np=$((np + 1))
+          python3 $lorenz_py $summary &
+          pids+=($!)
+        fi
+        if $calc_geo && ! contains $summary egf; then
+          np=$((np + 1))
+          python3 $geo_py $full $summary &
+          pids+=($!)
+        fi
+        # if $calc_isen && { ! [ -r $summary_isen ] || ! contains $summary_isen stress; }; then
+        if $calc_isen; then
+          calc_isen
+        fi
+        # if $spectral && { ! [ -r $spectral ] || ! contains $spectral ehf }; then
+        if $calc_spectra; then
+          calc_spectra
         fi
 
-        # Loop through files, try to parallelize because very slow
-        unset full_prev full_half spectral_half
-        for full in ${filenames[@]}; do
-          # Input file names
-          i=$((i + 1))
-          dir=${full%/*}
-          summary=${full/full/summary} # YZ file
-          summary_base=${summary##*/} # XYZ file
-          full_base=${full##*/} # XYZ file
-
-          # For full files
-          # full_qgpv=${full/full/qgpv} # file that only stores 2D QGPV
-          prefix=${full_base%%.*}
-          suffix=${full_base#*.}
-          spectral=${full/full/spectral}
-          full_isen=${dir}/${prefix}_isen.${suffix}
-
-          # For summary files
-          prefix=${summary_base%%.*}
-          suffix=${summary_base#*.}
-          summary_isen=${dir}/${prefix}_isen.${suffix}
-
-          # For spectral data need the "in-between" files
-          if [ -n "$full_prev" ]; then
-            days=${full_prev%.nc}
-            days=${days##*.} # should be e.g. d00000-d00100
-            days=(${days//[^0-9]/ }) # store in array variable
-            delta=$(bc <<< "(${days[1]} - ${days[0]}) / 2")
-            day1=$(bc <<< "${days[0]} + $delta")
-            day2=$(bc <<< "${days[1]} + $delta")
-            daystring=d$(printf "%05d" $day1)-d$(printf "%05d" $day2)
-            full_half=${full%.d?????-d?????.nc}.${daystring}.nc
-            spectral_half=${spectral%.d?????-d?????.nc}.${daystring}.nc
-          fi
-          full_prev="$full"
-
-          # Isentropic coords
-          # if $isen_parallel && { ! [ -r $summary_isen ] || ! ncin $summary_isen stress; }; then
-          if $isen_parallel; then
-            isen_parallel
-          fi
-
-          # Spectra (the isen() function can be parallelized in same way)
-          # TODO: Parallelize on pressure levels maybe
-          # if $spectral && { ! [ -r $spectral ] || ! ncin $spectral ehf }; then
-          if $spectra_parallel; then
-            spectra_parallel
-          fi
-        done
+        # Wait for background processes
+        if [ $np -ge $nmax ]; then
+          for pid in ${pids[@]}; do
+            wait $pid || echo "Warning: Background process failed."
+          done
+          np=0
+          unset pids
+        fi
       done
     done
   done
 done
+for pid in ${pids[@]}; do
+  wait $pid || echo "Warning: Background process failed."
+done
 echo
-

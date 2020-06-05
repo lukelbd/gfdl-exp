@@ -35,7 +35,7 @@ o->thlev = thlev
 o->lat = lat
 ; Indices for surface potential temp percentile array, see below
 nlon = dimsizes(lon)
-x = ispan(0, nlon-1, 1)
+x = ispan(0, nlon - 1, 1)
 x!0 = "x"
 x&x = x
 x@long_name = "zonal distribution index"
@@ -76,7 +76,7 @@ g = 9.80665  ; standard gravity
 cp = 1004.0  ; heat capacity
 omega = 7.292e-5  ; radians per second
 rlat = 4 * atan(1.0) * lat / 180.0  ; radians
-dx = a * 4 * atan(1.0) * (lon(1)-lon(0)) / 180.0  ; radians times average Earth radius
+dx = a * 4 * atan(1.0) * (lon(1) - lon(0)) / 180.0  ; radians times average Earth radius
 cor = conform(u, 2 * omega * sin(rlat), 2)  ; Coriolis force
 
 ; Pseudo density

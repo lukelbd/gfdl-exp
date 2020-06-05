@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-################################################################################
-# Calculates phase speed and wavenumber spectra for the EP flux and momentum
-# and heat flux terms, along with say geopotential and SLP. Should result in
-# a longitude by latitude by phase speed, wavenumber by latitude by time, and
-# wavenumber by latitude by phase speed files.
-################################################################################
+"""
+Calculate phase speed and wavenumber spectra for the EP flux and momentum
+and heat flux terms, along with say geopotential and SLP. Should result in
+a longitude by latitude by phase speed, wavenumber by latitude by time, and
+wavenumber by latitude by phase speed files.
+"""
 # Imports
-import os
-import re
+# TODO: Write this in netcdf4
 import sys
 import time
 import numpy as np
-import xarray as xr
+import netCDF4 as nc4
 import climpy
 
 t1 = time.time()
@@ -26,66 +25,49 @@ def timer(message):
 
 
 # File, with optional decoding
-# if len(sys.argv)!=4:
-#     raise ValueError('Require three input args.')
-# archivename = sys.argv[2]
 if len(sys.argv[1:]) != 2:
     raise ValueError(f'Require two input args, instead got: {sys.argv[1:]}.')
-filename = sys.argv[1]
-outname = sys.argv[2]
-# ncl = os.path.dirname(__file__) + '/qgpv.ncl' # NCL command for getting QGPV
+input = sys.argv[1]
+output = sys.argv[2]
 
 # Load data
-data = xr.open_dataset(filename, decode_times=False)
-
-# Coordinates
-days = data['time']
-plev = data['plev']
-lat = data['lat']
-lon = data['lon']
-bnds = data['plev_bnds'].values
+data = nc4.Dataset(input, mode='r')
+data_attrs = data.__dict__
+plev_attrs = data['plev'].__dict__
+lat_attrs = data['lat'].__dict__
+time = data['time'][:]
+plev = data['plev'][:]
+lat = data['lat'][:]
+lon = data['lon'][:]
+bnds = data['plev_bnds'][:]
 dp = (bnds[:, 1] - bnds[:, 0])[:, None, None]  # singleton lon, lat dims
+u = data['u'][:]
+v = data['v'][:]
+t = data['t'][:]
+data.close()
 
-# Variables
-u = data['u'].values
-v = data['v'].values
-t = data['t'].values
-
-# Fluxes
+# Flux terms
 # NOTE: Numpy fft by default returns frequency as cycles/<record step>, so we
 # divide by <units>/<record step> to convert to desired units. In the case of
 # longitude, desired final units are <fraction of latitude circle>.
-dt = days.values[1] - days.values[0]  # final units are '1/day'
-dlon = lon.values[1] - lon.values[0] / 360.0  # final units are 'cycles'
+dt = time[1] - time[0]  # final units are '1/day'
+dlon = lon[1] - lon[0] / 360.0  # final units are 'cycles'
 ustar = u - u.mean(axis=3, keepdims=True)
 vstar = v - v.mean(axis=3, keepdims=True)
 tstar = t - t.mean(axis=3, keepdims=True)
 
-# Barotropic and baroclinic components
+# Barotropic and baroclinic components of wind
 utropic = (u * dp).sum(axis=1, keepdims=True) / dp.sum()
 vtropic = (v * dp).sum(axis=1, keepdims=True) / dp.sum()
 uclinic = u - utropic
 vclinic = u - vtropic
-timer(' * Time for initial stuff')
 
-# Get QGPV and delete archive
-# if not os.path.exists(archivename):
-#     raise ValueError(f'Could not find output file {archivename}.')
-# pv = xr.open_dataarray(archivename, decode_times=False).sel(plev=slice(900,1000)).values
-# pv = xr.open_dataarray(archivename, decode_times=False).values
-# pvstar = pv - pv.mean(axis=3, keepdims=True)
-
-# Get 2D spectral breakdown
-# NOTE: The ke terms are not *actually* ke, just the vector components that
-# when squared (i.e. the power analysis) correspond to ke. Or something like that.
-# Iterate over flux terms
+# Kinetic energy terms
 ke = np.sqrt(ustar ** 2 + vstar ** 2)
-
 ke_tropic = np.sqrt(
     (utropic - utropic.mean(axis=3, keepdims=True)) ** 2
     + (vtropic - vtropic.mean(axis=3, keepdims=True)) ** 2
 )[:, 0, :, :]
-
 ke_clinic = np.sqrt(
     (uclinic - uclinic.mean(axis=3, keepdims=True)) ** 2
     + (vclinic - vclinic.mean(axis=3, keepdims=True)) ** 2
@@ -100,18 +82,18 @@ params = {
     'ke_clinic': (ke_clinic,),
 }
 shorts = {
-    'ehf': ('t', 'v', 'ehf'),
-    'emf': ('u', 'v', 'emf'),
-    'ke': ('ke',),
-    'ke_tropic': ('ke_tropic',),
-    'ke_clinic': ('ke_clinic',),
+    'ehf': ('t_power', 'v_power', 'ehf_power'),
+    'emf': ('u_power', 'v_power', 'emf_power'),
+    'ke': ('ke_power',),
+    'ke_tropic': ('ke_tropic_power',),
+    'ke_clinic': ('ke_clinic_power',),
 }
 longs = {
-    'ehf': ('temperature', 'meridional wind', 'eddy-heat flux'),
-    'emf': ('zonal wind', 'meridional wind', 'eddy-momentum flux'),
-    'ke': ('eddy-kinetic energy',),
-    'ke_tropic': ('barotropic eddy-kinetic energy',),
-    'ke_clinic': ('baroclinic eddy-kinetic energy',),
+    'ehf': ('temperature', 'meridional wind', 'eddy heat flux'),
+    'emf': ('zonal wind', 'meridional wind', 'eddy momentum flux'),
+    'ke': ('eddy kinetic energy',),
+    'ke_tropic': ('barotropic eddy kinetic energy',),
+    'ke_clinic': ('baroclinic eddy kinetic energy',),
 }
 units = {
     'ehf': ('K2', 'm2/s2', 'K*m/s'),
@@ -121,85 +103,97 @@ units = {
     'ke_clinic': ('m2/s2',),
 }
 
-# Get eddy flux terms
-out = None
+# Create dataset and add unchanged dimensions
+data = nc4.Dataset(output, mode='w')
+data.__dict__ = data_attrs
+data.createDimension('plev', plev.size)
+data.createDimension('lat', lat.size)
+plev_var = data.createVariable('plev', 'f4', ('plev',))
+lat_var = data.createVariable('lat', 'f4', ('lat',))
+plev_var[:] = plev
+lat_var[:] = lat
+plev_var.__dict__.update(plev_attrs)
+lat_var.__dict__.update(lat_attrs)
+
+# Loop through params for which we want spectral transformations
+timer(' * Time for initial stuff')
 for flux in ('ehf', 'emf', 'ke', 'ke_tropic', 'ke_clinic'):
     # Get transform
-    # if out is not None and flux in out:
+    # if flux in data:
     #     print(f'Already have {longs[flux][2]}.')
     #     continue
     # NOTE: Use boxcar so the power is accurate. See climpy.power2d notes
     print(f'Getting {shorts[flux][-1]}.')
     wintype = 'boxcar'
-    params_i, longs_i, shorts_i, units_i = (
-        params[flux],
-        longs[flux],
-        shorts[flux],
-        units[flux],
-    )
-    if params_i[0].ndim == 3:
-        axes = (0, 2)
-        dims = ('f', 'lat', 'k')
+    iparams = params[flux]
+    ishorts = shorts[flux]
+    ilongs = longs[flux]
+    iunits = units[flux]
+    axis_time = 0
+    axis_cyclic = -1
+    args = (dlon, dt, *params[flux])
+    kwargs = {
+        'axis_lon': -1, 'axis_time': 0,
+        'wintype': wintype, 'nperseg': time.size
+    }
+    if len(args) == 3:
+        k, f, P = climpy.power2d(*args **kwargs)
     else:
-        axes = (0, 3)
-        dims = ('f', 'plev', 'lat', 'k')
-    ff, kk, spectrum, *powers = climpy.power2d(
-        *params[flux],
-        dx=dt,
-        dy=dlon,
-        axes=axes,
-        detrend='constant',
-        wintype=wintype,
-        nperseg=days.size,
-        coherence=False,
-    )
+        k, f, C, Q, P1, P2, *_ = climpy.copower2d(*args, **kwargs)
 
-    # Coordinates
-    if out is None:
-        f = xr.Variable(
-            ('f',), ff, {'long_name': 'frequency', 'units': 'cycles/day'}
-        )
-        k = xr.Variable(
-            ('k',), kk, {'long_name': 'zonal wavenumber', 'units': 'none'}
-        )
-        out = xr.Dataset(
-            {},
-            coords={'f': f, 'plev': plev, 'lat': lat, 'k': k},
-            attrs=data.attrs,
-        )
+    # Add spectral dimensions
+    if 'f' not in data.dimensions and 'k' not in data.dimensions:
+        data.createDimension('f', f.size)
+        data.createDimension('k', k.size)
+        f_var = data.createVariable('f', 'f4', ('f',))
+        k_var = data.createVariable('k', 'f4', ('k',))
+        f_var[:] = f
+        k_var[:] = k
+        f_var.long_name = 'frequency'
+        f_var.units = 'cycles/day'
+        k_var.long_name = 'zonal wavenumber'
+        k_var.units = 'none'
 
     # Save to file
-    if powers:  # non-empty, i.e. we got a *co*-spectrum
-        # Save power spectra, but make sure not to do so twice
-        _, P1, P2 = powers
-        for i, P in enumerate((P1, P2)):
-            if shorts_i[i] not in out:
-                long = f'{longs_i[i]} power spectrum'
-                out[shorts_i[i] + '_power'] = xr.Variable(
-                    dims, P, {'long_name': long, 'units': units_i[i]}
-                )
-        # And the co-spectrum
-        long = f'{longs_i[2]} co-spectrum'
-        out[shorts_i[2] + '_power'] = xr.Variable(
-            dims, spectrum, {'long_name': long, 'units': units_i[2]}
-        )
+    if len(args) == 3:
+        # Save the power-spectrum
+        if ishorts[0] not in data.variables:
+            var = data.createVariable(ishorts[0], 'f4', dims)
+            var[:] = P
+            var.long = f'{ilongs[0]} co-spectrum'
+            var.units = iunits[0]
+        del P
 
     else:
-        # We just got a power spectrum; save it
-        # TODO: Does removing squeeze cause errors?
-        # spectrum = spectrum.squeeze()
-        long = f'{longs_i[0]} power spectrum'
-        out[shorts_i[0] + '_power'] = xr.Variable(
-            dims, spectrum, {'long_name': long, 'units': units_i[0]}
-        )
+        # Save power spectra, but make sure not to do so twice
+        if ishorts[0] not in data.variables:
+            var = data.createVariable(ishorts[0], 'f4', dims)
+            var[:] = P1
+            var.long_name = f'{ilongs[0]} power spectrum'
+            var.units = iunits[0]
+        del P1
+
+        if ishorts[1] not in data.variables:
+            var = data.createVariable(ishorts[1], 'f4', dims)
+            var[:] = P2
+            var.long_name = f'{ilongs[1]} power spectrum'
+            var.units = iunits[1]
+        del P2
+
+        # Save co- and quadrature- power spectra
+        var = data.createVariable(ishorts[2], 'f4', dims)
+        var[:] = C
+        var.long_name = f'{ilongs[2]} co-power spectrum'
+        var.units = iunits[2]
+        del C
+
+        var = data.createVariable(ishorts[2], 'f4', dims)
+        var[:] = Q
+        var.long_name = f'{ilongs[2]} quadrature-power spectrum'
+        var.units = iunits[2]
+        del Q
 
     timer(' * Time for spectral transform')  # stuff after power2d takes ms
 
-# Save file
-print('Writing to disk.')
-if os.path.exists(outname):  # need this, or get permission denied error!
-    os.remove(outname)
-out.to_netcdf(outname, mode='w')  # specify whether we did chunking
-timer(' * Time for writing to disk')
-t1 = t0
+data.close()
 timer('TOTAL ELAPSED TIME')

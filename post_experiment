@@ -61,8 +61,6 @@ subfolder=true # use subfolder? have this so if we just got forcing data and hav
 overwrite=false
 smode=0
 rdays=100
-climo_start=500
-climo_end=3500
 spin_start=0
 spin_end=9900 # just get all of them
 forcing=false
@@ -140,6 +138,8 @@ while [ $# -gt 0 ]; do
 done
 
 # Requirements
+[ -n "$climo_start" ] || raise "Specify start day with c1=day."
+[ -n "$climo_end" ] || raise "Specify end day with c2=day."
 if $subfolder; then
   [ -d "$input/netcdf" ] || { [ -d "$input" ] && mkdir "$input/netcdf"; }
   input="$input/netcdf"
@@ -249,25 +249,25 @@ newer() {
 # Used for climate means and climate variability stuff
 # climate_files() {
 get_files() {
-  # Glob
+  # Initial stuff
   local prefix file files filtered days start end
   local daystring nfiles day1 day2
   prefix=$1
-  start=$climo_start # the *default* starting/ending points
+  start=$climo_start
   end=$climo_end
   [ -n "$2" ] && start=$2
   [ -n "$3" ] && end=$3
-  files=($input/${prefix}.d?????-d?????.nc)
-  [ ${#files[@]} -eq 0 ] && {
-    echoerr "No $prefix files found in ${input}."
-    return 1
-  }
-  [ $(((end - start) % rdays)) -ne 0 ] && {
+  if [ $(((end - start) % rdays)) -ne 0 ]; then
     echoerr "Non-integer number of $rdays-day blocks between days $start and $end."
     return 1
-  }
+  fi
 
-  # Get start and end days, add to list on condition
+  # Get files within day range
+  files=($input/${prefix}.d?????-d?????.nc)
+  if [ ${#files[@]} -eq 0 ]; then
+    echoerr "No $prefix files found in ${input}."
+    return 1
+  fi
   for file in "${files[@]}"; do
     daystring=${file##*/}
     daystring=${daystring%.nc}
@@ -284,26 +284,29 @@ get_files() {
       filtered+=($file)
     fi
   done
-
-  # Ensure correct number of files, i.e. do not take average of incomplete run
-  # For spectral data, the script should have made *half-day* files, e.g.
-  # d0500-d0600, d0550-d0650, d0600-d0700, ... so expect this many plus 1
-  if [[ "$prefix" =~ spectral ]]; then
-    nfiles=$((2 * ( (end - start) / rdays) - 1)) # expectation
-  else
-    nfiles=$(( (end - start) / rdays)) # expectation
-  fi
-
-  # Message and exit
   if [ ${#filtered[@]} -eq 0 ]; then
     echoerr "No $prefix files found between days $start and ${end}."
     return 1
-  else
-    # echoerr "Found all files between days $start and ${end}."
-    [ ${#filtered[@]} -ne $nfiles ] \
-      && echoerr "Warning: Expected $nfiles files between days $start and ${end}, got ${#filtered[@]}. Days: ${days[*]}"
-    echo "${filtered[@]}" # intended for user to capture output
   fi
+
+  # Permit only up to 2 files missing. Sometimes accidentally delete or
+  # corrupt files while testing things. For spectral data, should also have
+  # *half-day* files e.g. 500-600, 550-650, 600-700, etc.
+  if [[ "$prefix" =~ spectral ]]; then
+    nexpected=$((2 * ( (end - start) / rdays) - 1))
+  else
+    nexpected=$(( (end - start) / rdays))
+  fi
+  nfiltered=${#filtered[@]}
+  message="Expected $nexpected files between days $start and ${end}, got ${#filtered[@]}. Days: ${days[*]}"
+  if [ ${#filtered[@]} -ne $nexpected ]; then
+    if [ $((nexpected - nfiltered)) -le 2 ]; then
+      echoerr "Warning: $message"
+    else
+      raise "$message"
+    fi
+  fi
+  echo "${filtered[@]}" # intended for user to capture output
 }
 
 # Spindown files grouped by initialization (branch) day
@@ -357,10 +360,6 @@ spindown_files_by_day() {
   done
   [ ${#spindowndayfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spin_start} and ${spin_end}."
 }
-# echo "${spindowndayfiles[@]##*/}"
-# for spindowngroup in "${spindowndayfiles[@]}"; do # testing
-#   echo NEW GROUP; newgroup=(${spindowngroup}); echo ${newgroup[@]##*/${psummary}.}
-# done
 
 #-----------------------------------------------------------------------------#
 # Individual functions for getting climate variables

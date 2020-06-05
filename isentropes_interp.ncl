@@ -29,23 +29,23 @@ lat  = f->lat
 lon  = f->lon
 ; Get multi-dimensional pressure array
 t = f->t ; need this down the line anyway
-slp = (f->slp)/100.0 ; convert to Pa (note we also need slp for geopotential height calculation)
+slp = (f->slp) / 100.0 ; to hPa
 if any(fvars .eq. "hyai") then
   ; Calculate changing pressure
   hybrid = True
-  hyai = (f->hyai)/100.0 ; to hPa
+  hyai = (f->hyai) / 100.0 ; to hPa
   hybi = f->hybi
   nedges = dimsizes(hyai) ; is 1D, so this is scalar
-  hyam = (hyai(0:nedges-2) + hyai(1:nedges-1))/2 ; the middle A coefs
-  hybm = (hybi(0:nedges-2) + hybi(1:nedges-1))/2 ; the middle B coefs
+  hyam = (hyai(0:nedges - 2) + hyai(1:nedges - 1)) / 2 ; the middle A coefs
+  hybm = (hybi(0:nedges - 2) + hybi(1:nedges - 1)) / 2 ; the middle B coefs
   ; Get 4D pressure array
   np = dimsizes(hybm)
   shape = (/dimsizes(time), dimsizes(hybm), dimsizes(lat), dimsizes(lon)/)
   p = conform_dims(shape, hyam, 1) + \
-      conform_dims(shape, hybm, 1)*conform_dims(shape, slp, (/0, 2, 3/))
+      conform_dims(shape, hybm, 1) * conform_dims(shape, slp, (/0, 2, 3/))
   copy_VarCoords(t, p)
 else
-; Get pressure level vector
+  ; Get pressure level vector
   hybrid = False
   p = f->plev
   np = dimsizes(p)
@@ -58,7 +58,7 @@ timer(" * Time for reading data")
 ; The theta coordinates. Should go in *same order* as pressure coordinates.
 ; Option 0)
 ; ERA-Interim archive
-; thlev = 1.0*(/265, 275, 285, 300, 315, 330, 350, 370, 395, 430, 475, 530, 600, 700, 850/) ; ECMWF levels
+; thlev = 1.0 * (/265, 275, 285, 300, 315, 330, 350, 370, 395, 430, 475, 530, 600, 700, 850/) ; ECMWF levels
 ; Option 1)
 ; Overkill
 ; thlev = array_append_record(fspan(250.0, 400.0, 61), fspan(410.0, 600.0, 20), 0)
@@ -128,12 +128,12 @@ kappa = 0.286
 ; Also store surface pressure
 t = f->t(slice(0):slice(1),:,:,:)
 if hybrid then
-  psurf = p(:,np-1,:,:)
-  pt = t*(p0/p)^kappa ; both are 4D, have same shape
+  psurf = p(:,np - 1,:,:)
+  pt = t * (p0 / p)^kappa  ; both are 4D, have same shape
 else
-  psurf = p(np-1)
-  psurf!0 = "ncl_scalar" ; magic (example: https://www.ncl.ucar.edu/Document/Functions/Built-in/filevardef.shtml )
-  pt = t*conform(t, (p0/p)^kappa, 1) ; calculate potential temperature
+  psurf = p(np - 1)
+  psurf!0 = "ncl_scalar"  ; magic (example: https://www.ncl.ucar.edu/Document/Functions/Built-in/filevardef.shtml )
+  pt = t * conform(t, (p0 / p)^kappa, 1)  ; potential temperature
   p := conform(t, p, 1) ; conform after the math stuff is done
 end if
 p@long_name = "pressure"
@@ -146,7 +146,7 @@ psurf@units = "hPa"
 o->slp = psurf
 ; Potential temp
 copy_VarCoords(t, pt)
-slth = pt(:,np-1,:,:)
+slth = pt(:,np - 1,:,:)
 slth@long_name = "surface layer potential temperature"
 slth@units = "K"
 o->slth = slth
@@ -155,8 +155,8 @@ o->slth = slth
 names = (/"p", "u", "v", "z", "tdt"/)
 print("Interpolating to isentropes...")
 varnames = getfilevarnames(f)
-do i=1,dimsizes(names)
-  name = names(i-1)
+do i = 1, dimsizes(names)
+  name = names(i - 1)
   ; Get variable
   if (name .eq. "p") then
     x = p
@@ -164,22 +164,23 @@ do i=1,dimsizes(names)
     x = t
   else if (name .eq. "z") then
     if any(varnames .eq. "z") then
+      ; Geopotential height saved by the model
       x = f->z
     else
       ; Geopotential height using hypsometric equation
       ; NOTE: The hPa cancel each other out, so don't need Pa
       ; NOTE: SLP is stored in Pa for some reason, must fix
-      slp = f->slp(slice(0):slice(1),:,:)/100 ; from Pa to hPa
-      dp = 0.0*p
-      dp(:,:np-2,:,:) = p(:,1:,:,:) - p(:,:np-2,:,:) ; pressure is *ascending* along axis
-      dp(:,np-1,:,:) = slp - p(:,np-1,:,:) ; the offset from surface pressure
-      rho = p/(Rd*t) ; p = rho*R*T
-      x = dim_cumsum_n(dp(:,::-1,:,:)/(g*rho(:,::-1,:,:)), 1, 1) ; resulting units are meters
-      x = x(:,::-1,:,:) ; top-to-bottom
+      islp = slp(slice(0):slice(1), :, :) ; from Pa to hPa
+      dp = 0.0 * p
+      dp(:,:np - 2,:,:) = p(:,1:,:,:) - p(:,:np - 2,:,:)  ; pressure is *ascending* along axis
+      dp(:,np - 1,:,:) = islp - p(:,np - 1,:,:)  ; the offset from surface pressure
+      irho = p / (Rd * t)  ; p = rho * R * T
+      x = dim_cumsum_n(dp(:,:: - 1,:,:) / (g * irho(:,::-1,:,:)), 1, 1)  ; resulting units are meters
+      x = x(:,::-1,:,:)  ; top-to-bottom
       x@long_name = "geopotential height"
       x@units = "m"
-      delete(rho)
-      delete(slp)
+      delete(irho)
+      delete(islp)
       timer(" * Time for geopotential and stuff")
     end if
   else if (name .eq. "tdt")
@@ -198,7 +199,7 @@ do i=1,dimsizes(names)
         n_anom = n_mean
       end if
       t_mean = conform(t, dim_avg_n(t, 3), (/0, 1, 2/))
-      x = -n_mean*(t_mean - teq) + -n_anom*(t - t_mean)
+      x = -n_mean * (t_mean - teq) + -n_anom * (t - t_mean)
       x@long_name = "diabatic heating"
       x@units = "K/s"
       delete(fc)
