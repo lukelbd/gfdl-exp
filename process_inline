@@ -45,8 +45,7 @@ $debug && keepfull=true
 # run=mpirun # for running mppnccombine on Cheyenne; parallelization really necessary
 t0=$(date +%s) # starting time
 bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from right
-ncdivide=$HOME/ncparallel/ncdivide
-nccombine=$HOME/ncparallel/nccombine
+ncparallel=$HOME/ncparallel/ncparallel
 mppnccombine=$HOME/gfdl-fms/exp/mppnccombine.x # combine; needs to have been compiled here
 plev_interp=$bin/pressure_interp.ncl  # interpolate with NCL, automatic iteration
 plev_params=$bin/pressure_params.ncl # eddy and mean Lorenz energy cycle terms with NCL
@@ -68,7 +67,7 @@ hash ncks 2>/dev/null || raise 127 "NCO is not in $PATH."
 # Functions
 # Stdout of following lines is overview; view separate logfiles for specifics
 #------------------------------------------------------------------------------#
-levfix() {
+attrfix() {
   # Apply some simple modifications to attributes
   # NOTE: Use -h to prevent appending history
   # WARNING: Some NCO distros seem to have fatal issue with using multiple
@@ -80,7 +79,7 @@ levfix() {
   ncrename -h -d phalf,ilev $file # mlev/ilev is the ECHAM convention, needed for CDO interpolation
   ncrename -h -v pfull,mlev $file
   ncrename -h -v phalf,ilev $file
-  ncatted -h -O -a bounds,mlev,o,c,"ilev" $file
+  ncatted -h -O -a bounds,mlev,o,c,'ilev' $file
 }
 
 # Function for interpolating model levels
@@ -91,7 +90,7 @@ plev_isen_interp() {
   suffix="$2"
   plevout=interp_plev.$suffix
   isenout=interp_isen.$suffix
-  levfix "$file"
+  attrfix "$file"
 
   # Interpolation to pressure
   t=$(date +%s)
@@ -228,7 +227,7 @@ for prefix in ${prefixes[@]}; do
     [ -r ${base}.nc ] && rm ${base}.nc
     $mppnccombine ${base}.nc ${ncfiles[@]} || raise "mppnccombine failed."
     $debug || rm ${ncfiles[@]}
-    levfix ${base}.nc
+    attrfix ${base}.nc
     $cmd ${base}.nc ../netcdf/${base}.${PWD##*/}.nc
     continue
   fi
@@ -401,11 +400,11 @@ for prefix in ${prefixes[@]}; do
     if [ $nsplit -le 1 ]; then
       $mppnccombine $xyzfile ${interp[@]} || raise 127 "Failed to combine XYZ files."
     else
-      ncparallel -r -d=time -n=$nsplit $mppnccombine $xyzfile ${interp[@]} \
+      $ncparallel -r -d=time -n=$nsplit $mppnccombine $xyzfile ${interp[@]} \
         || raise 127 "Failed to combine XYZ files with nccombine."
     fi
     echo "  * Time for combining XYZ files: $(($(date +%s) - t))s."
-    $debug || rm interp_plev*.nc $jfiles $ofiles &>/dev/null
+    $debug || rm interp_plev*.nc &>/dev/null
   fi
 
   #----------------------------------------------------------------------------#
