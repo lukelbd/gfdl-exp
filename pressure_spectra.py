@@ -44,6 +44,7 @@ dp = (bnds[:, 1] - bnds[:, 0])[:, None, None]  # singleton lon, lat dims
 u = data['u'][:]
 v = data['v'][:]
 t = data['t'][:]
+dims = tuple(t.dimensions)
 data.close()
 
 # Flux terms
@@ -133,11 +134,13 @@ for flux in ('ehf', 'emf', 'ke', 'ke_tropic', 'ke_clinic'):
     axis_cyclic = -1
     args = (dlon, dt, *params[flux])
     kwargs = {
-        'axis_lon': -1, 'axis_time': 0,
-        'wintype': wintype, 'nperseg': time.size
+        'axis_lon': -1,
+        'axis_time': 0,
+        'wintype': wintype,
+        'nperseg': time.size
     }
     if len(args) == 3:
-        k, f, P = climpy.power2d(*args **kwargs)
+        k, f, P = climpy.power2d(*args, **kwargs)
     else:
         k, f, C, Q, P1, P2, *_ = climpy.copower2d(*args, **kwargs)
 
