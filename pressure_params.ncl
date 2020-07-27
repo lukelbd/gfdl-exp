@@ -1,8 +1,5 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; This file adds various parameters to NetCDF file
-; WARNING: Have been using this to process parallel-produced model files, but
-; there are meridional finite diffs! Will introduce slight errors since ends
-; are treated with different differencing scheme.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; How to find source code for some complex functions?
 ; * Go to base library directory in <which ncl>/../lib/ncarg/nclscripts, and
@@ -13,9 +10,9 @@
 ;   information, no loading into memory yet.
 ; * Extracting variable names with o->t is slow, because this loads them
 ;   into memory.
-; * Placing items into a list [/ item /] is not fast, as evidently NCL retains
+; * Placing items into a list [/ item /] is not slow, as evidently NCL retains
 ;   pointers to the underlying objects, does not copy.
-; * Indexing a list and saving it as a separate variable however IS slow; this
+; * Indexing a list and saving it as a separate variable however *is* slow; this
 ;   action seems to save the contents of that list as a new item. So it is to
 ;   be avoided when possible.
 ; Example of eddy kinetic energy in CDO:
@@ -200,7 +197,7 @@ o->ke = fix_coords(t, ke)  ; copy coordinates
 delete(ke)
 
 ; Barotropic component
-; NOTE: We reduce pressure dimension, then longitude becomes number 3, end
+; NOTE: We reduce pressure dimension, then longitude becomes number 2, end
 ; up with time by latitude array.
 dp_conform = conform(u, dp, 1)
 u_tropic = dim_sum_n(u * dp_conform, 1) / sum(dp)
