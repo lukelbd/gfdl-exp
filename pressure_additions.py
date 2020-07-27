@@ -9,7 +9,7 @@ import sys
 import numpy as np
 import netCDF4 as nc4
 if len(sys.argv) != 3:
-    raise RuntimeError(f'Need two input arguments.')
+    raise RuntimeError('Need two input arguments.')
 input = sys.argv[1]
 output = sys.argv[2]
 print(f'Adding geopotential to {os.path.basename(output)!r}')

@@ -619,9 +619,23 @@ timeseries_energy() {
         -selname,ckekm,cpeke,cpmkm,cpmpe,dke,dkm,gpe,gpm,ke,km,pe,pm \
         $file energy.${idx}.nc
       ncap2 -A -s 'lon[$lon] = float(0.0)' energy.${idx}.nc
-      ncatted -a long_name,lon,o,c,'longitude' \
-              -a units,lon,o,c,'degrees_east' \
-              -a axis,lon,o,c,'Y' energy.${idx}.nc
+      ncatted \
+        -a long_name,lon,o,c,'longitude' \
+        -a units,lon,o,c,'degrees_east' \
+        -a axis,lon,o,c,'Y' \
+        -a units,ckekm,o,c,'W/m2' \
+        -a units,cpeke,o,c,'W/m2' \
+        -a units,cpmkm,o,c,'W/m2' \
+        -a units,cpmpe,o,c,'W/m2' \
+        -a units,dke,o,c,'W/m2' \
+        -a units,dkm,o,c,'W/m2' \
+        -a units,gpe,o,c,'W/m2' \
+        -a units,gpm,o,c,'W/m2' \
+        -a units,ke,o,c,'J/m2' \
+        -a units,km,o,c,'J/m2' \
+        -a units,pe,o,c,'J/m2' \
+        -a units,pm,o,c,'J/m2' \
+        energy.${idx}.nc 
       for region in "${regions[@]}"; do
         cdo --no_warnings $flags -fldmean ${!region} \
           energy.${idx}.nc energy_${region}.${idx}.nc

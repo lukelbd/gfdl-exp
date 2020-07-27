@@ -68,7 +68,7 @@ u = f->u
 v = f->v
 z = f->z
 delete(f)  ; we have read everything
-if t!0.ne."time" .or. t!1.ne."plev" .or. t!2.ne."lat" .or. t!3.ne."lon"
+if t!0 .ne. "time" .or. t!1 .ne. "plev" .or. t!2 .ne. "lat" .or. t!3 .ne. "lon"
     print((/t!0, t!1, t!2, t!3/))
     print("fatal:Unexpected dimension names or order. Should be time by plev by lat by lon.")
     exit  ; makes life easier to be able to make this assumption
@@ -155,6 +155,8 @@ delete(zvar)
 timer("  * Time for getting variance terms")
 
 ; Eddy flux
+; NOTE: Do not store vertical eddy heat flux because it is easily backed
+; out of cpeke term.
 ehf = dim_avg_n(t_star * v_star, 3)
 ehf@long_name = "eddy heat flux"
 ehf@units = "K m/s"
@@ -284,6 +286,8 @@ timer("  * Time for dissipation terms")
 
 ; Conversion from eddy APE to eddy KE, mean APE to mean KE
 ; Eddy component
+; NOTE: This is also eddy adiabatic heating heat budget term! Do not store vertical
+; eddy heat flux separately because it can be easily backed out from this term.
 cpeke = -1.0 * R * (dim_avg_n(w_star * t_star, 3) / conform_dims(bar_dims, p, 1))
 cpeke@long_name = "eddy APE conversion to eddy KE"
 cpeke@units = "W/kg"

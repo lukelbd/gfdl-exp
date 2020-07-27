@@ -75,6 +75,9 @@ ke_clinic = np.sqrt(
 )
 
 # Parameter settings
+# NOTE: These parameters are all equivalent to things we calculate without
+# spectral decomposition in pressure_params.ncl. Good sanity check is to *add
+# values along power dimension* and ensure they equal undecomposed values.
 params = {
     'ehf': (tstar, vstar),
     'emf': (ustar, vstar),
@@ -83,11 +86,11 @@ params = {
     'ke_clinic': (ke_clinic,),
 }
 shorts = {
-    'ehf': ('t_power', 'v_power', 'ehf_power'),
-    'emf': ('u_power', 'v_power', 'emf_power'),
-    'ke': ('ke_power',),
-    'ke_tropic': ('ke_tropic_power',),
-    'ke_clinic': ('ke_clinic_power',),
+    'ehf': ('tvar', 'vvar', 'ehf'),
+    'emf': ('uvar', 'vvar', 'emf'),
+    'ke': ('ke',),
+    'ke_tropic': ('ke_tropic',),
+    'ke_clinic': ('ke_clinic',),
 }
 longs = {
     'ehf': ('temperature', 'meridional wind', 'eddy heat flux'),

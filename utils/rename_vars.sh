@@ -5,10 +5,10 @@
 shopt -s nullglob
 storage=~/data/timescales
 scratch=/mdata1/ldavis/
-autocorr=true
-power=false  # translate spectral variables to include 'power' suffix?
+autocorr=false
+power=true  # translate spectral variables to include 'power' suffix?
 lower=false  # translate variables to lowercase?
-dryrun=true
+dryrun=false
 nclist() { # copied from bashrc
   command ncdump -h "$1" \
     | sed -n '/variables:/,$p' \
@@ -31,6 +31,8 @@ for exp in ${scratch}/{hs,pk,dbt}* ${storage}/{hs,pk,dbt}*; do
   echo "Experiment: ${exp##*/}"
 
   # Rename 't' and 'u' variables in autocorrelation files
+  # Variables should only have same name if they refer to the same
+  # physical quantity *and* they have the same units!
   if $autocorr; then
     for string in autocorr autocorr_timescale; do
       [ "$string" == 'autocorr' ] && suffix=autocorr || suffix=timescale
@@ -40,7 +42,8 @@ for exp in ${scratch}/{hs,pk,dbt}* ${storage}/{hs,pk,dbt}*; do
         unset cmd
         vars=($(nclist $file))
         for var in "${vars[@]}"; do
-          [[ " ${oldvars[@]} " =~ " $var " ]] && cmd+="-v ${var},${var}_${suffix} "
+          # shellcheck disable=2076
+          [[ " ${oldvars[*]} " =~ " $var " ]] && cmd+="-v ${var},${var}_${suffix} "
         done
         [ -z "$cmd" ] && continue
         echo "ncrename $cmd $file"
@@ -52,12 +55,17 @@ for exp in ${scratch}/{hs,pk,dbt}* ${storage}/{hs,pk,dbt}*; do
   # Spectral power
   if $power; then
     glob='*spectral*.nc'
-    oldvars=(t u v ehf emf ke ke_clinic ke_tropic)
+    # oldvars=(t u v ehf emf ke ke_clinic ke_tropic)
+    oldvars=(t_power u_power v_power ehf_power emf_power ke_power ke_clinic_power ke_tropic_power)
+    newvars=(tvar uvar vvar ehf emf ke ke_clinic ke_tropic)
     for file in ${exp}/${glob} ${exp}/netcdf/${glob}; do
       unset cmd
       vars=($(nclist $file))
-      for var in "${vars[@]}"; do
-        [[ " ${oldvars[@]} " =~ " $var " ]] && cmd+="-v ${var},${var}_power "
+      for i in $(seq 1 ${#oldvars[@]}); do
+        oldvar=${oldvars[i-1]}
+        newvar=${newvars[i-1]}
+        # shellcheck disable=2076
+        [[ " ${vars[*]} " =~ " $oldvar " ]] && cmd+="-v ${oldvar},${newvar} "
       done
       [ -z "$cmd" ] && continue
       echo "ncrename $cmd $file"
