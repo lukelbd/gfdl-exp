@@ -13,11 +13,12 @@ Usage
 
 Optional arguments
 
-  -q    Immediately quit and do nothing. Used in 'drycore_run'.
-  -c    Just combine files, do not process them.
-  -d    Keep all intermediate files.
-  -k    Whether to keep full res files or delete them.
-  -d=*  The input directory. Defaults to current directory.
+  -h|--help     Print this message and quit.
+  -q|--quit     Immediately quit and do nothing. Used in 'drycore_run'.
+  -d|--debug    Keep all intermediate files.
+  -c|--combine  Just combine files, do not process them.
+  -k|--keep     Whether to keep full res files or delete them. Delete by default.
+  -d=*|--dir=*  The input directory. Defaults to current directory.
 "
 # Parse input
 shopt -s nullglob
@@ -29,12 +30,12 @@ nsplit=0  # split time dimension into this many pieces and merge with nccombine
 # nsplit=4
 while [ $# -gt 0 ]; do
   case $1 in
-    -h) echo "$doc"; exit 0 ;;
-    -q) echo "Skipping processing." && exit 0 ;;
-    -c) echo "Only combining files." && combine=true ;;
-    -d) debug=true    ;;
-    -k) keepfull=true  ;;
-    -d=*) dir=${1##*=}  ;;
+    -h|--help)     echo "$doc"; exit 0 ;;
+    -q|--quit)     echo "Skipping processing." && exit 0 ;;
+    -c|--combine)  echo "Only combining files." && combine=true ;;
+    -d|--debug)    debug=true    ;;
+    -k|--keep)     keepfull=true  ;;
+    -d=*|--dir=*)  dir=${1##*=}  ;;
     *) raise 127 "Unknown flag \"$1\"." ;;
   esac
   shift # shift by one
@@ -70,6 +71,7 @@ hash ncks 2>/dev/null || raise 127 "NCO is not in $PATH."
 attrfix() {
   # Apply some simple modifications to attributes
   # NOTE: Use -h to prevent appending history
+  # NOTE: For model to run
   # WARNING: Some NCO distros seem to have fatal issue with using multiple
   # ncrename instructions in same command! Fails on cheyenne when we try to
   # do it in one line.
@@ -80,10 +82,11 @@ attrfix() {
   ncrename -h -v pfull,mlev $file
   ncrename -h -v phalf,ilev $file
   ncatted -h -O -a bounds,mlev,o,c,'ilev' $file
+  ncatted -h -O -a units,time,o,c,'days since 0001-01-01 00:00:00' $file  # nctimeaxis-friendly base time
 }
 
 # Function for interpolating model levels
-plev_isen_interp() {
+level_interp() {
   # Interplolate to pressure levels from model levels
   local t log file plevout isenout suffix
   file="$1"
@@ -94,7 +97,7 @@ plev_isen_interp() {
 
   # Interpolation to pressure
   t=$(date +%s)
-  log=LOGS/log.pinterp.${suffix%.nc}
+  log=LOGS/interp_isobaric.${suffix%.nc}.log
   echo "Interpolating to pressure levs..." # -Q = no banner, -n = do not enumerate print statements
   [ -r "$plevout" ] && rm "$plevout"
   ncl -n -Q "filename=\"$file\"" "output=\"$plevout\"" $plev_interp &>$log #2> /dev/null
@@ -106,7 +109,7 @@ plev_isen_interp() {
 
   # Interpolation to isentropes
   t=$(date +%s)
-  log=LOGS/log.iinterp.${suffix%.nc}
+  log=LOGS/interp_isentropic.${suffix%.nc}.log
   echo "Interpolating to isentropes..."
   [ -r "$isenout" ] && rm "$isenout"
   ncl -n -Q "filename=\"$file\"" "output=\"$isenout\"" "stratosphere=False" $isen_interp &>$log #2> /dev/null
@@ -123,7 +126,7 @@ plev_means() {
   file="$1"
   suffix="$2"
   out=means.${suffix}
-  log=LOGS/log.means.${suffix%.nc}
+  log=LOGS/means.${suffix%.nc}.log
   t=$(date +%s)
   echo "Getting zonal means..."
   [ -r "$out" ] && rm "$out"
@@ -145,7 +148,7 @@ plev_isen_params() {
 
   # Pressure lev params
   t=$(date +%s)
-  log=LOGS/log.pparams.${suffix%.nc}
+  log=LOGS/params_isobaric.${suffix%.nc}.log
   echo "Getting pressure params..."
   [ -r "$plevout" ] && rm "$plevout"
   ncl -n -Q "filename=\"interp_plev.$suffix\"" "output=\"$plevout\"" "means=\"means.$suffix\"" $plev_params &>$log
@@ -156,7 +159,7 @@ plev_isen_params() {
 
   # Isentropic params
   t=$(date +%s)
-  log=LOGS/log.iparams.${suffix%.nc}
+  log=LOGS/params_isentropic.${suffix%.nc}.log
   echo "Getting isentropic params..."
   [ -r "$isenout" ] && rm "$isenout"
   ncl -n -Q "filename=\"interp_isen.$suffix\"" "output=\"$isenout\"" $isen_params &>$log
@@ -176,7 +179,7 @@ spectra() {
   # Calculate
   t=$(date +%s)
   echo "Calculating spectra..." # -Q = no banner, -n = do not enumerate print statements
-  log=LOGS/log.spectra.${suffix%.nc}
+  log=LOGS/spectra.${suffix%.nc}.log
   [ -r $out ] && rm $out
   $spectra interp_plev.${suffix} $out &>$log \
     || raise 4 "Something failed while getting spectra."
@@ -208,13 +211,13 @@ fi
 $debug && cmd='cp' || cmd='mv'
 [ -d ../netcdf ] || mkdir ../netcdf
 for prefix in ${prefixes[@]}; do
-  # Initial stuff
   # Rename the output files so they end in '.nc'
   base=${prefix%%.*}
   for part in ${base}.nc*; do
     num=${part##*.}
     mv $part ${base}.${num}.nc
   done
+
   # File names
   ncfiles=(${base}.*.nc)
   echo Files: ${ncfiles[@]}
@@ -222,6 +225,7 @@ for prefix in ${prefixes[@]}; do
   plev_yzfile="${base}_summary.${PWD##*/}.nc" # longitude-averaged data
   isen_yzfile="${base}_summary_isen.${PWD##*/}.nc" # isentropic coords
   spectra_file="${base}_spectral.${PWD##*/}.nc" # spectral decomposition
+
   # Just want to combine files and exit?
   if $combine || [ ${base##*/} == "mean_tdt" ]; then
     [ -r ${base}.nc ] && rm ${base}.nc
@@ -233,7 +237,7 @@ for prefix in ${prefixes[@]}; do
   fi
 
   #----------------------------------------------------------------------------#
-  # 0) Pull out temporal mean temp on *model* levels, for later application
+  # 0. Pull out temporal mean temp on *model* levels, for later application
   #----------------------------------------------------------------------------#
   # Pull out temporal mean heating on model levels
   # for file in ${ncfiles[@]}; do
@@ -242,7 +246,7 @@ for prefix in ${prefixes[@]}; do
   # cdo -zonmean
 
   #----------------------------------------------------------------------------#
-  # 1) Interpolate to pressure, get means in parallel
+  # 1. Interpolate to pressure, get means in parallel
   #----------------------------------------------------------------------------#
   # Calculate
   unset pids suffixes
@@ -256,9 +260,9 @@ for prefix in ${prefixes[@]}; do
     suffix=${num}.nc
     # Interpolate and get means
     {
-      plev_isen_interp "$ncfile" "$suffix"  # generate interp_plev.nc and interp_isen.nc files
+      level_interp "$ncfile" "$suffix"  # generate interp_plev.nc and interp_isen.nc files
       plev_means "interp_plev.$suffix" "$suffix"  # generate means.nc files
-    } &>LOGS/log.$num &
+    } &>LOGS/$num.log &
     pids+=($!)
     suffixes+=($suffix)
   done
@@ -279,7 +283,7 @@ for prefix in ${prefixes[@]}; do
   fi
 
   #----------------------------------------------------------------------------#
-  # 2) Get spectra, and merge them
+  # 2. Get spectra, and merge them
   # NOTE: Now we just save full resolution files, and get spectra later
   # and combine *overlapping* windows of days, with process_post.
   #----------------------------------------------------------------------------#
@@ -290,7 +294,7 @@ for prefix in ${prefixes[@]}; do
   # for suffix in ${suffixes[@]}; do
   #   num=${suffix%.nc}
   #   [ "$suffix" == "nc" ] && num=0000
-  #   spectra "$suffix" &>>LOGS/log.${num} &
+  #   spectra "$suffix" &>>LOGS/${num}.log &
   #   pids+=($!)
   # done
   # pidcheck ${pids[@]}
@@ -315,7 +319,7 @@ for prefix in ${prefixes[@]}; do
   # fi
 
   #----------------------------------------------------------------------------#
-  # 3) Calculate other params in parallel
+  # 3. Calculate other params in parallel
   #----------------------------------------------------------------------------#
   # Global means were required for some, hence the initial merge
   unset pids
@@ -324,7 +328,7 @@ for prefix in ${prefixes[@]}; do
   for suffix in ${suffixes[@]}; do
     num=${suffix%.nc}
     [ "$suffix" == "nc" ] && num=0000
-    plev_isen_params "$suffix" &>>LOGS/log.${num} &
+    plev_isen_params "$suffix" &>>LOGS/${num}.log &
     pids+=($!)
   done
   pidcheck ${pids[@]}
@@ -356,7 +360,7 @@ for prefix in ${prefixes[@]}; do
   $debug || rm means.nc means.*.nc params_plev.*.nc params_isen.*.nc
 
   #----------------------------------------------------------------------------#
-  # 4) Optionally merge the full-resolution pressure-interpolated files
+  # 4. Optionally merge the full-resolution pressure-interpolated files
   #----------------------------------------------------------------------------#
   # TODO: Consider reducing to a standard horizontal resolution at least, if
   # not vertical? This could save considerable space.

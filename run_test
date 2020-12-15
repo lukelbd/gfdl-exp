@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Use this file for conducting tests
+# NOTE: Current result is that parallel experiments are always worse, even
+# with mathematically equivalent number of cores or integration times.
+export TIMEFORMAT=$'real %3R user %3U sys %3S'
+
+# Result:
+# In series vs. in parallel (with number of cores correspondingly reduced).
+# Parallel runs: 1
+# real 12.338 user 163.945 sys 26.536
+# Parallel runs: 2
+# real 25.533 user 292.048 sys 48.481
+# Parallel runs: 4
+# real 44.225 user 589.235 sys 98.182
+# Parallel runs: 8
+# real 76.200 user 1054.797 sys 180.549
+if false; then
+  echo 'In series vs. in parallel (with number of cores correspondingly reduced).'
+  for np in 1 2 4 8; do
+    echo "Parallel runs: $np"
+    time {
+      for p in $(seq 1 $np); do
+        name=test$p
+        cores=$((16 / p))
+        ./run_series -t -c=$cores -h=4 -te=1 -dt=600 -b=$name \
+          hs1_base_t85l60e 1>/dev/null &
+      done
+      wait
+    }
+  done
+fi
+
+# Result:
+# In series vs. in parallel (with integration time correspondingly reduced)
+# Parallel runs: 1
+# real 22.925 user 154.237 sys 26.207
+# Parallel runs: 2
+# real 35.279 user 387.922 sys 59.823
+# Parallel runs: 4
+# real 46.461 user 874.837 sys 141.256
+# Parallel runs: 8
+# real 64.045 user 1473.618 sys 173.321
+if true; then
+  echo 'In series vs. in parallel (with integration time correspondingly reduced)'
+  for np in 1 2 4 8; do
+    echo "Parallel runs: $np"
+    time {
+      for p in $(seq 1 $np); do
+        name=test$p
+        hours=$((8 / p))
+        ./run_series -t -c=8 -h=$hours -te=1 -dt=600 -b=$name \
+          hs1_base_t85l60e 1>/dev/null &
+      done
+      wait
+    }
+  done
+fi

@@ -77,11 +77,7 @@ case ${HOSTNAME%%.*} in
   *) raise "Unknown host, must edit batch script before continuing." ;;
 esac
 
-#------------------------------------------------------------------------------#
-# Helper functions
-#------------------------------------------------------------------------------#
-# NCL log
-# "Success" is when the grep fails, i.e. no fatal warning messages
+# NCL log check. "Success" is when the grep fails, i.e. no fatal warning messages
 logcheck() { # WARNING: NCL adds '^M' before fatal: messages, so a search for ^fatal: will fail!
   ! cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | grep -E "fatal:|Error" &>/dev/null
 }
@@ -115,9 +111,7 @@ background() {
   echo "Elapsed time: $(($(date +%s) - t))s."
 }
 
-#------------------------------------------------------------------------------#
 # Driver functions that calculate stuff on existing archived data
-#------------------------------------------------------------------------------#
 calc_spectra() {
   # Generate half-file
   if [ -z "$full_half" ] && [ -z "$spectral_half" ]; then
@@ -188,10 +182,15 @@ calc_isen() {
     t2=$((ii * nt / nmax - 1)) # e.g. nmax=10, nt=200, goes 19, 39, 59
     ilog=logs/isen${ii}.log
     {
-      ncl -n -Q "forcing=\"${full%/*}/../forcing.nc\"" \
-        "slice=(/$t1,$t2/)" "filename=\"${full}\"" "output=\"isen1.${ii}.nc\"" \
+      ncl -n -Q \
+        "forcing=\"${full%/*}/../forcing.nc\"" \
+        "slice=(/$t1,$t2/)" \
+        "filename=\"${full}\"" \
+        "output=\"isen1.${ii}.nc\"" \
         $isen_interp_ncl
-      ncl -n -Q "filename=\"isen1.${ii}.nc\"" "output=\"isen2.${ii}.nc\"" \
+      ncl -n -Q \
+        "filename=\"isen1.${ii}.nc\"" \
+        "output=\"isen2.${ii}.nc\"" \
         $isen_params_ncl
     } &>$ilog &
     ipids+=",$!"
@@ -213,9 +212,7 @@ calc_isen() {
   echo "Elapsed time: $(($(date +%s) - t))s."
 }
 
-#------------------------------------------------------------------------------#
 # Iterate through experiment folders
-#------------------------------------------------------------------------------#
 for scratch in "${scratches[@]}"; do
   for glob in "${globs[@]}"; do
     for dir in $scratch/$glob; do

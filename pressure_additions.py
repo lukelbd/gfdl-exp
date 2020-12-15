@@ -32,16 +32,15 @@ data.close()
 
 # Get pressure integration segments as space between subsequent half-levels
 # and between 'surface' presure and lowest half-level.
+bot = plev[-1]  # bottom level
 slp = slp[:, None, :, :]
 plev = plev[None, :, None, None]
 plev = np.tile(plev, (ntime, 1, nlat, nlon))
-dp = np.concatenate((
-    np.diff(plev, axis=1), slp - plev[:, -1:, :, :]  # lowest level is at end
-), axis=1)
+dp = np.concatenate((np.diff(plev, axis=1), slp - bot), axis=1)
 
 # Integrate to get geopotential height
 rho = plev / (Rd * t)
-z = np.cumsum((dp / (g * rho))[:, ::-1, :, :], axis=1)[:, ::-1, :]
+z = np.cumsum((dp / (g * rho))[:, ::-1, :, :], axis=1)[:, ::-1, :, :]
 
 # Get mean, variance, and fluxes
 z_bar = np.mean(z, axis=3, keepdims=True)
@@ -55,26 +54,26 @@ z_flux = np.mean(z_anom * v_anom, axis=3, keepdims=True)
 args = ('f4', ('time', 'plev', 'lat', 'lon'))
 data = nc4.Dataset(output, mode='a')
 if 'z' not in data.variables:
-    Zbar = data.createVariable('z', *args)
+    var = data.createVariable('z', *args)
 else:
-    Zbar = data['z']
-Zbar.long_name = 'geopotential height'
-Zbar.units = 'm'
-Zbar[:] = z_bar
+    var = data['z']
+var.long_name = 'geopotential height'
+var.units = 'm'
+var[:] = z_bar
 
 if 'zvar' not in data.variables:
-    Zvar = data.createVariable('zvar', *args)
+    var = data.createVariable('zvar', *args)
 else:
-    Zvar = data['zvar']
-Zvar.long_name = 'geopotential height variance'
-Zvar.units = 'm2'
-Zvar[:] = z_var
+    var = data['zvar']
+var.long_name = 'geopotential height variance'
+var.units = 'm2'
+var[:] = z_var
 
 if 'egf' not in data.variables:
-    Zflux = data.createVariable('egf', *args)
+    var = data.createVariable('egf', *args)
 else:
-    Zflux = data['egf']
-Zflux.long_name = 'eddy geopotential height flux'
-Zflux.units = 'm2/s'
-Zflux[:] = z_flux
+    var = data['egf']
+var.long_name = 'eddy geopotential height flux'
+var.units = 'm2/s'
+var[:] = z_flux
 data.close()

@@ -55,9 +55,9 @@ days = "$days".split()
 step = 50  # days
 missing = {}  # find groups of days for which stuff is missing
 full = {
-    'ckekm', 'cpeke', 'cpmkm', 'cpmpe', 'dke', 'dkm', 'gpe', 'gpm',
-    'ke', 'km', 'pe', 'pm', 'ehf', 'emf', 'b', 'omega', 'slp',
-    't', 'tdt', 'tvar', 'u', 'udt', 'uvar', 'v', 'vdt', 'vvar',
+    'ckekm', 'cpeke', 'cpmkm', 'cpmpe', 'dke', 'dkm', 'gpe', 'gpm', 'ke', 'km', 'pe', 'pm',
+    't', 'tdt', 'tvar', 'u', 'udt', 'uvar', 'v', 'vdt', 'vvar', 'z', 'zvar', 'omega', 'slp',
+    'ehf', 'egf', 'emf',
 }
 for vars, days in zip(vars, days):
     vars = set(vars.split(','))  # should be space-delimited string

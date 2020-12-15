@@ -17,8 +17,8 @@ def timer(message):  # noqa: E302
 print('Imports')  # noqa: E305
 import os
 import sys
-import climpy
-from climpy import const
+import climopy as climo
+from climopy import const
 import numpy as np
 import xarray as xr
 timer(' * Time for imports')
@@ -116,7 +116,7 @@ for name in names:
             'Setting to zero.'
         )
         data[mask] = 0
-    evals, nstar, _, pcs = climpy.eof(
+    evals, nstar, _, pcs = climo.eof(
         data, axis_time=0, axis_space=(1, 2),
         neof=neof, weights=weights, percent=True,
     )
@@ -183,9 +183,9 @@ pt = t * (1000.0 / plev.values[:, None]) ** (2 / 7)
 rho = plev.values[:, None] * 100.0 / (287.0 * t)
 if not t.ndim == 3:
     raise ValueError('Wrong dimensionality')
-dptdy = climpy.deriv1_uneven(y, t, axis=2, keepedges=True)
+dptdy = climo.deriv1_uneven(y, t, axis=2, keepedges=True)
 dptdy[dptdy == 0] = np.nan
-dptdz = -rho * const.g * climpy.deriv1_uneven(100.0 * plev, pt, axis=1, keepedges=True)
+dptdz = -rho * const.g * climo.deriv1_uneven(100.0 * plev, pt, axis=1, keepedges=True)
 slope = -dptdy / dptdz  # NOTE: want sign to *match sign of heat flux*
 slope = xr.DataArray(
     slope,
@@ -201,7 +201,7 @@ emf = file['emf'].squeeze().values
 if not emf.ndim == 3:
     raise ValueError('Shit.')
 cos = np.cos(phi) ** 2
-cemf = -climpy.deriv1_uneven(y, cos * emf, keepedges=True, axis=2) / cos
+cemf = -climo.deriv1_uneven(y, cos * emf, keepedges=True, axis=2) / cos
 cemf = xr.DataArray(
     cemf,
     dims=('time', 'plev', 'lat'),

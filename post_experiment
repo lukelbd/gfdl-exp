@@ -17,24 +17,24 @@ Required arguments
 
 Optional arguments
 
-  -o     Overwrite newer files.
-  -f     Copy forcing data from experiment scratch disk to data folder
-  -cp    Average climate stats from pressure lev data.
-  -cs    Average climate stats from 2D-spectral decomps.
-  -ci    Average climate stats from isentropic lev data.
-  -cv    EOF decomps from pressure lev data.
-  -ca    Temperature autocorrelation from pressure lev data.
-  -te    Lorenz energy budget time series.
-  -ts    Surface parameters w.r.t. latitude time series.
-  -se    Ensemble mean spindown cross-section from pressure lev data.
-  -sr    Spindown data from each ensemble averaged over some region.
-  -st    Spindown dynamical timescale calculated from each ensemble (?)
-  -m=*   Spindown mode (see drycore_series).
-  -r=*   Restart days blocks.
-  -c1=*  Start day for climate averages.
-  -c2=*  End day for climate averages.
-  -s1=*  Start day for spindown stats, relative to spindown start.
-  -s2=*  End day for spindown stats, relative to spindown start.
+ -o|--overwrite             Overwrite newer files.
+ -c|--constants             Copy constants from experiment scratch disk to data folder
+ -cp|--climate-plev         Average climate stats from pressure lev data.
+ -cs|--climate-spectral     Average climate stats from 2D-spectral decomps.
+ -ci|--climate-isentropic   Average climate stats from isentropic lev data.
+ -cv|--climate-variability  EOF decomps from pressure lev data.
+ -ca|--climate-autocorr     Temperature autocorrelation from pressure lev data.
+ -te|--timeseries-energy    Lorenz energy budget time series.
+ -ts|--timeseries-surface   Surface parameters w.r.t. latitude time series.
+ -se|--spindown-ensemble    Ensemble mean spindown cross-section from pressure lev data.
+ -sr|--spindown-regional    Spindown data from each ensemble averaged over some region.
+ -st|--spindown-timescale   Spindown dynamical timescale calculated from each ensemble (?   
+ -r=*|--restart-days=*      Restart days blocks.
+ -c1=*|--climate-start=*    Start day for climate averages.
+ -c2=*|--climate-end=*      End day for climate averages.
+ -s1=*|--spindown-start=*   Start day for spindown stats, relative to spindown start.
+ -s2=*|--spindown-end=*     End day for spindown stats, relative to spindown start.
+ -sm=*|--spindown-mode=*    The spindown mode.
 "
 # NOTE: ncrcat is generally faster than mergetime but performs *no sorting*
 # so make sure the files are in correct time order.
@@ -56,14 +56,12 @@ raise() {
 
 
 # Environmental variables, with defaults
-flags='-s -O' # overwrite, and only issue warnings
-subfolder=true # use subfolder? have this so if we just got forcing data and have no real data yet
+flags='-s -O'  # overwrite, and only issue warnings
+subfolder=true  # use subfolder? have this so if we just got constants and have no real data yet
 overwrite=false
 smode=0
 rdays=100
-spin_start=0
-spin_end=9900 # just get all of them
-forcing=false
+constants=false
 climate_plev=false
 climate_isen=false
 timeseries_energy=false
@@ -71,6 +69,11 @@ timeseries_surface=false
 climate_autocorr=false
 climate_variability=false
 climate_spectral=false
+spindown_start=0
+spindown_end=100000
+spindown_timescale=false
+spindown_ensemble_ts=false
+spindown_regional_ts=false
 
 # Scripts
 # shellcheck disable=2034
@@ -94,36 +97,29 @@ dyn=$(pwd)/post_dyntau.py
   ncsh='lat,-90.0,0.0'
 }
 
-# Spindown options
-spin_start=0
-spin_end=100000
-spindown_timescale=false
-spindown_ensemble_ts=false
-spindown_regional_ts=false
-
 # Parse user input
 while [ $# -gt 0 ]; do
   case $1 in
     -h) echo "$doc"; exit ;;
-    -o) overwrite=true ;;
-    -f) forcing=true ;;
-    -cp) climate_plev=true ;;
-    -cs) climate_spectral=true ;;
-    -ci) climate_isen=true ;;
-    -cv) climate_variability=true ;; # variability
-    -ca) climate_autocorr=true ;;
-    -te) timeseries_energy=true ;;
-    -ts) timeseries_surface=true ;;
-    -se) spindown_ensemble_ts=true ;;
-    -sr) spindown_regional_ts=true ;;
-    -st) spindown_timescale=true ;;
-    -m=*) smode=${1##*=} ;;
-    -r=*) rdays=${1##*=} ;;
-    -c1=*) climo_start=${1##*=} ;;
-    -c2=*) climo_end=${1##*=} ;;
-    -s1=*) spin_start=${1##*=} ;;
-    -s2=*) spin_end=${1##*=} ;;
-    -*) raise "Unknown flag \"${1}\".";;
+    -o|--overwrite)            overwrite=true ;;
+    -c|--constants)            constants=true ;;
+    -cp|--climate-plev)        climate_plev=true ;;
+    -cs|--climate-spectral)    climate_spectral=true ;;
+    -ci|--climate-isentropic)  climate_isen=true ;;
+    -cv|--climate-variability) climate_variability=true ;; # variability
+    -ca|--climate-autocorr)    climate_autocorr=true ;;
+    -te|--timeseries-energy)   timeseries_energy=true ;;
+    -ts|--timeseries-surface)  timeseries_surface=true ;;
+    -se|--spindown-ensemble)   spindown_ensemble_ts=true ;;
+    -sr|--spindown-regional)   spindown_regional_ts=true ;;
+    -st|--spindown-timescale)  spindown_timescale=true ;;
+    -r=*|--restart-days=*)     rdays=${1##*=} ;;
+    -c1=*|--climate-start=*)   climate_start=${1##*=} ;;
+    -c2=*|--climate-end=*)     climate_end=${1##*=} ;;
+    -s1=*|--spindown-start=*)  spindown_start=${1##*=} ;;
+    -s2=*|--spindown-end=*)    spindown_end=${1##*=} ;;
+    -sm=*|--spindown-mode=*)   smode=${1##*=} ;;
+    -*) raise "Unknown flag '$1'.";;
     *) # 3 required arguments, set in this order
       if [ -z "$filename" ]; then
         filename="$1"
@@ -138,14 +134,14 @@ while [ $# -gt 0 ]; do
 done
 
 # Requirements
-[ -n "$climo_start" ] || raise "Specify start day with c1=day."
-[ -n "$climo_end" ] || raise "Specify end day with c2=day."
+[ -n "$climate_start" ] || raise "Specify start day with c1=day."
+[ -n "$climate_end" ] || raise "Specify end day with c2=day."
+if [ -z "$filename" ] || [ -z "$input" ] || [ -z "$output" ]; then
+  raise "Need filename prefix (e.g. 2xdaily_inst), input folder, and output folder, in that order."
+fi
 if $subfolder; then
   [ -d "$input/netcdf" ] || { [ -d "$input" ] && mkdir "$input/netcdf"; }
   input="$input/netcdf"
-fi
-if [ -z "$filename" ] || [ -z "$input" ] || [ -z "$output" ]; then
-  raise "Need filename prefix (e.g. 2xdaily_inst), input folder, and output folder, in that order."
 fi
 
 # File management/names
@@ -157,7 +153,7 @@ psummary_isen=${filename}_summary_isen
 # Destinations for output files
 # fregion=${filename}_timeseries.${days}.nc
 # fregion_isen=${filename}_timeseries_isen.${days}.nc
-period=d$(printf "%05d" "${climo_start}")-d$(printf "%05d" "${climo_end}")
+period=d$(printf "%05d" "${climate_start}")-d$(printf "%05d" "${climate_end}")
 feofs=${filename}_eofs.${period}.nc
 fspectral=${filename}_spectral.${period}.nc
 fautocorr=${filename}_autocorr.${period}.nc
@@ -166,13 +162,13 @@ fclimate=${filename}_climate.${period}.nc
 fclimate_isen=${filename}_climate_isen.${period}.nc
 fenergy=${filename}_energy.${period}.nc
 fsurface=${filename}_surface.${period}.nc
-fspinclimate=${filename}_spindown${smode}xs.${period}.nc # cross-section
-fspindownpoles=${filename}_spindown${smode}poles.${period}.nc # spindown rate at the poles
+fspinclimate=${filename}_spindown${smode}_climate.${period}.nc # cross-section
+fspindownpoles=${filename}_spindown${smode}_timeseries.${period}.nc # spindown rate at the poles
 fdyntimescale=${filename}_dynamical_timescale${smode}.${period}.nc # the timescale stuff
 
 # Directory management; move to save directory
 # cwd=$(pwd)  # where scripts stored (you must run this script from current directory!)
-[ -d "$input" ] || raise "Cannot find input directory \"$input\"."
+[ -d "$input" ] || raise "Cannot find input directory '$input'."
 [ -d "$output" ] || mkdir "$output"
 cd "$output" || raise "Failed to move to ${output}."
 
@@ -193,7 +189,7 @@ newer() {
   idest="${dest%%.*}.nc"
   [ "$dest" != "$idest" ] && [ -r "$idest" ] && {
     rm "$idest"
-    echoerr "Warning: Removed file \"$idest\" with no day string."
+    echoerr "Warning: Removed file '$idest' with no day string."
   }
 
   # Test if sources are available; never try to run processing script if not
@@ -245,109 +241,133 @@ newer() {
 #-----------------------------------------------------------------------------#
 # Get lists of files
 #-----------------------------------------------------------------------------#
+# Get start and end day from
+get_days() {
+  daystring=${file##*/}
+  daystring=${daystring%.nc}
+  daystring=${daystring#*.}
+  iday1=${daystring%%-*}
+  iday1=$(printf "%.f" "${iday1#d}") || raise 'Failed to get day 1.'
+  iday2=${daystring##*-}
+  iday2=$(printf "%.f" "${iday2#d}") || raise 'Failed to get day 2.'
+  echo "$iday1" "$iday2"
+}
+
 # Climate files within day range (e.g. to ignore spinup)
 # Used for climate means and climate variability stuff
-# climate_files() {
+# NOTE: This is generally called in *subshell* to capture its stdout so
+# 'raised' error messages that call exit will not exit this script.
 get_files() {
-  # Initial stuff
-  local prefix file files filtered days start end
-  local daystring nfiles day1 day2
-  prefix=$1
-  start=$climo_start
-  end=$climo_end
-  [ -n "$2" ] && start=$2
-  [ -n "$3" ] && end=$3
-  if [ $(((end - start) % rdays)) -ne 0 ]; then
-    echoerr "Non-integer number of $rdays-day blocks between days $start and $end."
-    return 1
+  # Parse args
+  local prefix file files ffiles
+  local daystring day1 day2 days iday1 iday2 maxmissing
+  maxmissing=5  # max number of files missing to establish climatology
+  # maxmissing=0
+  day1=$climate_start
+  day2=$climate_end
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -d1=*|--day1=*)         day1=${1#*=} ;;
+      -d2=*|--day2=*)         day2=${1#*=} ;;
+      -mm=*|--max-missing=*)  maxmissing=${1#*=} ;;
+      -*)
+        raise "Unknown args passed to get_files."
+      ;;
+      *)
+        if [ -n "$prefix" ]; then
+          raise "Too many prefixes passed to get_files."
+        fi
+        prefix="$1"
+      ;;
+    esac
+    shift
+  done
+  if [ $(((day2 - day1) % rdays)) -ne 0 ]; then
+    raise "Non-integer number of $rdays-day blocks between days $day1 and $day2."
   fi
 
   # Get files within day range
   files=($input/${prefix}.d?????-d?????.nc)
   if [ ${#files[@]} -eq 0 ]; then
-    echoerr "No $prefix files found in ${input}."
-    return 1
+    raise "No $prefix files found in ${input}."
   fi
+  echoerr "Files: ${files[*]##*/}"
   for file in "${files[@]}"; do
-    daystring=${file##*/}
-    daystring=${daystring%.nc}
-    daystring=${daystring#*.}
-    day1=${daystring%%-*}
-    day1=$(printf "%.f" "${day1#d}")
-    day2=${daystring##*-}
-    day2=$(printf "%.f" "${day2#d}")
-    if [ $((day2 - day1)) -ne "$rdays" ]; then
+    idays=($(get_days "$file"))
+    iday1=${idays[0]}
+    iday2=${idays[1]}
+    if [ $((iday2 - iday1)) -ne "$rdays" ]; then
       continue
     fi
-    if [ "$day1" -ge "$start" ] && [ "$day2" -le "$end" ]; then
-      days+=($day1)
-      filtered+=($file)
+    if [ "$iday1" -ge "$day1" ] && [ "$iday2" -le "$day2" ]; then
+      days+=($iday1)
+      ffiles+=($file)
     fi
   done
-  if [ ${#filtered[@]} -eq 0 ]; then
-    echoerr "No $prefix files found between days $start and ${end}."
-    return 1
+  if [ ${#ffiles[@]} -eq 0 ]; then
+    raise "No $prefix $rdays-day blocks found between days $day1 and ${day2}."
   fi
 
-  # Permit only up to 2 files missing. Sometimes accidentally delete or
+  # Permit only up to N files missing. Sometimes accidentally delete or
   # corrupt files while testing things. For spectral data, should also have
   # *half-day* files e.g. 500-600, 550-650, 600-700, etc.
   if [[ "$prefix" =~ spectral ]]; then
-    nexpected=$((2 * ( (end - start) / rdays) - 1))
+    nexpected=$((2 * ( (day2 - day1) / rdays) - 1))
   else
-    nexpected=$(( (end - start) / rdays))
+    nexpected=$(( (day2 - day1) / rdays))
   fi
-  nfiltered=${#filtered[@]}
-  message="Expected $nexpected files between days $start and ${end}, got ${#filtered[@]}. Days: ${days[*]}"
-  if [ ${#filtered[@]} -ne $nexpected ]; then
-    if [ $((nexpected - nfiltered)) -le 2 ]; then
+  nfiltered=${#ffiles[@]}
+  message="Expected $nexpected $rdays-day blocks between days $day1 and ${day2}, got ${#ffiles[@]}. Days: ${days[*]}"
+  if [ ${#ffiles[@]} -ne $nexpected ]; then
+    # if [ $((nexpected - nfiltered)) -le 100 ]; then
+    if [ $((nexpected - nfiltered)) -le $maxmissing ]; then
       echoerr "Warning: $message"
     else
       raise "$message"
     fi
   fi
-  echo "${filtered[@]}" # intended for user to capture output
+  echo "${ffiles[@]}" # intended for user to capture output
 }
 
 # Spindown files grouped by initialization (branch) day
 # Used for determining if spindowns are 'unique'
 # TODO: Better print message
 spindown_files_by_init() {
-  echo "Getting list of spindown files within days $spin_start to $spin_end, grouped by control run initiation day."
-  startdays=()
+  echo "Getting list of spindown files within days $spindown_start to $spindown_end, grouped by control run initiation day."
+  day1s=()
   for file in $input/${psummary}.d?????-spindown$smode-d?????-d?????.nc; do
-    startday=${file#$input/${psummary}.}
-    startday=${startday%%-*} # the spindown day
-    startdays+=($startday)
+    day1=${file#$input/${psummary}.}
+    day1=${day1%%-*} # the spindown day
+    day1s+=($day1)
   done
-  startdays=($(echo "${startdays[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
+  day1s=($(echo "${day1s[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
   spindowntsfiles=()
-  for startday in "${startdays[@]}"; do
+  for day1 in "${day1s[@]}"; do
     spindowngroup="" # for particular days
-    for file in $input/${psummary}.${startday}-spindown$smode-d?????-d?????.nc; do
-      daystring=${file#$input/${psummary}.${startday}-spindown$smode-} # trim leading pattern
+    for file in $input/${psummary}.${day1}-spindown$smode-d?????-d?????.nc; do
+      daystring=${file#$input/${psummary}.${day1}-spindown$smode-} # trim leading pattern
       daystring=${daystring%.nc}
-      day1=${daystring%%-*} day1=${day1#d}
-      day2=${daystring##*-} day2=${day2#d}
-      [ "$day1" -ge "$spin_start" ] && [ "$day2" -le "$spin_end" ] && spindowngroup+=" $file"
+      iday1=${daystring%%-*} iday1=${iday1#d}
+      iday2=${daystring##*-} iday2=${iday2#d}
+      [ "$iday1" -ge "$spindown_start" ] && [ "$iday2" -le "$spindown_end" ] && spindowngroup+=" $file"
     done
     spindowntsfiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
   done
-  [ ${#spindowntsfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spin_start} and ${spin_end}."
+  [ ${#spindowntsfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spindown_start} and ${spindown_end}."
 }
 
 # Spindown files grouped by daystring (days after control run)
 # Used for dynamical timescale stuff
 # TODO: Better print message
 spindown_files_by_day() {
-  echo "Getting list of spindown files within days $spin_start to $spin_end, grouped by run day."
+  echo "Getting list of spindown files within days $spindown_start to $spindown_end, grouped by run day."
   daystrings=()
   for file in $input/${psummary}.d?????-spindown$smode-d?????-d?????.nc; do
     daystring=${file#$input/${psummary}.d?????-spindown$smode-} # trim leading pattern
     daystring=${daystring%.nc}
-    day1=${daystring%%-*} day1=${day1#d}
-    day2=${daystring##*-} day2=${day2#d}
-    [ "$day1" -ge "$spin_start" ] && [ "$day2" -le "$spin_end" ] && daystrings+=("$daystring")
+    iday1=${daystring%%-*} iday1=${iday1#d}
+    iday2=${daystring##*-} iday2=${iday2#d}
+    [ "$iday1" -ge "$spindown_start" ] && [ "$iday2" -le "$spindown_end" ] && daystrings+=("$daystring")
   done
   daystrings=($(echo "${daystrings[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')) # unique days
   spindowndayfiles=()
@@ -358,7 +378,7 @@ spindown_files_by_day() {
     done
     spindowndayfiles+=("$spindowngroup") # the group of files is preserved as single array element separated by strings
   done
-  [ ${#spindowndayfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spin_start} and ${spin_end}."
+  [ ${#spindowndayfiles[@]} -eq 0 ] && raise "No $psummary files found between days ${spindown_start} and ${spindown_end}."
 }
 
 #-----------------------------------------------------------------------------#
@@ -387,16 +407,11 @@ climate() {
 }
 
 # Average spectral runs
-# More complicated because no record dimension
-# Use undocumented feature referenced here: https://sourceforge.net/p/nco/discussion/9830/thread/cee4e1ad/
-# A 'negative' length indicates unlimited
-# Tried using the documented feature NC_UNLIMITED: http://nco.sourceforge.net/nco.html#Dimensions
-# but did not work. NOTE: No longer do this so forget it.
+# TODO: Add support for pre-average windowing, or post-average Gaussian smoothing
+# as in Lorenz and Hartmann.
 climate_spectral() {
   # Merge spectral files with xarray and Dask
-  # TODO: Add support for windowing
-  # WARNING: Python averaging causes dask to hang indefinitely. Try
-  # again with ncea, generally pretty quick.
+  # WARNING: Python averaging causes dask to hang indefinitely. ncea is generally quick.
   out=$fspectral
   files=($(get_files "$pspectral"))
   if ! newer "$out" "${files[@]}"; then
@@ -412,11 +427,7 @@ climate_spectral() {
     rm "${files[@]}" || raise "Deletion failed."
   fi
 
-  # Play with Gaussian frequency smoothing
-  # TODO: Do this, creating parallel spectral and phase files.
-
   # Translate from k-frequency space to k-phase speed space
-  # if true; then
   rm ${out%.nc}_phase.nc 2>/dev/null  # old file version
   out_phase=${out/spectral/spectral_phase}
   if ! newer "$out_phase" "$out"; then
@@ -432,35 +443,43 @@ climate_spectral() {
 # Returns autocorrelation up to N lags, from which we can perform a best-fit
 # and get a "timescale"
 climate_autocorr() {
-  # Just get the autocorrelation from the time-mean
+  # Get the autocorrelation spectrum in blocks to improve speed
+  # Then average the blocks. Sort of like how we get Fourier transform.
+  local day iday idays ifile ifiles files maxmissing
   unset outs
   out=$fautocorr
   files=($(get_files "$pfull"))
   if ! newer "$out" "${files[@]}"; then
-    num=1
-    nlag=25 # up to 25 days
-    block=0 # block number
-    ncorr=2 # process in groups of 2 files, or 200 days
-
-    # Get correlation in blocks
-    # Note the following was wrong:
-    # mean = ds.mean(dim='time', keep_attrs=True)
-    # var = ds.var(dim='time', keep_attrs=True)
-    # corr = (((ds.isel(time=slice(i,None)) - mean) * (ds.isel(time=slice(None,-i)) - mean)).mean(dim='time') / var).mean(dim='lon')
-    for file in "${files[@]}"; do
-      ifiles+=("$file")
-      if [ $num -ne $ncorr ]; then
-        num=$((num + 1))
-        continue
-      fi
-      iout=${out%.nc}.${block}.nc
-      outs+=($iout) # record
+    i=0
+    day=$climate_start
+    # nlag=100  # up to lag-N days
+    # nblock=500  # process in blocks of N days
+    # maxmissing=1
+    nlag=30  # up to lag-N days
+    nblock=100  # process in blocks of N days
+    nfiles=$((nblock / rdays))
+    maxmissing=0
+    while [ $day -lt $climate_end ]; do
+      # Select files within range $day to $day + $nblock
+      # NOTE: Permit *maxmissing* file missing in each block, and only *consecutive*
+      unset ifiles
+      for iday in $(seq $day $rdays $((day + nblock - 1))); do
+        ifile=($(get_files "$pfull" -d1=$iday -d2=$((iday + rdays)) 2>/dev/null))
+        [ ${#ifile[@]} -gt 1 ] && raise 'Duplicate files detected.'
+        [ ${#ifile[@]} -eq 0 ] && [ ${#ifiles[@]} -eq 0 ] && continue  # delay start of block
+        [ ${#ifile[@]} -eq 0 ] && [ ${#ifiles[@]} -gt 0 ] && break  # prematurely end block
+        ifiles+=("${ifile[0]}")
+      done
+      # Calculate autocorrelation
       echo "Using files: ${ifiles[*]##*/}"
-      python3 "$autocorr" "$nlag" "${ifiles[@]}" "$iout" \
-        || raise "Autocorr calculation failed."
-      # Reset vars
-      num=1
-      block=$((block + 1))
+      if [ ${#ifiles[@]} -lt $((nfiles - maxmissing)) ]; then
+        echoerr "Warning: Too many files missing from autocorrelation block ${day}."
+      else
+        iout=${out%.nc}.${day}.nc
+        python3 "$autocorr" "$nlag" "${ifiles[@]}" "$iout" || raise "Autocorr calculation failed."
+      fi
+      day=$((day + nblock))
+      outs+=($iout) # record
       unset ifiles
     done
 
@@ -503,7 +522,7 @@ climate_variability() {
   # Concatenate and select
   # WARNING: If you cancel this process while series.nc is being created,
   # EOF process may fail because file didn't finish writing!
-  files=($(get_files "$psummary")) # full record
+  files=($(get_files "$psummary"))  # full record
   series=${input}/${psummary}.nc  # no day string
   ntime=$(ncdump -h "$series" 2>/dev/null | grep UNLIMITED | tr -dc 0-9) # format should be 'time = UMLIMITED; // (0 currently)'
   [ -z "$ntime" ] && ntime=0  # if file does not exist
@@ -533,7 +552,7 @@ climate_variability() {
 # May add other settings in the future
 # This is to understand distributon of jet winds w.r.t. time
 timeseries_surface() {
-  files=($(get_files "$psummary" 0)) # always start at day 0
+  files=($(get_files "$psummary" -d1=0))  # always start at day 0
 
   # for region in nh sh globe; do # now just nh
   pmax=8
@@ -560,9 +579,9 @@ timeseries_surface() {
         # cdo --no_warnings $flags -sellevidx,20 ${!region} -selname,u \
         #   $file surface_${region}.${idx}.nc
       } &
-      [ $((i % pmax)) -eq 0 ] && { echo "Wait!"; wait; }
+      [ $((i % pmax)) -eq 0 ] && { echo 'Waiting...'; wait; }
     done
-    echo "Wait!"; wait
+    echo 'Waiting...'; wait
 
     # Then merge the files
     files=(surface_${region}.????.nc)
@@ -577,8 +596,8 @@ timeseries_surface() {
 }
 
 # Time series of Lorenz energy terms
-# For this we use "all files", i.e. include spinup before climo_start and any
-# days after climo_end.# Also gets NH/SH averages, so can get meaningful autocorrelation stats.
+# For this we use "all files", i.e. include spinup before climate_start and any
+# days after climate_end.# Also gets NH/SH averages, so can get meaningful autocorrelation stats.
 # WARNING: CDO is messed up and will silently compute wrong results if you
 # try to use setgridarea or setgrid before getting fldmean. Instead you *must*
 # add a dummy longitude dimension before averaging.
@@ -596,7 +615,7 @@ timeseries_energy() {
   done
 
   # Figure out which files need to be retrieved
-  files=($(get_files "$psummary" 0)) # always start at day 0
+  files=($(get_files "$psummary" -d1=0))
   # for region in nh sh globe; do # now just nh
   for region in nh; do # now just nh
     out=${fenergy%%.*}_${region}.${fenergy#*.}
@@ -752,8 +771,8 @@ spindown_regional_mean_ts() {
     ncks --no-abc -O -4 --mk_rec_dmn time $ensfile $ensfile
     ncap2 -O -s "member[\$member]={${spindowndays%,}}" $ensfile $ensfile
     ncatted -O \
-      -a long_name,member,o,c,"day of initiation from control run branch" \
-      -a units,member,o,c,"days since 0000-00-00 00:00:00" $ensfile
+      -a long_name,member,o,c,'day of initiation from control run branch' \
+      -a units,member,o,c,'days since 0000-00-00 00:00:00' $ensfile
     ncks --no-abc -O $ensfile $ensfile # alphabetize output
     # fixes record dimension; see https://sourceforge.net/p/nco/bugs/85/
     # the -4 is needed or an error is thrown, weirdly
@@ -795,9 +814,9 @@ run() {
 
 driver() {
   # Forcing data
-  if $forcing; then
+  if $constants; then
     if ! newer $output/constants.nc $input/../constants.nc; then
-      echo "Copying forcing data."
+      echo "Copying constants."
       cp $input/../constants.nc $output
     fi
   fi

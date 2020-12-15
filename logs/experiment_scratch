@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#-----------------------------------------------------------------------------#
+# Debug and verify experiments. Print blocks of contiguous days with same
+# namelist parameter values, netcdf files present, and netcdf variables present.
+#-----------------------------------------------------------------------------#
+shopt -s nullglob
+roots=(~/scratch2 ~/scratch1)  # symlinks to scratch
+nmlcheck=true  # set to true to check certain namelist values
+varcheck=true  # set to true to check certain variables
+nccheck=true  # set to true to check netcdf names
+cwd=$(pwd)
+prefix=2xdaily_inst
+log=$cwd/${0%_log}.log
+names=("$@") # remember $@ is special, nothing gets expanded
+[ -z "$1" ] && names=('hs[12]_*')
+
+# Relevant naemlist parameters with constant precision
+# NOTE: Feel free to toggle this on and off
+nmlget() {
+  cat "$1" | sed 's/,\?\s*\(\!.*\)\?$//g' | grep -E 'dt_atmos|kbl|ktrop|delh|q0_global|q0_realistic|q0_tropical' \
+    | xargs printf '%s%s%.3f, ' 2>/dev/null | sed 's/, $//'
+}
+
+# Netcdf tools copied from bashrc
+ncget() {
+  command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
+    | cut -d';' -f1 | cut -d'(' -f1 | sed 's/ *$//g;s/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs
+}
+
+# Driver functions
+# NOTE: Functions work with global variables
+iterdays() {
+  local ddirs ddays  # iday and ndays are global
+  unset props1 props2
+  day1_prev=00000
+  ddirs=($path/d?????-d?????)
+  ddays=("${ddirs[@]##*/d}")
+  day1s=("${ddays[@]%-d*}")
+  day2s=("${ddays[@]#*-d}")
+  ndays=${#ddirs[@]}
+  [ $ndays -eq 0 ] && return 0
+  for iday in $(seq 1 $ndays); do
+    # Get summary file and namelist file
+    ddir=${ddirs[iday-1]}
+    day1=${day1s[iday-1]}
+    day2=${day2s[iday-1]}
+    "$@"  # run input command
+  done
+}
+
+# Check namelist values
+nmlcheck() {
+  local nmlfile
+  nmlfile=$ddir/input.nml
+  [ -r "$nmlfile" ] || return 0
+  props2=$(nmlget $nmlfile 2>/dev/null)
+  if [ -n "$props1" ] && [ "$props1" != "$props2" ]; then
+    echo "  ${day1_prev}-${day1}: $props1"
+    day1_prev=$day1
+  elif [ $iday -eq $ndays ]; then
+    echo "  ${day1_prev}-${day2}: $props1"
+  fi
+  props1=$props2
+}
+
+# Check netcdf files
+nccheck() {
+  local files
+  files=($path/netcdf/${prefix}_*.d$day1-d$day2.nc)
+  files=("${files[@]##*/${prefix}_}")
+  files=("${files[@]%.d$day1-d$day2.nc}")
+  props2="${files[*]}"
+  if [ -n "$props1" ] && [ "$props1" != "$props2" ]; then
+    echo "  ${day1_prev}-${day1}: $props1"
+    day1_prev=$day1
+  elif [ $iday -eq $ndays ]; then
+    echo "  ${day1_prev}-${day2}: $props1"
+  fi
+  props1=$props2
+}
+
+# Check summary file varnames
+varcheck() {
+  local ncfile
+  ncfile=$path/netcdf/${prefix}_summary.d$day1-d$day2.nc
+  [ -r "$ncfile" ] || return 0
+  props2=$(ncget $ncfile 2>/dev/null)
+  if [ -n "$props1" ] && [ "$props1" != "$props2" ]; then
+    echo "  ${day1_prev}-${day1}: $props1"
+    day1_prev=$day1
+  elif [ $iday -eq $ndays ]; then
+    echo "  ${day1_prev}-${day2}: $props1"
+  fi
+  props1=$props2
+}
+
+# Iterate through experiments
+rm $log 2>/dev/null
+date | tee -a $log
+for root in ${roots[@]}; do
+  echo | tee -a $log
+  echo "Root: $root" | tee -a $log
+  unset globs
+  for name in "${names[@]}"; do
+    globs+=($root/$name) # performs expansion
+  done
+  [ ${#globs[@]} -eq 0 ] && echo "No $name files found in ${root}." && continue
+  for path in ${globs[@]}; do
+    dir=${path##*/}
+    echo | tee -a $log
+    echo "Experiment: $dir" | tee -a $log
+    iterdays  # no-op; just fill day arrays
+    echo "Day range: ${day1s[0]}-${day2s[ndays-1]}" | tee -a $log
+    $nmlcheck && iterdays nmlcheck | tee -a $log
+    $nccheck  && iterdays nccheck  | tee -a $log
+    $varcheck && iterdays varcheck | tee -a $log
+  done
+done

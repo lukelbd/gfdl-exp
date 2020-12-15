@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#-----------------------------------------------------------------------------#
+# List corresponding directories in 'scratch' and 'storage'
+#-----------------------------------------------------------------------------#
+shopt -s nullglob
+shopt -s globstar
+shopt -s extglob
+pattern="@(hs|pk)"  # https://www.linuxjournal.com/content/bash-extended-globbing
+storage=(~/data/timescales**/$pattern*)
+scratch=(~/scratch**/$pattern*)  # put symlinks to scratch in home directory
+cwd=$(pwd)
+log=$cwd/${0%_log}.log
+echo $log
+rm $log 2>/dev/null
+
+# Scratch expermients not in storage
+echo | tee -a $log
+echo "Extra scratch experiments:" | tee -a $log
+for dir in "${scratch[@]}"; do
+  exp=${dir##*/}
+  base=${dir%/*}
+  base=${base##*/}
+  # shellcheck disable=2076
+  if ! [[ " ${storage[*]##*/} " =~ " $exp " ]]; then
+    space=$(du -sh $dir | cut -f1)  # tab is default delimiter
+    echo "Scratch experiment '$base/$exp' not in storage ($space)." | tee -a $log
+  fi
+done
+
+# Storage expermients not in scratch
+echo | tee -a $log
+echo "Extra storage experiments:" | tee -a $log
+for dir in "${storage[@]}"; do
+  exp=${dir##*/}
+  base=${dir%/*}
+  base=${base##*/}
+  # shellcheck disable=2076
+  if ! [[ " ${scratch[*]##*/} " =~ " $exp " ]]; then
+    space=$(du -sh $dir | cut -f1)  # tab is default delimiter
+    echo "Storage folder '$base/$exp' not in scratch ($space)." | tee -a $log
+  fi
+done

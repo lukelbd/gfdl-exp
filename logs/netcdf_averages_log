@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Check contents of files in storage
+shopt -s nullglob
+cwd=$(pwd)
+prefix=2xdaily_inst_climate
+roots=(~/data/timescales*)
+names=("$@") # remember $@ is special, nothing gets expanded
+log=$cwd/${0%_log}.log
+[ -z "$1" ] && names=("hs[12]_*")
+rm $log 2>/dev/null
+
+# Netcdf tools copied from bashrc
+nclist() {
+  command ncdump -h "$1" | sed -n '/variables:/,$p' | sed '/^$/q' | grep -v '[:=]' \
+    | cut -d';' -f1 | cut -d'(' -f1 | sed 's/ *$//g;s/.* //g' | xargs | tr ' ' '\n' | grep -v '[{}]' | xargs
+}
+
+# Loop through files
+for root in "${roots[@]}"; do
+  for name in "${names[@]}"; do
+    for dir in $root/$name; do
+      files=($dir/$prefix.*.nc)
+      printed=false
+      for file in ${files[@]}; do
+        $printed || { echo; echo "Experiment: $dir"; } | tee -a $log
+        printed=true
+        days=${file##*/}
+        days=${days#*.}
+        days=${days%.nc}
+        vars=$(nclist $file | grep '\bz\b' | xargs)
+        if [ -z "$vars" ]; then
+          echo "Days $days: Missing z data" | tee -a $log
+        else
+          echo "Days $days: Has z data" | tee -a $log
+        fi
+      done
+    done
+  done
+done

@@ -21,28 +21,53 @@ copy_VarAtts(f, o) ; also works for files; see: https://www.ncl.ucar.edu/Support
 time = f->time
 lat  = f->lat
 lon  = f->lon
-; Get the sigma-coordinates and center-coordinates for interpolation
 hyai   = f->hyai
 hybi   = f->hybi
-nedges = dimsizes(hyai)  ; is 1D, so this is scalar
-hyam = (hyai(0:nedges - 2) + hyai(1:nedges - 1)) / 2.0  ; the middle A coefs
-hybm = (hybi(0:nedges - 2) + hybi(1:nedges - 1)) / 2.0  ; the middle B coefs
+nlev = dimsizes(hyai)  ; is 1D, so this is scalar
+hyam = (hyai(0:nlev - 2) + hyai(1:nlev - 1)) / 2.0  ; the middle A coefs
+hybm = (hybi(0:nlev - 2) + hybi(1:nlev - 1)) / 2.0  ; the middle B coefs
+
+; Translate hybrid coordinate edges to *average* pressure coordinate values
 p0   = 101325.0  ; reference pressure
-p0mb = 1013.25  ; in mb for function input
-plev_i = (hyai + hybi * p0) / 100.0  ; back to mb
-plev = (plev_i(1:nedges - 1) + plev_i(0:nedges - 2)) / 2.0
+p0hPa = 1013.25  ; in hPa for function input
+plev_i = (hyai + hybi * p0) / 100.0  ; back to hPa
+plev_m = 0.5 * (plev_i(1:nlev - 1) + plev_i(0:nlev - 2))
+
+; Interpolate to *halfway between* edges and centers. Why?
+; * Want higher resolution to keep energy budgets closed.
+; * Do not want to select interfaces or midpoints alone -- former will always have
+;   smoothed out peaks, latter will capture more of peaks. Risk of creating zigzag
+;   in vertical profile of variance and covariance terms.
+; nlev = 2 * dimsizes(hyam)  ; use edges *and* centers
+; plev = new(nlev, float)
+; do i = 0, nlev - 1
+;   ; i = 0: middle level 0, boundary 0
+;   ; i = 1: middle level 0, boundary 1
+;   ; i = 2: middle level 1, boundary 1
+;   ; etc.
+;   plev(i) = 0.5 * (plev_m(i / 2) + plev_i((i + 1) / 2))
+; end do
+; plev_b = new(nlev + 1, float)
+; plev_b(::2) = plev_i  ; hybrid interface coordinates, translated to pressure
+; plev_b(1::2) = plev_m  ; hybrid center coordinates, translated to pressure
+; plev_bnds = (/plev_b(0:nlev - 1), plev_b(1:nlev)/)
+
+; Simply use average hybrid coordinate centers for new pressure coordinates
+; Preferable with e.g. ERA-Interim high resolution levels
+; Method 1 with ERA60 levels: 1012.65, 1011.45, 1009.95, 1008.16, 1005.95
+; Method 2 with ERA60 levels: 1012.05, 1009.05, 1004.65, 998, 990, ...
+plev = plev_m
+plev_bnds = (/plev_i(0:nlev - 2), plev_i(1:nlev - 1)/)
+
+; Add vertical level metadata
 plev!0 = "plev"
 plev&plev = plev
-
-; Add bounds to file
-; This replicates behavior of genlevelbounds in CDO
-plev_bnds = (/plev_i(0:nedges - 2), plev_i(1:nedges - 1)/)
 plev_bnds!0 = "bnds"
 plev_bnds!1 = "plev"
 plev_bnds := plev_bnds(plev|:, bnds|:)  ; re-order
 
 ; Parameters needed for interpolation
-slp = f->slp ; sea level pressure in mb
+slp = f->slp  ; surface pressure in Pa
 ; Parameters needed for extrapolation
 ; NOTE: If 't' is not available, just put a dummy in place
 hyam_norm = hyam / p0  ; required for vint2hp function
@@ -73,12 +98,12 @@ end if
 plev@axis = "Z"
 plev@cartesian_axis = "Z"
 plev@long_name = "pressure level"
-plev@units = "mb"
+plev@units = "hPa"
 plev@bounds = "plev_bnds"
 plev_bnds@axis = "Z"
 plev_bnds@cartesian_axis = "Z"
 plev_bnds@long_name = "pressure level bounds"
-plev_bnds@units = "mb"
+plev_bnds@units = "hPa"
 ; Time
 time@axis = "T"
 time@cartesian_axis = "T"
@@ -150,7 +175,9 @@ do i = 0, dimsizes(varnames) - 1
     ; Interpolate the variable and save it
     ; Old coordinates are also copied and applied, which means we will have to
     ; edit their attributes *after* this loop.
-    ivar = vinth2p_ecmwf(var, hyam_norm, hybm, plev, slp, 1, p0mb, 1, True, varflag, tbot, zbot)
+    ; NOTE: Always extrapolate but use *mass-weighted* average when getting flux terms.
+    extrap = True
+    ivar = vinth2p_ecmwf(var, hyam_norm, hybm, plev, slp, 1, p0hPa, 1, extrap, varflag, tbot, zbot)
     ivar!1 = "plev" ; rename dimension; simple as that
     delete(ivar&plev)
     copy_VarAtts(var, ivar)

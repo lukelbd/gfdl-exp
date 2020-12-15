@@ -1,0 +1,488 @@
+#!/usr/bin/env bash
+################################################################################
+# NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
+# dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
+# to logarithmically sweep space. Existing directories have been moved to their
+# closest values in this new spacing. White lie, but probably insignificant differences.
+################################################################################
+usage='run_sweep [OPTION...] FORCING RESO [--PARAM=[prev:]value[,...]]'
+doc="This script runs parameter sweeps for the given forcing and resolution
+specs and the given input parameters using the 'run' script. It generates standardized
+folder names and can modify the namelist and diag_table.
+
+Usage
+
+  $usage
+
+Valid forcing specs
+
+  hs[12][nlc]     Held and Suarez, 1994
+  pk[12][nlc]     Polvani and Kushner, 2004
+  pkmod[12][nlc]  Polvani and Kushner with modified coords
+
+  The number indicates the boundary layer damping approach:
+
+  * 1 is faster damping in boundary layer.
+  * 2 is constant damping everywhere.
+
+  The flags control other optional forcing settings:
+
+  * n stands for [n]o conserve energy, i.e. allow total energy to change.
+  * l stands for [l]ocked heating, continuing from the previous experiment.
+  * c stands for [c]old start locked heating, which is the same as 'l'
+    except the model is initiated from a cold start.
+
+  Note that the forcing scheme is specified in the model namelist with only
+  the first part of these strings.
+
+Valid resolution specs
+
+  A string with the format t[XX]l[YY][spe], where XX is the trunction number
+  and YY is the vertical level count. The suffix is a single character
+  controlling the level spacing configuration:
+
+  * Evenly spaced [s]igma levels.
+  * Unevenly spaced [p]olvani and kushner sigma levels.
+  * [e]RA Interim hybrid levels, specified by namelist named
+    levels_ecwmf_{YY}.nml in source directory.
+
+Valid parameter specs
+
+  Params are passed with flags --name=[prev:]value[,...] where 'name' can be:
+
+  ntau           Change tropospheric damping.
+  ntaumean       Change mean component of tropospheric damping.
+  ntaustrat      Change stratospheric damping.
+  tgrad          Change equator-pole teq difference.
+  tmean          Change global mean surface teq.
+  tshift         Shift teq meridional gradient poleward or equatorward
+  rtau           Change friction.
+
+  To run from the end of a *previous* run in the same experiment series, use
+  --name=prev:value, e.g. --ntau=20,40,40:100,100:200. The experiment directory
+  names will be 'force_resolution_xnameXXX[_ynameYYY]' for param xname value XXX
+  and param yname val YYY. Directories are renamed if the specified parameters
+  correspond to the 'base' HS94 values.
+
+Optional arguments
+
+  -h|--help             Print this message.
+  -s|--save             Whether to save thermal damping tendency tdt for each run.
+  -d|--dryrun           Enable dry run mode. Do not run model; just print info.
+  -t|--test             Enable test mode. Data is saved to a 'test' directory.
+  -c=*|--cores=*        Number of cores.
+  -n=*|--nodes=*        Number of nodes (used only if this is a supercomputer).
+  -d=*|--days=*         Number of days in each restart block.
+  -h=*|--hours=*        Number of hours in each restart block (only available for tests).
+  -m=*|--minutes=*      Number of minutes in each restart block (only available for tests).
+  -f=*|--filename=*     File name for NetCDF data (default is data).
+  -b=*|--basename=*     Override name for the experiment directory.
+  -fw=*|--freqwrite=*   Time frequency with which NetCDF data is written.
+  -fu=*|--frequnits=*   Time units used to interpret --freqwrite (default is hours).
+  -dt=*|--timestep=*    Timestep size in seconds.
+  -ts=*|--tstart=*      Initial day.
+  -te=*|--tend=*        Final day.
+  -kts=*|--ktstart=*    Initial day for which full-res data is saved.
+  -kte=*|--ktend=*      Final day for which full-res data is saved.
+
+Other arguments
+
+  All remaining arguments are passed to the run script.
+"
+# TODO: Specify *parameters* from which continuation was carried
+# out with filename that look like: hs1_ntau_t42l20s_p0040.000:0100.000
+# Maybe not important though because there is *always* ambiguity, e.g.
+# from which day continuation run began.
+# NOTE:
+# * Really can't push CFL number! Shoot for around 0.5. Got almost instant
+#   model blow up at 1200s with T106, since upper-level winds probably get to
+#   around 100m/s (about 200mph)
+# * Working times so far 20 days, 40 days: 600s, even 800s too fast;
+#   100 days: 800s.
+rundir=$HOME/gfdl-fms/exp # model folder for namelists and stuff
+source $rundir/header.sh
+cwd=${0%/*}
+cd "$cwd" || raise 1 "Header file not found."
+module load impi &>/dev/null
+module load nco &>/dev/null
+# module load ncl &>/dev/null # use conda versions instead, already on path
+# module load cdo/1.9.4 &>/dev/null
+
+# Default settings
+# NOTE: For T106 timestep of 600s with 100m/s wind yields CFL number of 0.5
+nodes=1
+cores=8
+dryrun=false
+savetdt=false
+tstart=0
+tend=10000
+ktstart=0 # first day we keep XYZ data (can't keep all, too much data)
+ktend=100000 # last day we keep XYZ data
+mail=false
+walltime=12:00
+queue=economy
+# walltime=01:00  # use these for quick tests
+# queue=regular
+super=false  # for supercomputer, submit jobs simultaneously with auto-generated PBS script
+[[ $HOSTNAME =~ cheyenne* ]] && super=true
+
+# Currently supported params: namelist_name=expname_name=base_value
+# NOTE: Have to specify explicitly or they cannot be modified
+paraminfo=(
+  'ktrop=ntau=40'
+  'ktrop=ntaumean=40'
+  'ktrop=ntauanom=40'
+  'kstrat=ntaustrat=40'
+  'kstrat=ntaustratmean=40'
+  'kstrat=ntaustratanom=40'
+  'tmean=tmean=300'
+  'delh=tgrad=60'
+  'exph=tshift=0'
+  'kfric=rtau=1'
+  'q0_global=qglobal=0'
+  'q0_surface=qsurface=0'
+  'q0_arctic=qarctic=0'
+  'q0_vortex=qvortex=0'
+  'q0_tropical=qtropical=0'
+  'q0_realistic=qrealistic=0'
+)
+
+# Parse input
+gflags="-p=$cwd/process_inline -pi=$cwd/process_init "
+while [ $# -gt 0 ]; do  # echo "Flag: $1"
+  case "$1" in
+    # Flags controlling behavior
+    -h|--help)                  echo "$doc" && exit 0 ;;
+    -d|--dryrun)                dryrun=true ;;
+    -s|--save)                  savetdt=true ;;
+    -c=*|--cores=*)             cores=${1#*=} ;;
+    -n=*|--nodes=*)             nodes=${1#*=} ;;
+    -d=*|--days=*)              days=${1#*=} ;;
+    -h=*|--hours=*)             hours=${1#*=} ;;
+    -m=*|--minutes=*)           minutes=${1#*=} ;;
+    -f=*|--filename=*)          filename=${1#*=} ;;
+    -b=*|--basename=*)          basename=${1#*=} ;;
+    -fw=*|--freqwrite=*)        freqwrite=${1#*=} ;;
+    -fu=*|--frequnits=*)        frequnits=${1#*=} ;;
+    -dt=*|--dt=*|--timestep=*)  dt=${1#*=} ;;
+    -ts=*|--tstart=*)           tstart=${1#*=} ;;
+    -te=*|--tend=*)             tend=${1#*=} ;;
+    -kts=*|--ktstart=*)         ktstart=${1#*=} ;;
+    -kte=*|--ktend=*)           ktend=${1#*=} ;;
+    # Remaining flags
+    -*)
+      flag=${1#--}  # trim flag
+      param=${flag%%=*}
+      values=${flag#*=}
+      # [[ "$values" =~ ,$ ]] || values=${values},
+      # shellcheck disable=2076
+      if [[ " ${paraminfo[*]} " =~ "=${param%=*}=" ]]; then
+        params+="$param={$values}+"
+      else
+        gflags+="$1 "
+      fi
+    ;;
+    # Positional params
+    *)
+      if [ -z "$force" ]; then
+        force=$1
+      elif [ -z "$reso" ]; then
+        reso=$1
+      else
+        raise "More than two positional args passed."
+      fi
+    ;;
+  esac
+  shift
+done
+[ -z "$params" ] && params='ntau=40'  # stand-in for base experiment
+[ -z "$force" ] && force=hs1
+[ -z "$reso" ] && reso=t42l20s
+[[ "$params" =~ ' ' ]] && raise "Invalid param string $params."  # avoid dangerous eval, e.g. 'rm -r'
+params=($(eval echo ${params%+} | tr -d '{}'))  # cartesian product: https://unix.stackexchange.com/a/97818/112647
+echo
+echo "Nodes: $nodes, Cores: $cores"
+
+# Forcing options, not part of the parameter sweep but representing
+# qualitative variations of the model forcing scheme.
+cold=false
+locked=false
+conserve=true
+fopts=${force#*[0-9]}
+force=${force%${fopts}}
+unknown=${fopts}  # track unknown option
+[ -z "$force" ] && raise "Forcing spec must end with a number, indicating the boundary layer damping option."  # e.g. empty
+[[ "$fopts" =~ c ]] && unknown=${unknown/c/} locked=true cold=true savetdt=false
+[[ "$fopts" =~ l ]] && unknown=${unknown/l/} locked=true cold=false savetdt=false
+[[ "$fopts" =~ n ]] && unknown=${unknown/n/} conserve=false
+[ -n "$unknown" ] && raise "Unknown forcing spec options '$unknown'. Valid options are [lcn]."
+blopt=${force##*[a-z]}  # get number
+force=${force%[0-9]}
+[[ $blopt -lt 1 || $blopt -gt 3 ]] && raise "Invalid boundary layer option ${blopt}."
+
+# Storage and model path
+storage=$HOME
+scratch=$HOME # on Euclid, home is unmounted/not backed up; so disk I/O is quick
+case ${HOSTNAME%%.*} in
+  euclid)
+    storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
+  ;; monde)
+    case $reso in
+      t42l20?) scratch=/mdata1/ldavis ;;
+      t85l60?) scratch=/mdata2/ldavis ;;
+      *) raise "Unknown scratch destination for resolution $reso." ;;
+    esac
+  ;; cheyenne*)
+    storage=/glade/u/home/davislu
+    scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
+  ;; *) raise "Unknown host, must edit batch script before continuing." ;;
+esac
+[ -d "$storage/data" ] || { mkdir "$storage/data"; echo "Created storage directory."; }
+
+# Function for setting up the namelist and diag table with custom changes
+exp_setup() {
+  # Copy over namelist
+  # NOTE: Will record namelist changes in global vars nml_names and nml_vlaues
+  unset nml_message nml_names nml_values
+  nml=$expdir/input.nml
+  nml_default=$rundir/input.nml
+  cp $nml_default "$nml" # move over defaut
+
+  # Apply forcing specs
+  nml_replace "$nml" teq_mode "'$force'" damp_mode "'$force'" strat_damp "'constant'"
+  iparams=${1%c}
+  iparams=($(echo $iparams | cut -d_ -f3- | tr _ ' '))
+  for param in ${iparams[@]}; do
+    # Translate directory name to fortran namelist name
+    name=${param%%[0-9]*}
+    value=$(printf '%.3f' "${param##*[a-z]}") || raise "Invalid param spec $param."
+    stdname=$(echo "${paraminfo[@]}" | tr ' ' $'\n' | grep "=${name}=" | cut -d= -f1) || raise "Invalid param spec $param."
+    [[ -z $value || -z $stdname  ]] && raise "Invalid param spec $param."
+
+    # Convert damping timescales to days
+    case $name in
+      *tau*mean*) value=-$value,-40.000 ;;
+      *tau*anom*) value=-40.000,-$value ;;
+      *tau*)      value=-$value ;;
+    esac
+
+    # Stratospheric damping considerations
+    if [[ "$name" =~ ntaustrat ]]; then
+      nml_replace "$nml" kstrat "$value" kmeso "$value"
+    elif [[ "$name" =~ ntau ]]; then
+      unset blval
+      for val in ${value/,/ }; do
+        case $blopt in
+          1) ival=$(bc -l <<< "$val / 10") ;;  # hold ratio constant
+          2) ival=$val ;;  # keep surface boundary layer equal to value in rest of atmosphere
+          *) raise "Invalid boundary layer option ${blopt}." ;;
+        esac
+        blval=$blval,$(printf '%.3f' $ival)
+      done
+      blval=${blval#,}
+      nml_replace "$nml" kbl "$blval" ktrop "$value" kstrat "$value" kmeso "$value"
+    else
+      nml_replace "$nml" "$stdname" "$value"
+    fi
+  done
+
+  # Timing options, not experiment dependent so far
+  nml_replace "$nml" dt_atmos "$dt" days "$days" hours "$hours" minutes "$minutes"
+
+  # Horizontal resolution options
+  ntrunc=${reso%l*}
+  ntrunc=${ntrunc#t}
+  case $ntrunc in
+    42) nlat=64 ;;
+    63) nlat=96 ;;
+    85) nlat=128 ;;
+    95) nlat=144 ;; # for 36-core Cheyenne nodes
+    106) nlat=160 ;;
+    170) nlat=256 ;;
+    *) raise "Invalid truncation number '$ntrunc'." ;;
+  esac
+  nsphere=$((ntrunc + 1)) # forget what difference between num fourier and num spherical means
+  nlon=$((nlat * 2)) # always twice the res
+  nml_replace "$nml" num_fourier "$ntrunc" num_spherical "$nsphere" lat_max "$nlat" lon_max "$nlon"
+
+  # Vertical resolution options
+  unset levels
+  vert=${reso#*l}
+  case $vert in
+    *e) coord=input nlev=${vert%e} levels=$rundir/levels_ecmwf_${nlev}.nml ;; # ERA-Interim coordinates
+    *p) coord=pk_sigma nlev=${vert%p} ;;
+    *s) coord=even_sigma nlev=${vert%s} ;;
+    *) raise "Unknown vertical coordinate identifier '${vert}'." ;;
+  esac
+  nml_replace "$nml" num_levels "$nlev" vert_coord_option "'$coord'"
+  if [ -n "$levels" ]; then # add vert coord namelist
+    [ -r "$levels" ] || raise "File '$levels' not found."
+    cat "$levels" >> "$nml"
+  fi
+
+  # Print nicely formatted message showing the things we changed
+  nml_clean "$nml"
+  nml_print
+
+  # Copy diag table and apply settings
+  diag=$expdir/diag_table
+  cp $rundir/diag_table "$diag"
+  diag_replace "$diag" "$filename" "$freqwrite" "$frequnits"
+  diag_clean "$diag"
+
+  # Copy field table
+  field=$expdir/field_table
+  cp $rundir/field_table "$field"
+
+  # Energy conservation
+  if ! $conserve; then
+    nml_replace "$nml" do_energy_correction '.false.'
+  fi
+
+  # Copy input heating
+  if $locked; then
+    nml_replace "$nml" locked_heating '.true.'
+    unset tdtfiles
+    for tdtfile in "$scratch/$expforcing"/netcdf/mean_tdt.*.nc; do
+      daystring=${tdtfile%.nc}
+      daystring=${daystring##*.}
+      day1=${daystring%-*}
+      day2=${daystring#*-}
+      [ ${day1#d} -ge $ktstart ] && [ ${day2#d} -le $ktend ] && tdtfiles+=("$tdtfile")
+    done
+    [ ${#tdtfiles[@]} -eq 0 ] && raise "No tdt files found in $scratch/$expforcing/netcdf directory."
+    tdtfile=${expdir}/heating.data.nc
+    echo "Locked heating data: ${tdtfiles[*]##*/}"
+    ncra -h -O "${tdtfiles[@]}" "$tdtfile" || raise "Average of $scratch/$expforcing/netcdf/mean_tdt.*.nc files failed."
+    ncks -h --no-abc -O -v tdt "$tdtfile" "$tdtfile" || raise "Cutting $tdtfile variables failed."
+  fi
+
+  # Add entry to diag_table for saving tdt data
+  # LINE 1: File name, save frequency (-1 = end of run), save-frequency units,
+  # file format, time axis units, time axis dimension names.
+  # LINE 2: Module name, fortran variable name, netcdf variable name,
+  # file name, time-sampling freq for averages, whether to take time average,
+  # other options, and save type (1 = 64-bit, 2 = 32-bit).
+  if $savetdt; then
+    diag_add "$diag" \
+      '"mean_tdt", -1, "hours", 1, "days", "time",' \
+      '"forcing", "tdt", "tdt", "mean_tdt", "all", .true., "none", 2,'
+  fi
+}
+
+# Run model, looping through different parameters. We can run entire loop as
+# concurrent qsub processes, or run serially on a normal server.
+echo "Forcing: $force, Resolution: $reso, Params: ${params[*]}"
+np=$((cores * nodes))
+gflags+=" -c=$np -ts=$tstart -te=$tend -kts=$ktstart -kte=$ktend"
+for iparams in "${params[@]}"; do
+  echo
+  # Get experiment names of restart and current directory
+  iparams=($(echo "$iparams" | tr '+' ' '))
+  iexpnames=(${force}${blopt}_${reso} ${force}${blopt}${fopts}_${reso})  # restart and current
+  for param in "${iparams[@]}"; do
+    name=${param%%=*}
+    values=${param#*=}
+    values=($(echo $values | tr ':' ' '))  # restart separators
+    [ ${#values[@]} -le 2 ] || raise "Only one restart value allowed."
+    for i in 0 1; do
+      [ ${#values[@]} -eq 1 ] && value=${values[0]} || value=${values[i]}
+      # shellcheck disable=2076
+      [[ " ${paraminfo[*]} " =~ "=${name}=${value} " ]] && continue  # do not specify
+      iexpnames[i]+=_$name$(printf "%08.3f" "$value") || raise "Invalid value $value"
+    done
+  done
+
+  # Check restart dir
+  unset -v expname exprestart expforcing expflags
+  expname=${iexpnames[1]}
+  if [ ${iexpnames[0]} != ${iexpnames[1]} ]; then  # e.g. hs1_t42l20s and hs1c_t42l20s or different params
+    expname=${expname}c  # c indicates condinuation run
+    exprestart=${iexpnames[0]}
+  fi
+  # shellcheck disable=2076
+  [[ " ${expnames[*]} " =~ " ${expname} " ]] && echo "Already ran ${expname} in this loop." && continue
+  [ -d "$scratch/$exprestart" ] || exprestart=${exprestart}c
+  [ -d "$scratch/$exprestart" ] || raise "Restart directory '${scratch}/${exprestart}[c]' not found."
+  expnames+=($expname)  # record in list
+  expforcing=$exprestart  # get locked heating here
+  $cold && unset exprestart
+
+  # Prepare experiment dir, including namelist and diag table
+  # WARNING: Cannot pipe exp_setup into tee because piping creates a subshell
+  # which means global variables changed by exp_setup
+  [ -n "$basename" ] && expdir="$scratch/$basename" || expdir="$scratch/$expname"
+  [ -d "$expdir" ] || mkdir "$expdir"
+  log="$expdir/run.log"  # e.g use the testing name
+  echo "Experiment name: ${expname}." | tee $log
+  if [ -n "$exprestart" ]; then
+    echo "Restart from: ${exprestart}" | tee -a $log
+    expflags+="-rd=$scratch/$exprestart " # override with this restart directory
+  fi
+  res=$(exp_setup $expname) || raise 'Experiment setup failed.'  # moves files and adds to expflags
+  echo "$res" | tee -a $log
+  [ -r $expdir/input.nml ] && expflags+="-nml=$expdir/input.nml "
+  [ -r $expdir/diag_table ] && expflags+="-diag=$expdir/diag_table "
+  [ -r $expdir/heating.data.nc ] && expflags+="-tdt=$expdir/heating.data.nc "
+
+  # Run experiment (or just echo command for dryrun)
+  exp_run="$rundir/run spectral $expdir $gflags $expflags"
+  $dryrun && echo && echo $exp_run && continue
+  echo "Log file: $log" # so can copy paste this
+  echo "Run flags: $gflags $expflags"
+  if ! $super; then
+    # On server
+    # NOTE: Need the eval so the quotes in the -p argument are evaluated
+    eval "$exp_run &>>$log"
+    stat=$?
+    echo "Exit status: ${stat}"
+    $mail && mail -s "${expname} status: ${stat}" lukelbd@gmail.com <<EOF
+Experiment ${expname} finished with exit status ${stat}. The call signature was:
+
+${exp_run}
+
+The logfile is pasted below:
+
+$(cat $log)
+
+The namelist is pasted below:
+
+$(cat $expdir/input.nml)
+EOF
+    if [ $stat -ne 0 ]; then
+      echo "Warning: $expname integration failed."
+      continue # keyboard interruption does not trigger this
+    fi
+
+  else
+    # On supercomputer, submit via qsub
+    # NOTE: See README for core selection rationale
+    # NOTE: Use economy queue because I work at weird times, have never
+    # really noticed big slowdowns or wait times
+    [ -d jobs ] || mkdir jobs
+    qsub <<EOF
+#!/usr/bin/env bash
+# Job name, account, email
+#PBS -N $expname
+#PBS -A UCSU0071
+#PBS -M lukelbd@gmail.com
+#PBS -m ae
+#PBS -q $queue
+# Job specs (max possible walltime is 12 hours)
+#PBS -l walltime=$walltime:00
+#PBS -l select=$nodes:ncpus=$cores:mpiprocs=$cores
+# Output
+#PBS -j oe
+#PBS -k o
+# Command
+$exp_run &>>$log
+EOF
+  fi
+
+  # Wrap up
+  [ -d $HOME/data ] || mkdir $HOME/data
+  [ -d $HOME/data/forcing ] || mkdir $HOME/data/forcing
+  unset flags
+  counter=$((counter + 1))
+  cd $cwd || raise "Return to $cwd failed."  # ensure are still in same directory
+done

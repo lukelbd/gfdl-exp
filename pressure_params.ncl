@@ -4,8 +4,7 @@
 ; How to find source code for some complex functions?
 ; * Go to base library directory in <which ncl>/../lib/ncarg/nclscripts, and
 ;   run the comand "grep -r -l "func_name" ." -- this searches files recursively
-; * Useful for many situations!
-; Some notes on NCL performance:
+; Notes on NCL performance:
 ; * The addfile() command is arbitrarily fast; probably just get header
 ;   information, no loading into memory yet.
 ; * Extracting variable names with o->t is slow, because this loads them
@@ -22,8 +21,11 @@
 ;   -add -zonmean -sqr -sub -selvar,u $ncfile -enlarge,$ncfile -zonmean -selvar,u $ncfile \
 ;        -zonmean -sqr -sub -selvar,v $ncfile -enlarge,$ncfile -zonmean -selvar,v $ncfile \
 ;   $out; verify $out 
-; Warning: apparently the CopyVarCoords command will add length-1 dimension
+; WARNING: Apparently the CopyVarCoords command will add length-1 dimension
 ; right after 'time' dimension by default, if 'lon' dimension has been destroyed.
+; NOTE: Technically eddy heat flux should be *mass-weighted* where pressure level
+; sometimes exceeds surface pressure. But since heat flux and slp are mostly in
+; *quadrature* due to geostrophic wind, we can ignore this.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 print("Reading initial file...")
 load "~/timescales-exps/header.ncl"
@@ -166,6 +168,7 @@ o->emf = fix_coords(t, emf)
 delete(emf)
 egf = dim_avg_n(z_star * v_star, 3)
 egf@long_name = "eddy geopotential height flux"
+egf@units = "m2/s"
 o->egf = fix_coords(t, egf)
 delete(egf)
 timer("  * Time for getting flux terms")

@@ -1,60 +1,47 @@
 #!/usr/bin/env bash
-################################################################################
+#-----------------------------------------------------------------------------#
 # Use this file to document the commands used to post-process various experiment
-# series with the 'post_series' script, or generate derivative data from full
+# groups with the 'post_glob' script, or generate derivative data from full
 # resolution archived data with 'process_post'.
-################################################################################
+#-----------------------------------------------------------------------------#
 shopt -s nullglob
-blopt='[12]'
+
 # Forcing experiments and bases, or locked runs
-# for flags in '-f' '-p=4 -cv'; do
-# for flags in '-f' '-p=4 -cp'; do
-# for flags in '-p=4 -ca -cv'; do
-# for flags in '-f'; do
-# for flags in '-f -p=1 -cp -ci'; do
-# for flags in '-f -o -p=1 -ts'; do
-# for flags in '-f -o -p=1 -te'; do
-for flags in '-f -p=1 -cp'; do
-  echo "Flags: $flags"
-  # "hs_tdamp${blopt}-arctic*" "hs_tdamp${blopt}-vortex*" \
-  # "hs_tdamp${blopt}-tropical*" \
-  # "hs_tdamp${blopt}-global*" "hs_tdamp${blopt}-surface*" \
-  # "hs${blopt}_base_*" \
-  # "hs${blopt}n_*tropical_*" \
-  # "hs${blopt}n_*global_*" \
-  # "hs${blopt}_*tropical_*" \
-  # "hs${blopt}_tgrad_*" \
-  # "hs${blopt}_*tropical_*" \
-  # "hs${blopt}_*realistic_*" \
-  # "hs${blopt}_*global_*" \
-  # "hs${blopt}_*tmean_*" \
-  # "hs${blopt}_tdamp_*" \
-  ./post_series \
-    "hs${blopt}_base_*" \
-    "hs${blopt}_tdampmean_*" \
-    -c1=500 -c2=5500 $flags
+# blopt='[12]'
+for tend in 5500 3500; do
+  # for blopt in 1; do
+  for blopt in 1 2; do
+    # for reso in t42l20s; do
+    for reso in t85l60e; do
+      # for flags in '-c -ca'; do
+      for flags in '-c -cp' '-te -ts'; do
+        echo "Flags: $flags"
+        ./post_glob \
+          "hs${blopt}_${reso}" \
+          "hs${blopt}_${reso}_ntau????.???" \
+          "hs${blopt}_${reso}_ntau????.???c" \
+          "hs${blopt}_${reso}_tgrad????.???" \
+          "hs${blopt}_${reso}_tgrad????.???c" \
+          "hs${blopt}_${reso}*" \
+          -r=20 -c1=500 -c2=$tend $flags
+          # -r=100 -c1=500 -c2=5500 $flags
+      done
+    done
+  done
 done
-exit
 
 # Calculate spectral data, *deleting* data as we go
 # NOTE: Ensure home directory has symlink to scratch on every server
 # NOTE: Critical that we proceed one experiment at a time or the disk fills up
-# for dir in \
-#   ~/scratch1/hs[12]_base_* \
-#   ~/scratch1/hs[12]_tdamp_* \
-#   ~/scratch1/hs[12]_tdampmean_* \
-#   ~/scratch1/hs[12]_tgrad_* \
-#   # ~/scratch1/hs[12]_tdamp-tropical_*
-#   do
-#   glob="${dir##*/}"
+# for dir in ~/scratch1/hs[12]*{base,ntau,ntaumean,tgrad}*; do
 #   # data=(~/data/timescales/$glob/2xdaily_inst_spectral*.*.nc)  # spectral and 'phase' data
 #   # [ "${#data[@]}" -eq 2 ] && { echo "Skipping: $glob"; continue; }
+#   glob="${dir##*/}"
 #   echo
 #   echo "Spectral blocks: $glob"
 #   ./process_after -s -n=8 "$glob" && {
 #     echo
 #     echo "Spectral average: $glob"
-#     ./post_series -o -cs -c1=500 -c2=5500 "$glob"
+#     ./post_glob -o -cs -c1=500 -c2=5500 "$glob"
 #   }
 # done
-

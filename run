@@ -1,172 +1,145 @@
 #!/usr/bin/env bash
 ################################################################################
-# This file is used to generate various experiment series with 'run_series'
+# This file is used to generate various experiment series with 'run_sweep'
 # TODO: Get spectral decompositions for control runs.
 ################################################################################
 cd ${0%/*} || exit 1
 
 # Test run
-# ./run_series -s -t -tb=2 -td=10 hs1_base_t42l20s
+# ./run_sweep --test --testblocks=2 --testdays=1 hs1_base_t42l20s
+# ./run_sweep --test --testblocks=2 --testdays=1 hs1_base_t85l60e
 # exit 0
 
 # Test runs that just deliver forcing data
 # for force in pkmod pk hs; do
-#   ./run_series -i ${force}1_base_t95l60p
+#   ./run_sweep -i ${force}1_base_t95l60p
 # done
 # exit 0
 
 # Main runs
-if [[ ${HOSTNAME} =~ monde ]]; then
-  # For Jingyuan; long climatology
-  # ./run_series -dt=1200 -c=8 -d=100 -ts=0 \
+if [[ $HOSTNAME =~ monde ]]; then
+  # Long climatology for Jingyuan
+  # ./run_sweep -dt=1200 -c=8 -d=100 -ts=0 \
   #   -te=9500 -kts=500 -kte=9500 \
-  #   --1=40 hs1_tdamp_t42l20s
+  #   --1=40 hs1_ntau_t42l20s
 
   # Basic experiments and locked runs
-  for blopt in 1 2; do
-    # for fopts in c l; do
-    for fopts in ''; do
+  # for blopt in 1 2; do
+  # for fopts in c l; do
+  # for reso in t42l20s t85l60e
+  for reso in t85l60e; do
+    for blopt in 1; do
       # Configure flags
       # Save mean tdt from each run because takes up very little space
-      flags='-r -s -d=100 -dt=1200 -c=8 -ts=0 -te=5500 -kts=500 -kte=5500'
-      # if [ -z "$fopts" ]; then
-      #   flags+=' -rt'  # re-run just to get the mean_tdt.nc files?
-      # else
-      #   flags+=' -rs'  # exit if experiment ran successfully to tend, i.e. repair crashes
-      # fi
+      # flags='-r -s -d=100 -dt=1200 -c=8 -ts=0 -te=5500 -kts=500'
+      # [ -z "$fopts" ] && flags+=' -rt' || flags+=' -rs'
+      flags='-r -c=16 -d=20 -ds=500 -dt=600 -kte=0 -fw=12 -f=2xdaily_inst'
+      fflags=${flags/600/400}  # sligjtly faster for certain experiments
 
-      # Base experiment
-      ./run_series $flags \
-        --1=40 hs${blopt}${fopts}_tdamp_t42l20s
+      # Forcing experiments
+      # TODO: Delete doubled CO2 experiments
+      # for force in '0.5 qtropical' '0.08 qrealistic' '0.06 qglobal'; do
+      for force in '0.08 qrealistic'; do
+        for tend in 5500; do
+          for param in 10 20 40 100 60 80 30 50; do  # extend control and response at same time
+            f=${force#* }
+            q=${force% *}
+            ./run_sweep $flags --tend=$tend \
+              --ntau=$param --${f}=0,0:${q} hs${blopt} ${reso}
+          done
+        done
+      done
 
       # Standard experiment series
       # NOTE: Locked runs always continue from the end of the
       # run they are using for heating data. Otherwise get instability.
-      ./run_series $flags \
-        --1=20,10,4,2,1,0.4,0.2,40:100,100:200,200:400,400:1000 hs${blopt}${fopts}_tdamp_t42l20s
-      ./run_series $flags \
-        --1=20,10,4,40:100,100:200,200:400,400:1000 hs${blopt}${fopts}_tdampmean_t42l20s
-      ./run_series $flags \
-        --1=60:40,40:20,20:10,10:4,90,120,150,200 hs${blopt}${fopts}_tgrad_t42l20s
-      ./run_series $flags \
-        --1=280,290,310,320 hs${blopt}${fopts}_tmean_t42l20s
-
-      # Forcing experiments
-      for force in \
-        '0.5 tropical' '0.08 realistic' '0.06 global' \
-        # '0.03 global' '0.04 realistic'
-        do
-        q=${force% *}
-        f=${force#* }
-        ./run_series $flags \
-          --1=40,20,60,10,100 --2=0:${q} \
-          hs${blopt}${fopts}_tdamp-${f}_t42l20s
+      # ./run_sweep $flags --ntau=40 hs${blopt} ${reso}
+      for tend in 5500; do
+        ./run_sweep $flags --tend=$tend \
+          --ntau=40,20,10,100,100:200,200:400 hs${blopt} ${reso}
+      done
+      for tend in 5500; do
+        ./run_sweep $flags --tend=$tend \
+          --tgrad=60:40,40:20,20:10 hs${blopt} ${reso}
+      done
+      for tend in 3500 5500; do
+        ./run_sweep $flags --tend=$tend \
+          --ntau=4,2,1,0.4 hs${blopt} ${reso}
+        ./run_sweep $flags --tend=$tend \
+          --tgrad=90,120 hs${blopt} ${reso}
+        ./run_sweep $fflags --tend=$tend \
+          --tgrad=150,180 hs${blopt} ${reso}
       done
     done
   done
 
-  # Diagonal experiments
-  # WARNING: For default damping rate, continuation experiments not
-  # necessary for tgrad and tmean experiments.
+  # Finish incomplete 5500 day integrations
+  # TODO: Run this (2020-10-24)!
+  # flags='-r -c=16 -d=100 -dt=1200 -kte=0 -fw=12 -f=2xdaily_inst'
   # for blopt in 1 2; do
-  #   for k in 40 20 60 10 100; do
-  #   # for k in 40 20 60 4 400; do
-  #     dt=1200
-  #     [ $k -eq 40 ] && continue
-  #     # Global warming
-  #     ./run_series -r -dt=$dt -c=8 -d=100 -ts=0 \
-  #       -te=$te -kts=500 -kte=3500 \
-  #       --1=$k --2=300:280,300:290,300:310,300:320 hs${blopt}_tdamp-tmean_t42l20s
-  #     # Temperature gradient
-  #     ./run_series -r -dt=$dt -c=8 -d=100 -ts=0 \
-  #       -te=$te -kts=500 -kte=3500 \
-  #       --1=$k --2=60:40,60:90,60:120,60:150,60:20 hs${blopt}_tdamp-tgrad_t42l20s
-  #   done
+  #   ./run_sweep $flags \
+  #     --ntau=60 \
+  #     --tend=5500 \
+  #     hs${blopt}_ntau_t42l20s
+  #   ./run_sweep $flags \
+  #     --ntau=40,10,100,20,60 --2=0,300:310 \
+  #     --tend=5500 \
+  #     hs${blopt}_ntau-tmean_t42l20s
   # done
 
   # Gradient shift experiments for different absolute equilibrium
   # temp differences
   # TODO: Delete these?
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=0 \
   #   -te=5500 -kts=500 -kte=5500 --1=-2,2 \
   #   hs_tshift_t42l20s
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=0 \
   #   -te=5500 -kts=500 -kte=5500 \
   #   --1=20,60,100,140 --2=-2,2 \
   #   hs_tgrad-tshift_t42l20s
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=0 \
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=0 \
   #   -te=5500 -kts=500 -kte=5500 \
   #   --1=40,80,120,160 --2=-2,2 \
   #   hs_tgrad-tshift_t42l20s
 
   # Integrate all long-timescale experiments an extra 5000 days
   # TODO: Not done yet?
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs1_tdampmean_t42l20s
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
+  #   --1=40:100,100:200,200:400,400:1000 hs1_ntaumean_t42l20s
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs1_tdamp_t42l20s
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
+  #   --1=40:100,100:200,200:400,400:1000 hs1_ntau_t42l20s
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs2_tdampmean_t42l20s
-  # ./run_series --resume -dt=1200 -c=8 -d=100 -ts=5500 \
+  #   --1=40:100,100:200,200:400,400:1000 hs2_ntaumean_t42l20s
+  # ./run_sweep --resume -dt=1200 -c=8 -d=100 -ts=5500 \
   #   -te=9900 -kts=500 -kte=5500 \
-  #   --1=40:100,100:200,200:400,400:1000 hs2_tdamp_t42l20s
+  #   --1=40:100,100:200,200:400,400:1000 hs2_ntau_t42l20s
 
 elif [[ $HOSTNAME =~ cheyenne ]]; then
   # Test
-  # ./run_series -c=36 -dt=400 \
+  # ./run_sweep -c=36 -dt=400 \
   #   --test -td=1 -tb=5 -tn=test-process \
-  #   hs1_tdamp_t95l60e --1=40
+  #   hs1_ntau_t95l60e --1=40
 
   # For supercomputer
-  # NOTE: We really try to tune the model step for this one!
-  # NOTE: Already have base experiment finished
-  # NOTE: Try just 3000 day integration for now.
-  # Basic ones
-  ./run_series --resume -dt=400 \
-    -c=36 -n=1 -d=20 -ts=0 \
-    -te=3500 -kts=500 -kte=5500 --1=1,2,4,10 \
-    hs1_tdamp_t95l60e
-  ./run_series --resume -dt=600 \
-    -c=36 -n=1 -d=20 -ts=0 \
-    -te=3500 -kts=500 -kte=5500 --1=20 \
-    hs1_tdamp_t95l60e
+  flags='-r -n=1 -c=36 -d=20 -fw=12 -f=2xdaily_inst -te=3500 -kts=500'
+  ./run_sweep $flags -dt=400 --ntau=1,2,4,10 hs1 t95l60e
+  ./run_sweep $flags -dt=600 --ntau=20 hs1 t95l60e
+  ./run_sweep $flags -dt=800 --ntau=40:100 hs1 t95l60e
+  ./run_sweep $flags -dt=1000 --ntau=40:200,40:400 hs1 t95l60e
+  ./run_sweep $flags -dt=1200 --ntau=40:1000 hs1 t95l60e
 
-  # Continuation runs (wait until others have finished)
-  ./run_series --resume -dt=800 \
-    -c=36 -d=20 -ts=0 \
-    -te=3500 -kts=500 -kte=5500 --1=40:100 \
-    hs1_tdamp_t95l60e
-  ./run_series --resume -dt=1000 \
-    -c=36 -d=20 -ts=0 \
-    -te=3500 -kts=500 -kte=5500 --1=40:200,40:400 \
-    hs1_tdamp_t95l60e
-  ./run_series --resume -dt=1200 \
-    -c=36 -d=20 -ts=0 \
-    -te=3500 -kts=500 -kte=5500 --1=40:1000 \
-    hs1_tdamp_t95l60e
-
-  # Stratosphere experiments
-  # Also change damping throughout *entire atmosphere* for point
-  # of comparison. Should be neat.
+  # Stratosphere experiments. Also change damping throughout *entire atmosphere*
+  # for point of comparison. Should be neat.
   # # Polvani Kushner setup
-  # ./run_series --resume -dt=800 \
+  # ./run_sweep --resume -dt=800 \
   #   -c=36 -n=1 -d=20 -ts=0 \
   #   -te=3500 -kts=500 -kte=5500 --1=1,2,4,10,20,40 --2=3 \
   #   pk_kstrat0_t95l60e
-  # ./run_series --resume -dt=800 \
+  # ./run_sweep --resume -dt=800 \
   #   -c=36 -n=1 -d=20 -ts=0 \
   #   -te=3500 -kts=500 -kte=5500 --1=1,2,4,10,20,40 --2=3 \
-  #   pk_tdamp_t95l60e
-  # # Custom setup
-  # ./run_series --resume -dt=800 \
-  #   -c=36 -n=1 -d=20 -ts=0 \
-  #   -te=3500 -kts=500 -kte=5500 --1=1,2,4,10,20,40 --2=3 \
-  #   pk_kstrat0_t95l60e
-  # ./run_series --resume -dt=800 \
-  #   -c=36 -n=1 -d=20 -ts=0 \
-  #   -te=3500 -kts=500 -kte=5500 --1=1,2,4,10,20,40 --2=3 \
-  #   pk_tdamp_t95l60e
+  #   pk_ntau_t95l60e
 fi
