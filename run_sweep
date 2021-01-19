@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-################################################################################
-# NOTE: Previously sweeped parameter space with ugly hodgpodge of exact doubling;
-# dividing into 1, 2.5, 5; and diving into 1, 2, 4; now, we always use the 1, 2, 4
-# to logarithmically sweep space. Existing directories have been moved to their
-# closest values in this new spacing. White lie, but probably insignificant differences.
-################################################################################
 usage='run_sweep [OPTION...] FORCING RESO [--PARAM=[prev:]value[,...]]'
 doc="This script runs parameter sweeps for the given forcing and resolution
 specs and the given input parameters using the 'run' script. It generates standardized

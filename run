@@ -41,32 +41,24 @@ if [[ $HOSTNAME =~ monde ]]; then
       # for force in '0.5 qtropical' '0.08 qrealistic' '0.06 qglobal'; do
       for force in '0.08 qrealistic'; do
         for tend in 5500; do
-          for param in 10 20 40 100 60 80 30 50; do  # extend control and response at same time
-            f=${force#* }
-            q=${force% *}
-            ./run_sweep $flags --tend=$tend \
-              --ntau=$param --${f}=0,0:${q} hs${blopt} ${reso}
-          done
+          # for param in 10 20 40 100 60 80 30 50; do  # extend control and response at same time
+          f=${force#* }
+          q=${force% *}
+          ./run_sweep $flags --tend=$tend \
+            --ntau=120,160,200 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
         done
       done
 
       # Standard experiment series
       # NOTE: Locked runs always continue from the end of the
       # run they are using for heating data. Otherwise get instability.
-      # ./run_sweep $flags --ntau=40 hs${blopt} ${reso}
       for tend in 5500; do
         ./run_sweep $flags --tend=$tend \
-          --ntau=40,20,10,100,100:200,200:400 hs${blopt} ${reso}
+          --ntau=40,20,10,100,100:200,200:400,4,2,1,0.4 hs${blopt} ${reso}
       done
       for tend in 5500; do
         ./run_sweep $flags --tend=$tend \
-          --tgrad=60:40,40:20,20:10 hs${blopt} ${reso}
-      done
-      for tend in 3500 5500; do
-        ./run_sweep $flags --tend=$tend \
-          --ntau=4,2,1,0.4 hs${blopt} ${reso}
-        ./run_sweep $flags --tend=$tend \
-          --tgrad=90,120 hs${blopt} ${reso}
+          --tgrad=60:40,40:20,20:10,90,120 hs${blopt} ${reso}
         ./run_sweep $fflags --tend=$tend \
           --tgrad=150,180 hs${blopt} ${reso}
       done

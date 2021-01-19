@@ -78,8 +78,8 @@ spindown_regional_ts=false
 # Scripts
 # shellcheck disable=2034
 avespec=$(pwd)/post_spectral.py
-autocorr=$(pwd)/post_autocorr.py
-timescale=$(pwd)/post_timescale.py
+python_autocorr=$(pwd)/post_autocorr.py
+python_timescale=$(pwd)/post_timescale.py
 f2c=$(pwd)/post_f2c.py # converts frequency-wavenumber data to phase speed-wavenumber space
 eof=$(pwd)/post_eofs.py
 dyn=$(pwd)/post_dyntau.py
@@ -430,13 +430,12 @@ climate_spectral() {
   # Translate from k-frequency space to k-phase speed space
   rm ${out%.nc}_phase.nc 2>/dev/null  # old file version
   out_phase=${out/spectral/spectral_phase}
-  if ! newer "$out_phase" "$out"; then
-    [ -r "$out_phase" ] && rm "$out_phase"
-    t=$(date +%s)
-    python3 "$f2c" "$out" "$out_phase" \
-      || raise "Translation failed."
-    echo " * Time for translating to phase speeds: $(($(date +%s) - t))s."
-  fi
+  newer "$out_phase" "$out" && return 0
+  [ -r "$out_phase" ] && rm "$out_phase"
+  t=$(date +%s)
+  python3 "$f2c" "$out" "$out_phase" \
+    || raise "Translation failed."
+  echo " * Time for translating to phase speeds: $(($(date +%s) - t))s."
 }
 
 # Autocorrelation
@@ -449,72 +448,52 @@ climate_autocorr() {
   unset outs
   out=$fautocorr
   files=($(get_files "$pfull"))
-  if ! newer "$out" "${files[@]}"; then
-    i=0
-    day=$climate_start
-    # nlag=100  # up to lag-N days
-    # nblock=500  # process in blocks of N days
-    # maxmissing=1
-    nlag=30  # up to lag-N days
-    nblock=100  # process in blocks of N days
-    nfiles=$((nblock / rdays))
-    maxmissing=0
-    while [ $day -lt $climate_end ]; do
-      # Select files within range $day to $day + $nblock
-      # NOTE: Permit *maxmissing* file missing in each block, and only *consecutive*
-      unset ifiles
-      for iday in $(seq $day $rdays $((day + nblock - 1))); do
-        ifile=($(get_files "$pfull" -d1=$iday -d2=$((iday + rdays)) 2>/dev/null))
-        [ ${#ifile[@]} -gt 1 ] && raise 'Duplicate files detected.'
-        [ ${#ifile[@]} -eq 0 ] && [ ${#ifiles[@]} -eq 0 ] && continue  # delay start of block
-        [ ${#ifile[@]} -eq 0 ] && [ ${#ifiles[@]} -gt 0 ] && break  # prematurely end block
-        ifiles+=("${ifile[0]}")
-      done
-      # Calculate autocorrelation
-      echo "Using files: ${ifiles[*]##*/}"
-      if [ ${#ifiles[@]} -lt $((nfiles - maxmissing)) ]; then
-        echoerr "Warning: Too many files missing from autocorrelation block ${day}."
-      else
-        iout=${out%.nc}.${day}.nc
-        python3 "$autocorr" "$nlag" "${ifiles[@]}" "$iout" || raise "Autocorr calculation failed."
-      fi
-      day=$((day + nblock))
-      outs+=($iout) # record
-      unset ifiles
+  newer "$out" "${files[@]}" && return 0
+  i=0
+  day=$climate_start
+  # nlag=100  # up to lag-N days
+  # nblock=500  # process in blocks of N days
+  # maxmissing=1
+  nlag=30  # up to lag-N days
+  nblock=100  # process in blocks of N days
+  nfiles=$((nblock / rdays))
+  maxmissing=0
+  while [ $day -lt $climate_end ]; do
+    # Select files within range $day to $day + $nblock
+    # NOTE: Permit *maxmissing* file missing in each block, and only *consecutive*
+    unset ifiles
+    for iday in $(seq $day $rdays $((day + nblock - 1))); do
+      ifile=($(get_files "$pfull" -d1=$iday -d2=$((iday + rdays)) 2>/dev/null))
+      [ ${#ifile[@]} -gt 1 ] && raise 'Duplicate files detected.'
+      [ ${#ifile[@]} -eq 0 ] && [ ${#ifiles[@]} -eq 0 ] && continue  # delay start of block
+      [ ${#ifile[@]} -eq 0 ] && [ ${#ifiles[@]} -gt 0 ] && break  # prematurely end block
+      ifiles+=("${ifile[0]}")
     done
 
-    # Merge the resulting files
-    if [ ${#outs[@]} -eq 1 ]; then
-      mv "${outs[0]}" "$out"
+    # Calculate autocorrelation
+    echo "Using files: ${ifiles[*]##*/}"
+    if [ ${#ifiles[@]} -lt $((nfiles - maxmissing)) ]; then
+      echoerr "Warning: Too many files missing from autocorrelation block ${day}."
     else
-      # ncecat -O $out ${outs[@]}
-      echo "Merging output."
-      t=$(date +%s)
-      cdo $flags -ensmean "${outs[@]}" "$out"
-      rm "${outs[@]}" 2>/dev/null
-      echo " * Merge time: $(($(date +%s) - t))"
+      iout=${out%.nc}.${day}.nc
+      python3 "$python_autocorr" "$nlag" "${ifiles[@]}" "$iout" || raise "Autocorr calculation failed."
     fi
-  fi
+    day=$((day + nblock))
+    outs+=($iout) # record
+    unset ifiles
+  done
 
-  # Next get the best-fit red noise timescale
-  # TODO: Only exit if overwrite disabled
-  corrs=$out
-  out=$ftimescale
-  if ! newer "$out" "$corrs"; then
-    python3 "$timescale" "$corrs" "$out" \
-      || raise "Best fit calculation failed."
+  # Merge the resulting files
+  if [ ${#outs[@]} -eq 1 ]; then
+    mv "${outs[0]}" "$out"
+  else
+    # ncecat -O $out ${outs[@]}
+    echo "Merging output."
+    t=$(date +%s)
+    cdo $flags -ensmean "${outs[@]}" "$out"
+    rm "${outs[@]}" 2>/dev/null
+    echo " * Merge time: $(($(date +%s) - t))"
   fi
-
-  # With CDO
-  # echo "Getting lag-1 autocorrelation from the time series."
-  # ntime=$(cdo ntime tmp.nc 2>/dev/null)
-  # timesteps=$(seq 1 $ntime | xargs | tr ' ' ',') # list of timesteps
-  # timesteps1=${timesteps#*,} # trim first timestep
-  # timestepsN=${timesteps%,*} # trim last one
-  # t=$(date +%s)
-  # cdo $flags -timcor -seltimestep,$timesteps1 tmp.nc \
-  #   -seltimestep,$timestepsN tmp.nc $fautocorr
-  # rm tmp.nc # remove file
 }
 
 # EOFs with xarray and climpy
@@ -537,10 +516,8 @@ climate_variability() {
   for region in nh; do
     out=${feofs%%.*}_${region}.${feofs#*.}
     newer "$out" "$series" && continue
-
     echo "EOFs for region: $region" # will be 20N to 70N
-    python3 "$eof" "$region" 0 "$series" "${out}" \
-      || raise "EOF failed."
+    python3 "$eof" "$region" 0 "$series" "${out}" || raise "EOF failed."
   done
 
   # Remove series
@@ -562,9 +539,9 @@ timeseries_surface() {
     out=${fsurface%%.*}_${region}.${fsurface#*.}
     out=${out/d?????-/d00000-}
     newer $out ${files[@]} && continue
-
-    # Get suface data
+    # Get surface data
     # NOTE: NCO uses zero based indexing but CDO uses 1 based indexing.
+    # Can switch to 1 based in NCO with -F flag.
     # NOTE: Too many processes for cdo! Have to make temporary files.
     # # commands=("${files[@]/#/ ${!region} -sellevidx,20 -selname,u}")
     # echo "Getting surface: ${commands[*]}"
@@ -574,23 +551,20 @@ timeseries_surface() {
       file=${files[i-1]}
       echo "Region selection: ${file}"
       {
-        ncks --no-abc -O -v u -d plev,-1 -d "${!ncregion}" \
-          $file surface_${region}.${idx}.nc
         # cdo --no_warnings $flags -sellevidx,20 ${!region} -selname,u \
         #   $file surface_${region}.${idx}.nc
+        ncks --no-abc -O -v u -d plev,-1 -d "${!ncregion}" \
+          $file surface_${region}.${idx}.nc
       } &
-      [ $((i % pmax)) -eq 0 ] && { echo 'Waiting...'; wait; }
+      [ $((i % pmax)) -eq 0 ] && echo 'Waiting...' && wait
     done
-    echo 'Waiting...'; wait
-
-    # Then merge the files
+    echo 'Waiting...' && wait
+    # Merge the files
     files=(surface_${region}.????.nc)
     [ ${#files[@]} -eq 0 ] && raise "Failed to get surface data."
     echo "Merging files: ${files[*]}"
     ncrcat -O "${files[@]}" "$out"
-
     # Remove surface files
-    # rm ${files[@]} 2>/dev/null
     rm surface_${region}.*.nc 2>/dev/null
   done
 }
@@ -598,14 +572,14 @@ timeseries_surface() {
 # Time series of Lorenz energy terms
 # For this we use "all files", i.e. include spinup before climate_start and any
 # days after climate_end.# Also gets NH/SH averages, so can get meaningful autocorrelation stats.
-# WARNING: CDO is messed up and will silently compute wrong results if you
-# try to use setgridarea or setgrid before getting fldmean. Instead you *must*
-# add a dummy longitude dimension before averaging.
-# WARNING: Get 'inconsistent dimension definition' warning on fldmean perhaps
-# because longitude dim was created after other dims. Taking *raw fldmean*
-# returns array of *all missing vals* (with monde anaconda cdo, but not with
-# builtin cdo), but ***sellonlatbox*** seems to fix whatever issue was going
-# on with param ids (see pe_cdo.txt and pe_nco.txt in hs_base_t42l10s).
+# WARNING: CDO is messed up and will silently compute wrong results if you try to use
+# setgridarea or setgrid before getting fldmean. Instead you *must* add a dummy
+# longitude dimension before averaging.
+# WARNING: Get 'inconsistent dimension definition' warning on fldmean perhaps because
+# longitude dim was created after other dims. Taking *raw fldmean* returns array of
+# *all missing vals* (with monde anaconda cdo, but not with builtin cdo), but
+# ***sellonlatbox*** seems to fix whatever issue was going on with param ids (see
+# pe_cdo.txt and pe_nco.txt in hs_base_t42l10s).
 timeseries_energy() {
   # Remove old ones
   unset regions
@@ -671,8 +645,8 @@ timeseries_energy() {
     out=${fenergy%%.*}_${region}.${fenergy#*.}
     out=${out/d?????-/d00000-}
     newer $out energy_${region}.????.nc && continue
+    # cdo $flags -mergetime energy_${region}.*.nc $out # merge the means
     {
-      # cdo $flags -mergetime energy_${region}.*.nc $out # merge the means
       ncrcat -O energy_${region}.????.nc $out # merge the means
       ncks --no-abc -O -C -x -v lon,lat $out $out
     } &
@@ -815,9 +789,10 @@ run() {
 driver() {
   # Forcing data
   if $constants; then
+    # if true; then
     if ! newer $output/constants.nc $input/../constants.nc; then
       echo "Copying constants."
-      cp $input/../constants.nc $output
+      cp $input/../constants.nc $output/constants.nc
     fi
   fi
 

@@ -14,10 +14,10 @@ for tend in 5500 3500; do
     # for reso in t42l20s; do
     for reso in t85l60e; do
       # for flags in '-c -ca'; do
-      for flags in '-c -cp' '-te -ts'; do
+      for flags in -c -cp -ci -ts -te; do
         echo "Flags: $flags"
-        ./post_glob \
-          "hs${blopt}_${reso}" \
+        ./post_sweep \
+          "hs${blopt}?${reso}" \
           "hs${blopt}_${reso}_ntau????.???" \
           "hs${blopt}_${reso}_ntau????.???c" \
           "hs${blopt}_${reso}_tgrad????.???" \

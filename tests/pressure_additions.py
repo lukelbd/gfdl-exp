@@ -1,8 +1,8 @@
+#!/usr/bin/env python3
 """
-Add parameters to existing summary files. Currently this just adds
-geopotential height and fluxes by integrating the hydrostatic equation.
-We are beginning to phase out NCL because it is slow and obsolete. Use
-netCDF4 for low level control and high performance.
+Add parameters to existing summary files. Currently this just adds geopotential height
+and fluxes by integrating the hydrostatic equation. We are beginning to phase out NCL
+because it is slow and obsolete. Use netCDF4 for low level control and high performance.
 """
 import os
 import sys

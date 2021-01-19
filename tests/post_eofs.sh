@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 ################################################################################
 # # Get ensemble-statistics for equilibrium control files
 # # Also get the selected difference for given days, and statistics
@@ -59,6 +60,7 @@
 #   fi
 #   rm ${files[@]} # remove the helper files
 # }
+
 ################################################################################
 # For EOF stuff
 # To get the approximate degrees of freedom ('independent samples') for a
@@ -89,6 +91,7 @@
 #   cdo $flags -vertmean -fldcovar tmp.nc tmp.nc $fcovar
 #   rm tmp.nc
 # }
+
 ################################################################################
 # Get single EOF from 2D latitude-pressure space
 # Follows convention from Thompson paper

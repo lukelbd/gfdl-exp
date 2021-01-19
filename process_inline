@@ -208,7 +208,7 @@ if [ ${#prefixes[@]} -eq 0 ]; then
 fi
 
 # Loop through each file
-$debug && cmd='cp' || cmd='mv'
+$debug && cpmv=cp || cpmv=mv
 [ -d ../netcdf ] || mkdir ../netcdf
 for prefix in ${prefixes[@]}; do
   # Rename the output files so they end in '.nc'
@@ -232,7 +232,7 @@ for prefix in ${prefixes[@]}; do
     $mppnccombine ${base}.nc ${ncfiles[@]} || raise "mppnccombine failed."
     $debug || rm ${ncfiles[@]}
     attrfix ${base}.nc
-    $cmd ${base}.nc ../netcdf/${base}.${PWD##*/}.nc
+    $cpmv ${base}.nc ../netcdf/${base}.${PWD##*/}.nc
     continue
   fi
 
@@ -352,11 +352,11 @@ for prefix in ${prefixes[@]}; do
     echo "  * Time for combining isen params: $(($(date +%s) - t))s."
   fi
 
-  # Append params to means; want them to show up at end of ncdump ideally
+  # Append means to params; want them to show up at end of ncdump ideally
   # ncks -h --no-abc -A params_plev.nc means.nc
   ncks -h --no-abc -A means.nc params_plev.nc
-  $cmd params_plev.nc $plev_yzfile
-  $cmd params_isen.nc $isen_yzfile
+  $cpmv params_plev.nc $plev_yzfile
+  $cpmv params_isen.nc $isen_yzfile
   $debug || rm means.nc means.*.nc params_plev.*.nc params_isen.*.nc
 
   #----------------------------------------------------------------------------#
@@ -414,10 +414,10 @@ for prefix in ${prefixes[@]}; do
   #----------------------------------------------------------------------------#
   # Then copy files to common directory
   #----------------------------------------------------------------------------#
-  [ -r $plev_yzfile ] && $cmd $plev_yzfile ../netcdf
-  [ -r $isen_yzfile ] && $cmd $isen_yzfile ../netcdf
-  [ -r $spectra_file ] && $cmd $spectra_file ../netcdf
-  [ -r $xyzfile ] && $cmd $xyzfile ../netcdf
+  [ -r $plev_yzfile ] && $cpmv $plev_yzfile ../netcdf
+  [ -r $isen_yzfile ] && $cpmv $isen_yzfile ../netcdf
+  [ -r $spectra_file ] && $cpmv $spectra_file ../netcdf
+  [ -r $xyzfile ] && $cpmv $xyzfile ../netcdf
 done
 
 # Echo time of finish

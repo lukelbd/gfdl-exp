@@ -6,12 +6,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Read file
 print("Reading initial file and interpolating...")
-load "~/timescales-exps/header.ncl"
+load "~/drycore/header.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; read data from here, write later
 varnames = getfilevarnames(f)
-dimnames = getvardims(f) ; will work on file handle passed to it
+dimnames = getvardims(f)  ; will work on file handle passed to it
 system("rm " + output + " 2>/dev/null") ; remove file
 o = addfile(output, "c")
 filedimdef(o, "time", -1, True) ; set unlimited
@@ -68,6 +68,7 @@ plev_bnds := plev_bnds(plev|:, bnds|:)  ; re-order
 
 ; Parameters needed for interpolation
 slp = f->slp  ; surface pressure in Pa
+
 ; Parameters needed for extrapolation
 ; NOTE: If 't' is not available, just put a dummy in place
 hyam_norm = hyam / p0  ; required for vint2hp function
@@ -83,30 +84,28 @@ zbot = 0  ; zero surface geopotential
 ; Standardize coordinates
 ; First horizontal coordinates
 lon@axis = "X"
-lon@cartesian_axis = "X"
-lon@standard_name = lon@long_name
+lon@long_name = "longitude"
+lon@standard_name = "longitude"
 if isatt(lon, "edges")
   delete(lon@edges)  ; because some programs expect an N by 2 array of boundaries, instead of N + 1 vector
 end if
 lat@axis = "Y"
-lat@cartesian_axis = "Y"
-lat@standard_name = lat@long_name
+lat@long_name = "latitude"
+lat@standard_name = "latitude"
 if isatt(lat, "edges")
   delete(lat@edges)
 end if
+
 ; Vertical roods
 plev@axis = "Z"
-plev@cartesian_axis = "Z"
 plev@long_name = "pressure level"
+plev@standard_name = "air_pressure"
 plev@units = "hPa"
 plev@bounds = "plev_bnds"
-plev_bnds@axis = "Z"
-plev_bnds@cartesian_axis = "Z"
-plev_bnds@long_name = "pressure level bounds"
-plev_bnds@units = "hPa"
+plev@positive = "down"
+
 ; Time
 time@axis = "T"
-time@cartesian_axis = "T"
 time@long_name = "time"
 time@standard_name = "time"
 time@calendar = "360_day"  ; so programs will stop bugging me about unknown calendar name 'no_calendar'
@@ -129,7 +128,7 @@ delete(time&time)
 delete(plev&plev)
 o->time = time
 o->plev = plev
-o->plev_bnds = plev_bnds ; will rename later and add atributes
+o->plev_bnds = plev_bnds
 o->lat  = lat
 o->lon  = lon
 ; Print message
@@ -151,6 +150,7 @@ do i = 0, dimsizes(varnames) - 1
       print("Variable " + qq + varname + qq + " is a coordinate.")
       continue
     end if
+
     ; Delete coordinates so their attributes do not overwrite modified attributes
     ; currently on file
     delete(var&lat)
@@ -163,6 +163,7 @@ do i = 0, dimsizes(varnames) - 1
       o->$varname$ = var
       continue
     end if
+
     ; Special cases for interplation
     if varname .eq. "t" then
       varflag = 1 ; special treatment of temp

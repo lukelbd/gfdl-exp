@@ -13,7 +13,7 @@
 ; 3) save the summary statistics file
 ; And don't check contents or anything.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-load "~/timescales-model/header.ncl"
+load "~/drycore/header.ncl"
 exists("filename")
 ; Figure out desired output
 get_archive = False

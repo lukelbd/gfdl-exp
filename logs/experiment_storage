@@ -33,12 +33,11 @@ for glob in "${globs[@]}"; do
     # for file in autocorr; do
     unset message
     for suffix in \
-        constants \
-        autocorr \
+        constants autocorr \
         climate climate_isen \
-        series spectral spectral_phase \
-        eofs_nh eofs_nh_vert \
-        energy; do
+        spectral spectral_phase \
+        eofs_nh eofs_vert_nh \
+        energy_nh surface_nh; do
       if [ $suffix == constants ]; then
         ncfiles=($folder/${suffix}.nc*)
       else

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Calculate phase speed and wavenumber spectra for the EP flux and momentum
-and heat flux terms. Should result in a longitude by latitude by phase speed,
-wavenumber by latitude by time, and wavenumber by latitude by phase speed
-files.
+Calculate phase speed and wavenumber spectra for the EP flux and momentum and heat flux
+terms. Should result in a longitude by latitude by phase speed, wavenumber by latitude
+by time, and wavenumber by latitude by phase speed files.
 """
 # Imports
 import os

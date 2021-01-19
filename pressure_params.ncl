@@ -28,7 +28,7 @@
 ; *quadrature* due to geostrophic wind, we can ignore this.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 print("Reading initial file...")
-load "~/timescales-exps/header.ncl"
+load "~/drycore/header.ncl"
 exists("filename")
 exists("output")
 exists("means")

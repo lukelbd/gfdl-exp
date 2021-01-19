@@ -4,7 +4,7 @@
 ; variable "forcing" to this script (calculate from Newtonian damping and
 ; the damping/equilbrium params).
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-load "~/timescales-exps/header.ncl"
+load "~/drycore/header.ncl"
 qq = integertochar(34) ; a double quote; only way to put inside string! yuck.
 exists("filename")
 exists("output")
@@ -72,7 +72,7 @@ timer(" * Time for reading data")
 ; 2.5K resolution, then 5K, then 20K; total 60
 ; This gives some extra resolution in lower stratosphere, where sometimes are
 ; a bunch of eddy fluxes, and lower resolution above to top of atmosphere
-thlev = array_append_record(array_append_record( \
+thlev = array_append_record( array_append_record( \
   fspan(220.0, 340.0, 41), \ ; every 3K
   fspan(345.0, 380.0, 8), 0), \ ; every 5K
   fspan(400.0, 600.0, 11), 0) ; every 20K (really don't need much up here)
@@ -83,22 +83,26 @@ end if
 thlev = thlev(::-1)
 thlev!0 = "thlev"
 thlev&thlev = thlev ; this is apparently necessary
-thlev@long_name = "potential temperature level"
-thlev@units = "K"
 thlev@axis = "Z"
+thlev@long_name = "potential temperature level"
+thlev@standard_name = "air_potential_temperature"
+thlev@units = "K"
+thlev@positive = "up"
+
 ; Horizontal coordinates
 lon@axis = "X"
-lon@cartesian_axis = "X"
-lon@standard_name = lon@long_name
+lon@long_name = "longitude"
+lon@standard_name = "longitude"
 if isatt(lon, "edges")
   delete(lon@edges) ; because some programs expect an N by 2 array of boundaries, instead of N + 1 vector
 end if
 lat@axis = "Y"
-lat@cartesian_axis = "Y"
-lat@standard_name = lat@long_name
+lon@long_name = "latitude"
+lon@standard_name = "latitude"
 if isatt(lat, "edges")
   delete(lat@edges)
 end if
+
 ; Time
 time@axis = "T"
 time@cartesian_axis = "T"
@@ -108,6 +112,7 @@ time@calendar = "360_day" ; so programs will stop bugging me about unknown calen
 if isatt(time, "calendar_type")
   delete(time@calendar_type)
 end if
+
 ; Add coordinates first so they appear at top of ncdump
 o->time = time
 o->thlev = thlev
@@ -124,8 +129,11 @@ g = 9.80665
 p0 = 1000.0 ; most common to make this the reference pressure
 Rd = 287.0
 kappa = 0.286
+
 ; Potential temp, pressure, and 'surface layer' quantities
 ; Also store surface pressure
+; Since have no 'surface' layer in this model, we just use the potential
+; temperature at the lowest model level center
 t = f->t(slice(0):slice(1),:,:,:)
 if hybrid then
   psurf = p(:,np - 1,:,:)
@@ -138,12 +146,12 @@ else
 end if
 p@long_name = "pressure"
 p@units = "hPa"
-; Since have no 'surface' layer in this model, we just use the potential
-; temperature at the lowest model level center
+
 ; Pressure
 psurf@long_name = "surface layer pressure"
 psurf@units = "hPa"
 o->slp = psurf
+
 ; Potential temp
 copy_VarCoords(t, pt)
 slth = pt(:,np - 1,:,:)
@@ -211,17 +219,20 @@ do i = 1, dimsizes(names)
 
   ; Interpolate
   y = int2p_n(pt, x, thlev, 0, 1)
+
   ; Dimensions
   y!0 = "time" ; name dimensions
   y!1 = "thlev"
   y!2 = "lat"
   y!3 = "lon"
+
   ; Coordinates
   y&time = time
   y&thlev = thlev
   y&lat = lat
   y&lon = lon
   copy_VarAtts(x, y)
+
   ; Add to file
   o->$name$ = y
   delete(x)
