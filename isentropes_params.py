@@ -61,8 +61,9 @@ def compute_terms(file_full, file_out, file_global='means.nc'):
     clat = np.cos(rlat[:, None])
 
     # Indices for surface potential temp percentile array, see below
+    # WARNING: Use int32 instead of default int64 because mppnccombine has issues
     make_variable(
-        data_out, 'x', np.arange(0, data_full['lon'].size),
+        data_out, 'x', np.arange(0, data_full['lon'].size, dtype='i'),
         long_name='zonal distribution index',
         units='none',
         axis='X',
