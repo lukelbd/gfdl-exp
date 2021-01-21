@@ -78,7 +78,7 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     u = data_full['u'][:].astype('d')
     v = data_full['v'][:].astype('d')
     w = data_full['omega'][:].astype('d')
-    # z = data_full['z'][:].astype('d')
+    z = data_full['z'][:].astype('d')
     q = data_full['tdt'][:].astype('d')
     udt = data_full['udt'][:].astype('d')
     vdt = data_full['vdt'][:].astype('d')
@@ -92,7 +92,7 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     u_bar = data_mean['u'][:]
     v_bar = data_mean['v'][:]
     w_bar = data_mean['omega'][:]
-    # z_bar = data_mean['z'][:]
+    z_bar = data_mean['z'][:]
     q_bar = data_mean['tdt'][:]
     udt_bar = data_mean['udt'][:]
     vdt_bar = data_mean['vdt'][:]
@@ -108,7 +108,7 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     u_star = u - u_bar
     v_star = v - v_bar
     w_star = w - w_bar
-    # z_star = z - z_bar
+    z_star = z - z_bar
     q_star = q - q_bar
     udt_star = udt - udt_bar
     vdt_star = vdt - vdt_bar
@@ -163,11 +163,11 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
         long_name='zonal meridional wind variance',
         units='m^2 / s^2',
     )
-    # make_variable(
-    #     data_out, 'zvar', weighted_mean(z_star ** 2, zmass),
-    #     long_name='geopotential height variance',
-    #     units='m^2',
-    # )
+    make_variable(
+        data_out, 'zvar', weighted_mean(z_star ** 2, zmass),
+        long_name='geopotential height variance',
+        units='m^2',
+    )
     timer('  * Time for variance terms')
 
     # Eddy fluxes
@@ -181,11 +181,11 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
         long_name='eddy momentum flux',
         units='m^2 / s^2',
     )
-    # make_variable(
-    #     data_out, 'egf', weighted_mean(z_star * v_star, zmass),
-    #     long_name='eddy geopotential flux',
-    #     units='m^2 / s',
-    # )
+    make_variable(
+        data_out, 'egf', weighted_mean(z_star * v_star, zmass),
+        long_name='eddy geopotential flux',
+        units='m^2 / s',
+    )
     timer('  * Time for flux terms')
 
     # APE terms
