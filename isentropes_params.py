@@ -6,6 +6,8 @@ on a big file, if the headache of working with small files is acceptable.
 
 Examples
 --------
+The below can be run inside a test directory.
+
 >>> from isentropes_params import compute_terms
 >>> for num in range(8):
 ...     print(f'File {num}')

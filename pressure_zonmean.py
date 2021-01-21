@@ -6,6 +6,8 @@ pressure_params.py, which we also want to do in parallel on the n-processor file
 
 Example
 -------
+The below can be run inside a test directory.
+
 >>> from pressure_zonmean import compute_means
 >>> from pressure_params import compute_terms
 >>> for num in range(8):

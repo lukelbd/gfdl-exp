@@ -7,6 +7,8 @@ small files is acceptable.
 
 Example
 -------
+The below can be run inside a test directory.
+
 >>> from pressure_zonmean import compute_means
 >>> from pressure_params import compute_terms
 >>> for num in range(8):
