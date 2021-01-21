@@ -4,15 +4,40 @@ Create a NetCDF file with zonal mean eddy fluxes, eddy variances, and Lorenz ene
 budget terms. Use netCDF4 for low level control and high performance. NetCDF4 on small
 files in parallel is better than dask on a big file, if the headache of working with
 small files is acceptable.
+
+Example
+-------
+>>> from pressure_zonmean import compute_means
+>>> from pressure_params import compute_terms
+>>> for num in range(8):
+...     print(f'File {num}')
+...     suffix = '.' + format(num, '04d') + '.nc'
+...     print('Means:')
+...     res = compute_means(
+...         'interp_plev' + suffix,
+...         'tmp_means' + suffix,
+...     )
+...     res.close()
+...     print('Params:')
+...     res = compute_terms(
+...         'interp_plev' + suffix,
+...         'tmp_means' + suffix,
+...         'tmp_params_plev' + suffix,
+...         file_global='tmp_means.nc'
+...     )
+...     res.close()
 """
+import functools
+import os
 import sys
 
 import numpy as np
 import netCDF4 as nc4
 
 import climopy as climo  # takes 2 seconds, mostly from xarray and pint (try %timeit)
-from header import copy_variable, make_variable, timer
+from header import copy_attrs, copy_variable, make_variable, timer
 from pressure_zonmean import vertical_mass, weighted_mean
+make_variable = functools.partial(make_variable, lev='plev')
 
 
 def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
@@ -23,10 +48,14 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     # TODO: Rename 'plev' to 'lev'
     # NOTE: GFDL doesn't use CF conventions right now.
     # See: https://github.com/xgcm/xgcm/issues/91
+    timer()
+    if os.path.exists(file_out):
+        os.remove(file_out)
     data_full = nc4.Dataset(file_full, mode='r')
     data_mean = nc4.Dataset(file_mean, mode='r')
     data_global = nc4.Dataset(file_global, mode='r')
     data_out = nc4.Dataset(file_out, mode='w')
+    copy_attrs(data_full, data_out, ignore=('NCO', 'filename', 'history'))
     for coord in ('time', 'plev', 'lat', 'lon', 'plev_bnds'):
         copy_variable(data_full, data_out, coord, singleton=coord == 'lon')
 
@@ -41,29 +70,31 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     cp = 1005.7
 
     # Read full resolution
+    # WARNING: Data might be stored in 32-bit but always compute in 64-bit
     # WARNING: Data is loaded from disk every time you use [:] indexing
-    t = data_full['t'][:]
-    u = data_full['u'][:]
-    v = data_full['v'][:]
-    w = data_full['omega'][:]
-    z = data_full['z'][:]
-    q = data_full['tdt'][:]
-    udt = data_full['udt'][:]
-    vdt = data_full['vdt'][:]
+    t = data_full['t'][:].astype('d')
+    u = data_full['u'][:].astype('d')
+    v = data_full['v'][:].astype('d')
+    w = data_full['omega'][:].astype('d')
+    # z = data_full['z'][:].astype('d')
+    q = data_full['tdt'][:].astype('d')
+    udt = data_full['udt'][:].astype('d')
+    vdt = data_full['vdt'][:].astype('d')
 
     # Read zonal means
     # NOTE: We follow CDO convention of preserving reduced longitude and latitude
     # dimensions with a dummy value (CDO uses zero, we use NaN).
-    p = data_mean['plev'][:]
+    p = data_mean['plev'][:] * 100.0
+    exner = (p[:, None, None] / p0) ** kappa
     t_bar = data_mean['t'][:]
     u_bar = data_mean['u'][:]
     v_bar = data_mean['v'][:]
     w_bar = data_mean['omega'][:]
-    z_bar = data_mean['z'][:]
+    # z_bar = data_mean['z'][:]
     q_bar = data_mean['tdt'][:]
     udt_bar = data_mean['udt'][:]
     vdt_bar = data_mean['vdt'][:]
-    pt_bar = t_bar * (p0 / p[:, None, None]) ** kappa
+    pt_bar = t_bar / exner
 
     # Read globally mppnccombined zonal means
     t_globe = data_global['t'][:]
@@ -75,16 +106,16 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     u_star = u - u_bar
     v_star = v - v_bar
     w_star = w - w_bar
-    z_star = z - z_bar
+    # z_star = z - z_bar
     q_star = q - q_bar
     udt_star = udt - udt_bar
     vdt_star = vdt - vdt_bar
 
     # Global anomalies
-    clat = np.cos(np.pi * data_global['lat'][:] / 180.0)
+    clat = np.cos(np.pi * data_global['lat'][:][:, None] / 180.0)
     t_globe = np.sum(t_globe * clat, axis=2, keepdims=True) / np.sum(clat)
     q_globe = np.sum(q_globe * clat, axis=2, keepdims=True) / np.sum(clat)
-    pt_globe = t_globe * (p0 / p[:, None, None]) ** kappa
+    pt_globe = t_globe / exner
     t_bar_anom = t_bar - t_globe
     w_bar_anom = w_bar  # true due to mass conservation
     q_bar_anom = q_bar - q_globe
@@ -108,8 +139,8 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     # New way recognizing that t / theta == (p / p0)^kappa which means stability =
     # = -R / (cp * p * (dtheta / dp) * (t / theta))
     # = -kappa / ((dtheta / dp) * p * (p / p0)^kappa)
-    denom = climo.deriv_uneven(p, pt_globe, axis=1)
-    denom = denom * p[:, None, None] ** kappa * (p[:, None, None] / p0) ** kappa
+    denom = climo.deriv_uneven(p, pt_globe, axis=1, keepedges=True)
+    denom = denom * exner * p[:, None, None] ** kappa
     denom[denom == 0] = np.nan
     stab = -kappa / denom
     timer('  * Time for setup')
@@ -130,11 +161,11 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
         long_name='zonal meridional wind variance',
         units='m^2 / s^2',
     )
-    make_variable(
-        data_out, 'zvar', weighted_mean(z_star ** 2, zmass),
-        long_name='geopotential height variance',
-        units='m^2',
-    )
+    # make_variable(
+    #     data_out, 'zvar', weighted_mean(z_star ** 2, zmass),
+    #     long_name='geopotential height variance',
+    #     units='m^2',
+    # )
     timer('  * Time for variance terms')
 
     # Eddy fluxes
@@ -148,11 +179,11 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
         long_name='eddy momentum flux',
         units='m^2 / s^2',
     )
-    make_variable(
-        data_out, 'egf', weighted_mean(z_star * v_star, zmass),
-        long_name='eddy geopotential flux',
-        units='m^2 / s',
-    )
+    # make_variable(
+    #     data_out, 'egf', weighted_mean(z_star * v_star, zmass),
+    #     long_name='eddy geopotential flux',
+    #     units='m^2 / s',
+    # )
     timer('  * Time for flux terms')
 
     # APE terms
@@ -169,13 +200,13 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     timer('  * Time for APE terms')
 
     # KE terms
-    for prefix, suffix, u_bar_i, v_bar_i, u_star_i, v_star_i in zip(
+    for prefix, suffix, u_bar_i, v_bar_i, u_star_i, v_star_i in (
         ('', '', u_bar, v_bar, u_star, v_star),
         ('baroclinic ', '_clinic', u_clinic_bar, v_clinic_bar, u_clinic_star, v_clinic_star),  # noqa: E501
         ('barotropic ', '_tropic', u_tropic_bar, v_tropic_bar, u_tropic_star, v_tropic_star),  # noqa: E501
     ):
         make_variable(
-            data_out, 'ke' + suffix, weighted_mean(u_star_i ** 2 + v_star_i ** 2) / 2.0,
+            data_out, 'ke' + suffix, weighted_mean(u_star_i ** 2 + v_star_i ** 2, zmass) / 2.0,  # noqa: E501
             long_name=prefix + 'eddy KE',
             units='J / kg',
         )
@@ -237,10 +268,10 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
     clat = np.cos(rlat[:, None])
     tlat = np.tan(rlat[:, None])
     ckekm = (
-        weighted_mean(u_star * v_star, zmass) * clat * climo.deriv_uneven(rlat * a, u_bar / clat, axis=2)  # noqa: E501
-        + weighted_mean(v_star ** 2, zmass) * climo.deriv_uneven(v_bar, rlat * a, axis=2)  # noqa: E501
-        + weighted_mean(u_star * w_star, zmass) * climo.deriv_uneven(u_bar, p, axis=1)
-        + weighted_mean(v_star * w_star, zmass) * climo.deriv_uneven(v_bar, p, axis=1)
+        weighted_mean(u_star * v_star, zmass) * clat * climo.deriv_uneven(rlat * a, u_bar / clat, axis=2, keepedges=True)  # noqa: E501
+        + weighted_mean(v_star ** 2, zmass) * climo.deriv_uneven(rlat * a, v_bar, axis=2, keepedges=True)  # noqa: E501
+        + weighted_mean(u_star * w_star, zmass) * climo.deriv_uneven(p, u_bar, axis=1, keepedges=True)  # noqa: E501
+        + weighted_mean(v_star * w_star, zmass) * climo.deriv_uneven(p, v_bar, axis=1, keepedges=True)  # noqa: E501
         - v_bar * weighted_mean(u_star ** 2, zmass) * tlat / a
     )
     make_variable(
@@ -252,11 +283,11 @@ def compute_terms(file_full, file_mean, file_out, file_global='means.nc'):
 
     # Conversion from mean APE to eddy APE
     # NOTE: Use Oort definition here, way better than Kim formula
-    dt_bar_dy = climo.deriv_uneven(t_bar, rlat * a, axis=2)
-    dpt_bar_dp = climo.deriv_uneven(pt_bar_anom, p, axis=1)
+    dt_bar_dy = climo.deriv_uneven(rlat * a, t_bar, axis=2, keepedges=True)
+    dpt_bar_dp = climo.deriv_uneven(p, pt_bar_anom, axis=1, keepedges=True)
     cpmpe = -1.0 * cp * stab * (
         dt_bar_dy * weighted_mean(t_star * v_star, zmass)
-        + (p / p0) ** kappa * dpt_bar_dp * weighted_mean(t_star * w_star, zmass)
+        + exner * dpt_bar_dp * weighted_mean(t_star * w_star, zmass)
     )
     make_variable(
         data_out, 'cpmpe', cpmpe,
