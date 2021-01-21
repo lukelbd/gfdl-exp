@@ -31,7 +31,7 @@ log=interp.log
 interp=${0%/*}/pressure_interp.ncl  # interpolate with NCL, automatic iteration
 ncl -n -Q 'filename="'$file'"' 'output="tmp.nc"' $interp &>$log
 sed -i '/^.*warning:.*$/d;/^$/d' $log
-[ -r $file ] && nclcheck $log || raise 1 "Something failed during NCL interpolation of constants."
-cdo -O -zonmean -timmean tmp.nc ../$file || raise 1 "Something failed during CDO averaging."
+nclcheck $log && [ -r $file ] || raise 1 'Something failed during NCL interpolation of constants.'
+cdo -O -zonmean -timmean tmp.nc ../$file || raise 1 'Something failed during CDO averaging.'
 rm tmp.nc $file 2>/dev/null
 echo "TOTAL ELAPSED TIME: $(($(date +%s) - t0))s."

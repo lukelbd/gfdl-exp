@@ -49,10 +49,10 @@ bin=$(readlink -f ${0%/*})  # same location as this file; trim filename from rig
 ncparallel=$HOME/ncparallel/ncparallel
 mppnccombine=$HOME/gfdl-fms/exp/mppnccombine.x # combine; needs to have been compiled here
 plev_interp=$bin/pressure_interp.ncl  # interpolate with NCL, automatic iteration
-plev_params=$bin/pressure_params.ncl # eddy and mean Lorenz energy cycle terms with NCL
-plev_means=$bin/pressure_zonmean.ncl # just gets zonal means
+plev_params=$bin/pressure_params.py  # eddy and mean Lorenz energy cycle terms with NCL
+plev_means=$bin/pressure_zonmean.py  # just gets zonal means
 isen_interp=$bin/isentropes_interp.ncl
-isen_params=$bin/isentropes_params.ncl
+isen_params=$bin/isentropes_params.py
 spectra=$bin/pressure_spectra.py # spectral decompositions
 [ -z "$dir" ] || cd "$dir" || raise 127 "Failed to move to directory \"$dir\"."
 
@@ -102,9 +102,7 @@ level_interp() {
   [ -r "$plevout" ] && rm "$plevout"
   ncl -n -Q "filename=\"$file\"" "output=\"$plevout\"" $plev_interp &>$log #2> /dev/null
   sed -i '/^.*warning:.*$/d;/^$/d' $log
-  if ! nclcheck $log || ! [ -r $plevout ]; then
-    raise 2 "Something failed during NCL interpolation."
-  fi
+  nclcheck $log && [ -r $plevout ] || raise 2 "Something failed during NCL interpolation."
   echo "  * Time for plev interpolation: $(($(date +%s) - t))s."
 
   # Interpolation to isentropes
@@ -113,9 +111,7 @@ level_interp() {
   echo "Interpolating to isentropes..."
   [ -r "$isenout" ] && rm "$isenout"
   ncl -n -Q "filename=\"$file\"" "output=\"$isenout\"" "stratosphere=False" $isen_interp &>$log #2> /dev/null
-  if ! nclcheck $log || ! [ -r $isenout ]; then
-    raise 2 "Something failed during NCL interpolation."
-  fi
+  nclcheck $log && [ -r $isenout ] || raise 2 "Something failed during NCL interpolation."
   echo "  * Time for isen interpolation: $(($(date +%s) - t))s."
 }
 
@@ -123,17 +119,17 @@ level_interp() {
 plev_means() {
   # Get the zonal means
   local t log file out suffix
-  file="$1"
-  suffix="$2"
+  file=$1
+  suffix=$2
   out=means.${suffix}
   log=LOGS/means.${suffix%.nc}.log
   t=$(date +%s)
   echo "Getting zonal means..."
   [ -r "$out" ] && rm "$out"
-  ncl -n -Q "filename=\"$file\"" "output=\"$out\"" $plev_means &>$log
-  if ! nclcheck $log; then
-    raise 4 "Something failed while getting zonal means."
-  fi
+  python $plev_means $file $out &>$log \
+    || raise 4 "Something failed while getting zonal means."
+  # ncl -n -Q "filename=\"$file\"" "output=\"$out\"" $plev_means &>$log
+  # nclcheck $log || raise 4 "Something failed while getting zonal means."
   echo "  * Time for getting zonal means: $(($(date +%s) - t))s."
 }
 
@@ -141,31 +137,34 @@ plev_means() {
 # some approaches for testing if file has averaged data
 plev_isen_params() {
   # Ouput file names
-  local t log plevout isenout suffix
-  suffix="$1"
-  plevout=params_plev.${suffix}
-  isenout=params_isen.${suffix}
+  local t log isen_in plev_in mean_in plev_out isen_out suffix
+  suffix=$1
+  mean_in=means.$suffix
+  plev_in=interp_plev.$suffix
+  isen_in=interp_isen.$suffix
+  plev_out=params_plev.${suffix}
+  isen_out=params_isen.${suffix}
 
   # Pressure lev params
   t=$(date +%s)
   log=LOGS/params_isobaric.${suffix%.nc}.log
   echo "Getting pressure params..."
-  [ -r "$plevout" ] && rm "$plevout"
-  ncl -n -Q "filename=\"interp_plev.$suffix\"" "output=\"$plevout\"" "means=\"means.$suffix\"" $plev_params &>$log
-  if ! nclcheck $log; then
-    raise 4 "Something failed while getting plev params."
-  fi
+  [ -r "$plev_out" ] && rm "$plev_out"
+  python $plev_params $plev_in $mean_in $plev_out &>$log \
+    || raise 4 "Something failed while getting plev params."
+  # ncl -n -Q "filename=\"$plev_in\"" "output=\"$plev_out\"" "means=\"means.$suffix\"" $plev_params &>$log \
+  # nclcheck $log || raise 4 "Something failed while getting plev params."
   echo "  * Time for plev params: $(($(date +%s) - t))s."
 
   # Isentropic params
   t=$(date +%s)
   log=LOGS/params_isentropic.${suffix%.nc}.log
   echo "Getting isentropic params..."
-  [ -r "$isenout" ] && rm "$isenout"
-  ncl -n -Q "filename=\"interp_isen.$suffix\"" "output=\"$isenout\"" $isen_params &>$log
-  if ! nclcheck $log; then
-    raise 4 "Something failed while getting isen params."
-  fi
+  [ -r "$isen_out" ] && rm "$isen_out"
+  python $isen_params $isen_in $isen_out &>$log \
+    || raise 4 "Something failed while getting plev params."
+  # ncl -n -Q "filename=\"$isen_in\"" "output=\"$isen_out\"" $isen_params &>$log
+  # nclcheck $log || raise 4 "Something failed while getting isen params."
   echo "  * Time for isen params: $(($(date +%s) - t))s."
 }
 
