@@ -45,8 +45,7 @@ def make_variable(dataset, name, data, lon='lon', lat='lat', lev='lev', _FillVal
         dims = ('time', lat, lon)
     var = dataset.createVariable(name, data.dtype, dims, fill_value=_FillValue)
     var[:] = data
-    for attr, value in attrs.items():
-        setattr(var, attr, value)
+    var.setncatts(attrs)
     return var
 
 
