@@ -63,7 +63,7 @@ Optional arguments
   -h|--help             Print this message.
   -s|--save             Whether to save thermal damping tendency tdt for each run.
   -d|--dryrun           Enable dry run mode. Do not run model; just print info.
-  -t|--test             Enable test mode. Data is saved to a 'test' directory.
+  -t|--test             Enable test mode. Sets defaults for other flags.
   -c=*|--cores=*        Number of cores.
   -n=*|--nodes=*        Number of nodes (used only if this is a supercomputer).
   -d=*|--days=*         Number of days in each restart block.
@@ -93,7 +93,7 @@ Other arguments
 #   around 100m/s (about 200mph)
 # * Working times so far 20 days, 40 days: 600s, even 800s too fast;
 #   100 days: 800s.
-rundir=$HOME/gfdl-fms/exp # model folder for namelists and stuff
+rundir=$HOME/gfdl-fms/exp  # model folder for namelists and stuff
 source $rundir/header.sh
 cwd=${0%/*}
 cd "$cwd" || raise 1 "Header file not found."
@@ -149,6 +149,7 @@ while [ $# -gt 0 ]; do  # echo "Flag: $1"
     -h|--help)                  echo "$doc" && exit 0 ;;
     -d|--dryrun)                dryrun=true ;;
     -s|--save)                  savetdt=true ;;
+    -t|--test)                  basename=test days=1 dt=1200 ;;
     -c=*|--cores=*)             cores=${1#*=} ;;
     -n=*|--nodes=*)             nodes=${1#*=} ;;
     -d=*|--days=*)              days=${1#*=} ;;

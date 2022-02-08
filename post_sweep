@@ -21,16 +21,12 @@ Optional arguments
 "
 # Processes files in directories matching some glob pattern
 shopt -s nullglob
+source ${0%/*}/header.sh
 cwd=$(pwd)
 storage=$HOME/data
 [ -d $storage ] || mkdir $storage
 storage=$storage/timescales  # put in this subdirectory
 [ -d $storage ] || mkdir $storage
-raise() {
-  echo "Usage: $usage"
-  echo "Error: $*" 1>&2
-  exit 1
-}
 
 # Command-line options
 pmax=1 # paralelization

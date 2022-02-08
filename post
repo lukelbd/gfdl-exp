@@ -7,24 +7,37 @@
 shopt -s nullglob
 
 # Forcing experiments and bases, or locked runs
+# NOTE: The control experiments have drift problem so ignore
 # blopt='[12]'
-for tend in 5500 3500; do
-  # for blopt in 1; do
-  for blopt in 1 2; do
-    # for reso in t42l20s; do
-    for reso in t85l60e; do
-      # for flags in '-c -ca'; do
-      for flags in -c -cp -ci -ts -te; do
-        echo "Flags: $flags"
-        ./post_sweep \
-          "hs${blopt}?${reso}" \
-          "hs${blopt}_${reso}_ntau????.???" \
-          "hs${blopt}_${reso}_ntau????.???c" \
-          "hs${blopt}_${reso}_tgrad????.???" \
-          "hs${blopt}_${reso}_tgrad????.???c" \
-          "hs${blopt}_${reso}*" \
-          -r=20 -c1=500 -c2=$tend $flags
-          # -r=100 -c1=500 -c2=5500 $flags
+# for tstart in 500 750 1000 1250 1500; do
+# for tstart in 500 1000 1500; do
+for flags in -cp -ci -ts -te; do
+  for tstart in 500; do
+    for tend in 7500; do
+    # for tend in 5500 6000 6500 7000 7500; do
+    # for tend in 5500 6000 6500; do
+    # for tend in 5500 3500; do
+      # for blopt in 1; do
+      for blopt in 1; do
+        # for reso in t42l20s; do
+        # for reso in t85l60e t42l20s; do
+        for reso in t85l60e; do
+          # for flags in '-c -ca'; do
+          # for flags in -c -cp -ci -ts -te; do
+          echo "Flags: $flags"
+          ./post_sweep \
+            "hs${blopt}_${reso}_ntau????.???" \
+            "hs${blopt}_${reso}_ntau????.???c" \
+            "hs${blopt}_${reso}_ntau????.???_qrealistic*" \
+            "hs${blopt}_${reso}_ntau????.???c_qrealistic*" \
+            -r=20 -c1=$tstart -c2=$tend $flags
+            # "hs${blopt}_${reso}*" \
+            # "hs${blopt}?${reso}" \
+            # "hs${blopt}_${reso}_tgrad????.???" \
+            # "hs${blopt}_${reso}_tgrad????.???c" \
+            # -r=20 -c1=500 -c2=$tend $flags
+            # -r=100 -c1=500 -c2=5500 $flags
+        done
       done
     done
   done

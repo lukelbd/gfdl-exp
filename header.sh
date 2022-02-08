@@ -2,16 +2,34 @@
 #------------------------------------------------------------------------------#
 # Basic functions used throughout this repo
 #------------------------------------------------------------------------------#
-# Raise error
-raise() {
-  echo "Usage: $usage" >&2
-  echo "Error: $2" >&2
-  exit $1
+# Echo error message
+echoerr() {
+  echo "$*" 1>&2
 }
 
-# Check NCL log. NCL sometimes fails to spawn child process for displaying time
-# information -- ignore these errors. Also Execute.c is always shown as error
-# alongside specific function error, so ignore that one.
+# Check NCL log. Ignore 'systemfunc' errors when NCL fails to spawn child process for
+# time info and ignore 'Execute.c' that duplicates the 'fatal:' error message.
 nclcheck() {
-  ! cat $1 | grep -v 'Execute.c' | grep -v 'systemfunc' | grep 'fatal:' &>/dev/null
+  ! cat $1 \
+    | grep -v 'Execute.c' \
+    | grep -v 'systemfunc' \
+    | grep 'fatal:' &>/dev/null
+}
+
+# Raise error
+raise() {
+  local code message
+  if [ $# -gt 1 ] && [ -z "${1//[0-9]/}" ]; then
+    code=$1
+    message=${*:2}
+  else
+    code=1
+    message=$*
+  fi
+  # shellcheck disable=2154
+  if [ -n "$usage" ]; then
+    echo "Usage: $usage" >&2
+  fi
+  echo "Error: $message" >&2
+  exit $code
 }

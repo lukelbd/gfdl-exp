@@ -45,15 +45,7 @@ Optional arguments
 shopt -s nullglob # will return empty if no match
 export PYTHONUNBUFFERED=1 # always use line buffering, not block buffering
 export TIMEFORMAT=$'real %3R user %3U sys %3S'
-echoerr() {
-  echo "$@" 1>&2
-}
-raise() {
-  echoerr "Usage: $usage"
-  echoerr "Error: $*"
-  exit 1
-}
-
+source ${0%/*}/header.sh
 
 # Environmental variables, with defaults
 flags='-s -O'  # overwrite, and only issue warnings
@@ -87,26 +79,26 @@ dyn=$(pwd)/post_dyntau.py
 # Region selections expanded with ${!region}
 # shellcheck disable=2034
 {
-  nh='-sellonlatbox,0,0,20,70'
-  sh='-sellonlatbox,0,0,-70,-20'
-  nhpole='-sellonlatbox,0,0,60,90'
-  shpole='-sellonlatbox,0,0,-90,-60'
-  globe='-sellonlatbox,0,0,-90,90'
-  ncglobe='lat,-90.0,90.0'
-  ncnh='lat,0.0,90.0'
-  ncsh='lat,-90.0,0.0'
+  nh_cdo='-sellonlatbox,0,0,20,70'
+  sh_cdo='-sellonlatbox,0,0,-70,-20'
+  np_cdo='-sellonlatbox,0,0,60,90'
+  sp_cdo='-sellonlatbox,0,0,-90,-60'
+  globe_cdo='-sellonlatbox,0,0,-90,90'
+  nh_ncks='lat,0.0,90.0'
+  sh_ncks='lat,-90.0,0.0'
+  globe_ncks='lat,-90.0,90.0'
 }
 
 # Parse user input
 while [ $# -gt 0 ]; do
   case $1 in
     -h) echo "$doc"; exit ;;
-    -o|--overwrite)            overwrite=true ;;
+    -o|--overwrite)            overwrite=true ;;  # used in newer()
     -c|--constants)            constants=true ;;
     -cp|--climate-plev)        climate_plev=true ;;
     -cs|--climate-spectral)    climate_spectral=true ;;
     -ci|--climate-isentropic)  climate_isen=true ;;
-    -cv|--climate-variability) climate_variability=true ;; # variability
+    -cv|--climate-variability) climate_variability=true ;;
     -ca|--climate-autocorr)    climate_autocorr=true ;;
     -te|--timeseries-energy)   timeseries_energy=true ;;
     -ts|--timeseries-surface)  timeseries_surface=true ;;
@@ -144,13 +136,13 @@ if $subfolder; then
   input="$input/netcdf"
 fi
 
-# File management/names
+# Input file names
 pfull=${filename}_full
 psummary=${filename}_summary # original prefix file names
 pspectral=${filename}_spectral
 psummary_isen=${filename}_summary_isen
 
-# Destinations for output files
+# Output file names
 # fregion=${filename}_timeseries.${days}.nc
 # fregion_isen=${filename}_timeseries_isen.${days}.nc
 period=d$(printf "%05d" "${climate_start}")-d$(printf "%05d" "${climate_end}")
@@ -173,84 +165,19 @@ fdyntimescale=${filename}_dynamical_timescale${smode}.${period}.nc # the timesca
 cd "$output" || raise "Failed to move to ${output}."
 
 #-----------------------------------------------------------------------------#
-# Helper function
-#-----------------------------------------------------------------------------#
-# Check if destination file is *newer* than source files
-newer() {
-  local src file date idate
-  dest="$1"
-  src=("${@:2}")
-  if [ ${#src[@]} -eq 0 ]; then
-    echoerr "Skipping (no source files found)."
-    return 0
-  fi
-
-  # If version without day string exists, remove it
-  idest="${dest%%.*}.nc"
-  [ "$dest" != "$idest" ] && [ -r "$idest" ] && {
-    rm "$idest"
-    echoerr "Warning: Removed file '$idest' with no day string."
-  }
-
-  # Test if sources are available; never try to run processing script if not
-  for file in "${src[@]}"; do
-    [ -r "$file" ] || { # TODO: test with ncdump? nah.
-      echoerr "Skipping (source file ${file} unreadable)."
-      return 0 # do not re-process since a source is unavailable!
-    }
-  done
-
-  # Check if destination exists
-  [ -r "$dest" ] || {
-    echoerr "Running (${dest##*/} not found)."
-    return 1
-  } # re-process since destination is unavailable!
-
-  # Finally test dates, and check for curropt files
-  date=$(date +%s -r "$dest" 2>/dev/null) # just get this once
-  for file in "${src[@]}"; do
-    idate=$(date +%s -r "$file" 2>/dev/null)
-    [ "$idate" -gt "$date" ] && {
-      echoerr "Running (${dest##*/} older than source file(s))."
-      return 1 # destination is *not* newer, re-process!
-    }
-  done
-
-  # Test if file valid
-  # WARNING: Common error is length-zero time dimension
-  ncdump -h "$dest" &>/dev/null || {
-    echoerr "Running (${dest##*/} appears corrupt)."
-    return 1
-  }
-  ntime=$(ncdump -h "$dest" | grep UNLIMITED | tr -dc 0-9) # format should be 'time = UMLIMITED; // (0 currently)'
-  [ -n "$ntime" ] && [ "$ntime" -eq 0 ] && {
-    echoerr "Running (${dest##*/} has zero-length time dim)."
-    return 1
-  }
-
-  # Final
-  if $overwrite; then
-    echoerr "Overwriting up-to-date file."
-    return 1
-  else
-    echoerr "Skipping (${dest##*/} exists and is new)."
-    return 0
-  fi
-}
-
-#-----------------------------------------------------------------------------#
-# Get lists of files
+# Functions for listing files
 #-----------------------------------------------------------------------------#
 # Get start and end day from
 get_days() {
-  daystring=${file##*/}
-  daystring=${daystring%.nc}
-  daystring=${daystring#*.}
-  iday1=${daystring%%-*}
-  iday1=$(printf "%.f" "${iday1#d}") || raise 'Failed to get day 1.'
-  iday2=${daystring##*-}
-  iday2=$(printf "%.f" "${iday2#d}") || raise 'Failed to get day 2.'
-  echo "$iday1" "$iday2"
+  local string d1 d2
+  string=${1##*/}
+  string=${string%.nc}
+  string=${string#*.}
+  d1=${string%%-*}
+  d1=$(printf "%.f" "${d1#d}") || raise 'Failed to get day 1.'
+  d2=${string##*-}
+  d2=$(printf "%.f" "${d2#d}") || raise 'Failed to get day 2.'
+  echo "$d1" "$d2"
 }
 
 # Climate files within day range (e.g. to ignore spinup)
@@ -259,8 +186,8 @@ get_days() {
 # 'raised' error messages that call exit will not exit this script.
 get_files() {
   # Parse args
-  local prefix file files ffiles
-  local daystring day1 day2 days iday1 iday2 maxmissing
+  local cmd prefix file files ffiles
+  local daystring day1 day2 days iday1 iday2 maxmissing nfiltered nexpected
   maxmissing=5  # max number of files missing to establish climatology
   # maxmissing=0
   day1=$climate_start
@@ -270,15 +197,9 @@ get_files() {
       -d1=*|--day1=*)         day1=${1#*=} ;;
       -d2=*|--day2=*)         day2=${1#*=} ;;
       -mm=*|--max-missing=*)  maxmissing=${1#*=} ;;
-      -*)
-        raise "Unknown args passed to get_files."
-      ;;
-      *)
-        if [ -n "$prefix" ]; then
-          raise "Too many prefixes passed to get_files."
-        fi
-        prefix="$1"
-      ;;
+      -*) raise "Unknown args passed to get_files." ;;
+       *) [ -n "$prefix" ] && raise "Too many prefixes passed to get_files."
+          prefix="$1" ;;
     esac
     shift
   done
@@ -286,46 +207,26 @@ get_files() {
     raise "Non-integer number of $rdays-day blocks between days $day1 and $day2."
   fi
 
-  # Get files within day range
+  # Permit only up to N files missing. Sometimes accidentally delete or
+  # corrupt files while testing things. For spectral data, should also have
+  # *half-day* files e.g. 500-600, 550-650, 600-700, etc, so 2 * N - 1 total.
   files=($input/${prefix}.d?????-d?????.nc)
-  if [ ${#files[@]} -eq 0 ]; then
-    raise "No $prefix files found in ${input}."
-  fi
+  [ ${#files[@]} -eq 0 ] && raise "No $prefix files found in ${input}."
   echoerr "Files: ${files[*]##*/}"
   for file in "${files[@]}"; do
     idays=($(get_days "$file"))
     iday1=${idays[0]}
     iday2=${idays[1]}
-    if [ $((iday2 - iday1)) -ne "$rdays" ]; then
-      continue
-    fi
-    if [ "$iday1" -ge "$day1" ] && [ "$iday2" -le "$day2" ]; then
-      days+=($iday1)
-      ffiles+=($file)
-    fi
+    [ $((iday2 - iday1)) -ne "$rdays" ] && continue
+    [ "$iday1" -ge "$day1" ] && [ "$iday2" -le "$day2" ] && days+=($iday1) ffiles+=($file)
   done
-  if [ ${#ffiles[@]} -eq 0 ]; then
-    raise "No $prefix $rdays-day blocks found between days $day1 and ${day2}."
-  fi
-
-  # Permit only up to N files missing. Sometimes accidentally delete or
-  # corrupt files while testing things. For spectral data, should also have
-  # *half-day* files e.g. 500-600, 550-650, 600-700, etc.
-  if [[ "$prefix" =~ spectral ]]; then
-    nexpected=$((2 * ( (day2 - day1) / rdays) - 1))
-  else
-    nexpected=$(( (day2 - day1) / rdays))
-  fi
   nfiltered=${#ffiles[@]}
-  message="Expected $nexpected $rdays-day blocks between days $day1 and ${day2}, got ${#ffiles[@]}. Days: ${days[*]}"
-  if [ ${#ffiles[@]} -ne $nexpected ]; then
-    # if [ $((nexpected - nfiltered)) -le 100 ]; then
-    if [ $((nexpected - nfiltered)) -le $maxmissing ]; then
-      echoerr "Warning: $message"
-    else
-      raise "$message"
-    fi
-  fi
+  nexpected=$(((day2 - day1) / rdays))
+  [[ "$prefix" =~ spectral ]] && nexpected=$((2 * nexpected - 1))
+  cmd=(raise "Expected $nexpected $rdays-day blocks between days $day1 and ${day2}, got ${nfiltered}. Days: ${days[*]}")
+  [ $nfiltered -eq 0 ] && raise "No $prefix $rdays-day blocks found between days $day1 and ${day2}."
+  [ $((nexpected - nfiltered)) -le $maxmissing ] && cmd=(echoerr "Warning: ${cmd[1]}")
+  [ $nfiltered -ne $nexpected ] && "${cmd[@]}"
   echo "${ffiles[@]}" # intended for user to capture output
 }
 
@@ -384,6 +285,60 @@ spindown_files_by_day() {
 #-----------------------------------------------------------------------------#
 # Individual functions for getting climate variables
 #-----------------------------------------------------------------------------#
+# Check if destination file is *newer* than source files
+newer() {
+  local src file date idate
+  dest=$1
+  src=("${@:2}")
+  if [ ${#src[@]} -eq 0 ]; then
+    echoerr "Skipping (no source files found)."
+    return 0
+  fi
+
+  # Test existence and format of source and destination files
+  idest=${dest%%.*}.nc
+  [ "$dest" != "$idest" ] && [ -r "$idest" ] && {
+    rm "$idest"
+    echoerr "Warning: Removing ${idest} (has no day string)."
+  }
+  for file in "${src[@]}"; do
+    [ -r "$file" ] || {  # TODO: test with ncdump? nah...
+      echoerr "Warning: Skipping (source file ${file} is unreadable)."
+      return 0  # do not re-process since source is unavailable!
+    }
+  done
+  [ -r "$dest" ] || {
+    echoerr "Running (${dest##*/} not found)."
+    return 1  # re-process since destination is unavailable!
+  }
+
+  # Test modification dates and validity of source files
+  date=$(date +%s -r "$dest" 2>/dev/null)  # just get this once
+  for file in "${src[@]}"; do
+    idate=$(date +%s -r "$file" 2>/dev/null)
+    [ "$idate" -gt "$date" ] && {
+      echoerr "Running (${dest##*/} older than source file(s))."
+      return 1  # re-process since destination is *not* newer
+    }
+  done
+  ncdump -h "$dest" &>/dev/null || {
+    echoerr "Running (${dest##*/} appears corrupt)."
+    return 1  # re-process since destination is corrupt
+  }
+  ntime=$(ncdump -h "$dest" | grep UNLIMITED | tr -dc 0-9)  # format should be 'time = UMLIMITED; // (0 currently)'
+  [ -n "$ntime" ] && [ "$ntime" -eq 0 ] && {
+    echoerr "Running (${dest##*/} has zero-length time dim)."
+    return 1  # re-process since destination is invalid (prevoius computation error)
+  }
+  if $overwrite; then
+    echoerr "Overwriting up-to-date file."
+    return 1  # re-process since overwrite requested
+  else
+    echoerr "Skipping (${dest##*/} exists and is new)."
+    return 0  # do not re-process since recently done
+  fi
+}
+
 # Control climate data, and reference to other control climates
 # * Cannot chain the merge command; must be highest level no matter what. So
 #   prepend timmean commands to files being merged.
@@ -529,16 +484,17 @@ climate_variability() {
 # May add other settings in the future
 # This is to understand distributon of jet winds w.r.t. time
 timeseries_surface() {
-  files=($(get_files "$psummary" -d1=0))  # always start at day 0
-
-  # for region in nh sh globe; do # now just nh
   pmax=8
-  for region in nh; do # now just nh
+  files=($(get_files "$psummary" -d1=0))  # always start at day 0
+  for region in nh; do  # now just nh
+  # for region in nh sh globe; do  # now just nh
     # Check if file is newer
-    ncregion=nc${region}
+    # bounds=${region}_cdo  # bounds variable
+    bounds=${region}_ncks  # bounds variable
     out=${fsurface%%.*}_${region}.${fsurface#*.}
     out=${out/d?????-/d00000-}
     newer $out ${files[@]} && continue
+
     # Get surface data
     # NOTE: NCO uses zero based indexing but CDO uses 1 based indexing.
     # Can switch to 1 based in NCO with -F flag.
@@ -549,22 +505,22 @@ timeseries_surface() {
     for i in $(seq 1 ${#files[@]}); do
       idx=$(printf "%04d" "$i")
       file=${files[i-1]}
-      echo "Region selection: ${file}"
+      echo "Region selection ${region}: ${file##*/}"
       {
-        # cdo --no_warnings $flags -sellevidx,20 ${!region} -selname,u \
+        # cdo --no_warnings $flags -sellevidx,20 ${!bounds} -selname,u \
         #   $file surface_${region}.${idx}.nc
-        ncks --no-abc -O -v u -d plev,-1 -d "${!ncregion}" \
+        ncks --no-abc -O -v u -d plev,-1 -d "${!bounds}" \
           $file surface_${region}.${idx}.nc
       } &
       [ $((i % pmax)) -eq 0 ] && echo 'Waiting...' && wait
     done
     echo 'Waiting...' && wait
-    # Merge the files
+
+    # Merge the files and remove surface files
     files=(surface_${region}.????.nc)
     [ ${#files[@]} -eq 0 ] && raise "Failed to get surface data."
     echo "Merging files: ${files[*]}"
     ncrcat -O "${files[@]}" "$out"
-    # Remove surface files
     rm surface_${region}.*.nc 2>/dev/null
   done
 }
@@ -581,7 +537,7 @@ timeseries_surface() {
 # ***sellonlatbox*** seems to fix whatever issue was going on with param ids (see
 # pe_cdo.txt and pe_nco.txt in hs_base_t42l10s).
 timeseries_energy() {
-  # Remove old ones
+  # Remove old files
   unset regions
   for file in *energy.nc *energy_nh.nc *energy_sh.nc; do
     echo "Warning: Removing bad energy file ${file}."
@@ -589,9 +545,10 @@ timeseries_energy() {
   done
 
   # Figure out which files need to be retrieved
+  pmax=8
   files=($(get_files "$psummary" -d1=0))
-  # for region in nh sh globe; do # now just nh
-  for region in nh; do # now just nh
+  for region in nh; do  # now just nh
+  # for region in nh sh globe; do  # now just nh
     out=${fenergy%%.*}_${region}.${fenergy#*.}
     out=${out/d?????-/d00000-}
     newer $out ${files[@]} || regions+=("$region")
@@ -600,7 +557,6 @@ timeseries_energy() {
 
   # Iterate over files, because 128 parallel process limit
   i=0
-  pmax=8
   echo "Getting time series of energy budget."
   for i in $(seq 1 ${#files[@]}); do
     # Calculate global energy budget in parallel for restart day blocks
@@ -630,13 +586,14 @@ timeseries_energy() {
         -a units,pm,o,c,'J/m2' \
         energy.${idx}.nc 
       for region in "${regions[@]}"; do
-        cdo --no_warnings $flags -fldmean ${!region} \
+        bounds=${region}_cdo  # bounds variable
+        cdo --no_warnings $flags -fldmean ${!bounds} \
           energy.${idx}.nc energy_${region}.${idx}.nc
       done
     } &
-    [ $((i % pmax)) -eq 0 ] && { echo "Wait!"; wait; }
+    [ $((i % pmax)) -eq 0 ] && { echo "Waiting..."; wait; }
   done
-  echo "Wait!"
+  echo "Waiting..."
   wait
 
   # Merge files
@@ -707,10 +664,11 @@ spindown_regional_mean_ts() {
   echo "Creating records of individual spindown runs."
 
   # Get time-averages of spindown files from each starting date
-  for region in globe polenh polesh; do
+  for region in globe np sp; do
     outfiles=()
-    spindowndays="" # empty string
-    echo "Average over ${!region} ($region)."
+    spindowndays=''  # empty string
+    bounds=${region}_cdo  # bounds variable
+    echo "Average over ${!bounds} ($region)."
     for spindowngroup in "${spindowntsfiles[@]}"; do
       # Initial stuff
       counter=$((counter + 1))
@@ -725,7 +683,7 @@ spindown_regional_mean_ts() {
       # * Beware very strange issue; if combine selgrid with sellevidx/seltimestep, with the
       #   latter coming after sellonlatbox, get error 'longitude dimension is too small'; BUG
       outfile=$input/spindown${spindownday#d}${region}.nc
-      commands=("${spindowngroup[@]/#/ -fldmean ${!region} -selgrid,1 }") # average
+      commands=("${spindowngroup[@]/#/ -fldmean ${!bounds} -selgrid,1 }")  # average
       cdo $flags -mergetime ${commands[@]} $outfile &>/dev/null & # log not necessary here
       [ $((counter % 10)) -eq 0 ] && wait # only do a handful at a time
       # [ $counter -eq 2 ] && wait # only do a handful at a time
@@ -747,7 +705,7 @@ spindown_regional_mean_ts() {
     ncatted -O \
       -a long_name,member,o,c,'day of initiation from control run branch' \
       -a units,member,o,c,'days since 0000-00-00 00:00:00' $ensfile
-    ncks --no-abc -O $ensfile $ensfile # alphabetize output
+    ncks --no-abc -O $ensfile $ensfile  # alphabetize output
     # fixes record dimension; see https://sourceforge.net/p/nco/bugs/85/
     # the -4 is needed or an error is thrown, weirdly
     rm ${outfiles[@]}
@@ -755,7 +713,7 @@ spindown_regional_mean_ts() {
 
   # Special treatment where we want to average cross-sections from each hemisphere
   # Maybe modify this maybe
-  poles=(ncea ${filename}_spindown${smode}polenh.nc ${filename}_spindown${smode}polesh.nc)
+  poles=(ncea ${filename}_spindown${smode}np.nc ${filename}_spindown${smode}sp.nc)
   ncea ${poles[@]} $fspindownpoles \
     || raise "Failed to average poles together."
   rm ${poles[@]}  # each pole should be thought of as additional ensemble member; so 50 runs == 100

@@ -39,6 +39,36 @@ from header import copy_attrs, copy_variable, make_variable, timer
 make_variable = functools.partial(make_variable, lev='plev')
 
 
+def zonal_mean(data, mass):
+    """
+    Return the weighted zonal mean.
+    """
+    if data.ndim == 3:
+        avg = data.mean(axis=-1, keepdims=True)
+    elif data.ndim == 4:  # zonal mean with surface pressure weighting
+        scale = mass.sum(axis=-1, keepdims=True)
+        scale[scale == 0] = np.nan  # isclose not necessary
+        avg = (data * mass).sum(axis=-1, keepdims=True) / scale
+    else:
+        raise ValueError(f'Unexpected data dimensionality {data.ndim!r}.')
+    return avg
+
+
+def vertical_mass(dataset):
+    """
+    Return an array of vertical mass weights.
+    """
+    slp = dataset['ps' if 'ps' in dataset.variables else 'slp'][:]
+    bnds = 0.01 * dataset['plev_bnds'][:]
+    slp = slp[:, None, :, :]  # time x lev x lat x lon
+    bnds = bnds.T[:, None, :, None, None]  # bnds x time x lev x lat x lon
+    slp, bnds = np.broadcast_arrays(slp, bnds)  # match shapes before getting weights
+    bnds = bnds.copy()  # necessary because broadcast arrays are not writable
+    mask = bnds > slp
+    bnds[mask] = slp[mask]
+    return bnds[1, ...] - bnds[0, ...]
+
+
 def compute_means(file_full, file_out):
     """
     Calculate the means.
@@ -64,7 +94,7 @@ def compute_means(file_full, file_out):
         if var.ndim < 3:
             continue
         data = var[:].astype('d')
-        mean = weighted_mean(data, zmass)
+        mean = zonal_mean(data, zmass)
         make_variable(
             data_out,
             name,
@@ -74,29 +104,6 @@ def compute_means(file_full, file_out):
         timer(f'  * Time for zonal mean of {name!r}')
 
     return data_out
-
-
-def vertical_mass(dataset):
-    """
-    Return an array of vertical mass weights.
-    """
-    slp = dataset['ps' if 'ps' in dataset.variables else 'slp'][:]
-    bnds = 0.01 * dataset['plev_bnds'][:]
-    slp = slp[:, None, :, :]  # time x lev x lat x lon
-    bnds = bnds.T[:, None, :, None, None]  # bnds x time x lev x lat x lon
-    slp, bnds = np.broadcast_arrays(slp, bnds)  # match shapes
-    mask = bnds > slp
-    bnds[mask] = slp[mask]
-    return bnds[1, ...] - bnds[0, ...]
-
-
-def weighted_mean(data, mass, /, *, axis=-1):
-    """
-    Return the weighted zonal mean.
-    """
-    scale = mass.sum(axis=axis, keepdims=True)
-    scale[scale == 0] = np.nan  # isclose not necessary
-    return (data * mass).sum(axis=axis, keepdims=True) / scale
 
 
 if __name__ == '__main__':

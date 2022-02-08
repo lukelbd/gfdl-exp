@@ -33,41 +33,50 @@ if [[ $HOSTNAME =~ monde ]]; then
       # Save mean tdt from each run because takes up very little space
       # flags='-r -s -d=100 -dt=1200 -c=8 -ts=0 -te=5500 -kts=500'
       # [ -z "$fopts" ] && flags+=' -rt' || flags+=' -rs'
-      flags='-r -c=16 -d=20 -ds=500 -dt=600 -kte=0 -fw=12 -f=2xdaily_inst'
-      fflags=${flags/600/400}  # sligjtly faster for certain experiments
+      flags='-r -c=16 -d=20 -ds=500 -kte=0 -fw=12 -f=2xdaily_inst --old'
 
       # Forcing experiments
       # TODO: Delete doubled CO2 experiments
       # for force in '0.5 qtropical' '0.08 qrealistic' '0.06 qglobal'; do
       for force in '0.08 qrealistic'; do
-        for tend in 5500; do
-          # for param in 10 20 40 100 60 80 30 50; do  # extend control and response at same time
-          f=${force#* }
-          q=${force% *}
-          ./run_sweep $flags --tend=$tend \
-            --ntau=120,160,200 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
+        f=${force#* }
+        q=${force% *}
+        for te in 7000 7500; do
+          ./run_sweep $flags --tend=$te \
+            -dt=900 --ntau=200,160,120,100,80 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
+          ./run_sweep $flags --tend=$te \
+            -dt=600 --ntau=60,50,40 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
         done
+        # for te in 7000 7500; do
+        #   ./run_sweep $flags --tend=$te \
+        #     -dt=600 --ntau=40 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
+        # done
+        # for param in 10 20 40 100 60 80 30 50; do  # extend control and response at same time
+        # ./run_sweep $flags --tend=$te \
+        #   -dt=600 --ntau=60,50 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
+        # -dt=1200 --ntau=160,200 --${f}=0,0:${q} hs${blopt} ${reso} || exit 1
       done
 
       # Standard experiment series
       # NOTE: Locked runs always continue from the end of the
       # run they are using for heating data. Otherwise get instability.
-      for tend in 5500; do
-        ./run_sweep $flags --tend=$tend \
-          --ntau=40,20,10,100,100:200,200:400,4,2,1,0.4 hs${blopt} ${reso}
-      done
-      for tend in 5500; do
-        ./run_sweep $flags --tend=$tend \
-          --tgrad=60:40,40:20,20:10,90,120 hs${blopt} ${reso}
-        ./run_sweep $fflags --tend=$tend \
-          --tgrad=150,180 hs${blopt} ${reso}
-      done
+      # flags=${flags/600/400}  # slightly faster for certain experiments
+      # for tend in 5500; do
+      #   ./run_sweep $flags --tend=$tend \
+      #     --ntau=40,20,10,100,100:200,200:400,4,2,1,0.4 hs${blopt} ${reso}
+      # done
+      # for tend in 5500; do
+      #   ./run_sweep $flags --tend=$tend \
+      #     --tgrad=60:40,40:20,20:10,90,120 hs${blopt} ${reso}
+      #   ./run_sweep $flags --tend=$tend \
+      #     --tgrad=150,180 hs${blopt} ${reso}
+      # done
     done
   done
 
   # Finish incomplete 5500 day integrations
   # TODO: Run this (2020-10-24)!
-  # flags='-r -c=16 -d=100 -dt=1200 -kte=0 -fw=12 -f=2xdaily_inst'
+  # flags='-r -c=16 -d=100 -dt=1200 -kte=0 -fw=12 -f=2xdaily_inst --old'
   # for blopt in 1 2; do
   #   ./run_sweep $flags \
   #     --ntau=60 \
@@ -116,7 +125,7 @@ elif [[ $HOSTNAME =~ cheyenne ]]; then
   #   hs1_ntau_t95l60e --1=40
 
   # For supercomputer
-  flags='-r -n=1 -c=36 -d=20 -fw=12 -f=2xdaily_inst -te=3500 -kts=500'
+  flags='-r -n=1 -c=36 -d=20 -fw=12 -f=2xdaily_inst -te=3500 -kts=500 --old'
   ./run_sweep $flags -dt=400 --ntau=1,2,4,10 hs1 t95l60e
   ./run_sweep $flags -dt=600 --ntau=20 hs1 t95l60e
   ./run_sweep $flags -dt=800 --ntau=40:100 hs1 t95l60e

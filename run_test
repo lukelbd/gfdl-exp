@@ -22,7 +22,7 @@ if false; then
       for p in $(seq 1 $np); do
         name=test$p
         cores=$((16 / p))
-        ./run_series -t -c=$cores -h=4 -te=1 -dt=600 -b=$name \
+        ./run_sweep -t -c=$cores -h=4 -te=1 -dt=600 -b=$name \
           hs1_base_t85l60e 1>/dev/null &
       done
       wait
@@ -48,7 +48,7 @@ if true; then
       for p in $(seq 1 $np); do
         name=test$p
         hours=$((8 / p))
-        ./run_series -t -c=8 -h=$hours -te=1 -dt=600 -b=$name \
+        ./run_sweep -t -c=8 -h=$hours -te=1 -dt=600 -b=$name \
           hs1_base_t85l60e 1>/dev/null &
       done
       wait
