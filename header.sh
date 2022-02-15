@@ -7,9 +7,9 @@ echoerr() {
   echo "$*" 1>&2
 }
 
-# Check NCL log. Ignore 'systemfunc' errors when NCL fails to spawn child process for
-# time info and ignore 'Execute.c' that duplicates the 'fatal:' error message.
-nclcheck() {
+# Test if NCL raised error. Ignore 'systemfunc' errors when NCL fails to spawn child
+# process for time info and 'Execute.c' that duplicates the 'fatal:' error message.
+ncltest() {
   ! cat $1 \
     | grep -v 'Execute.c' \
     | grep -v 'systemfunc' \
@@ -32,4 +32,58 @@ raise() {
   fi
   echo "Error: $message" >&2
   exit $code
+}
+
+# Check if destination file is *newer* than source files
+newer() {
+  local src file date idate
+  dest=$1
+  src=("${@:2}")
+  if [ ${#src[@]} -eq 0 ]; then
+    echoerr "Skipping (no source files found)."
+    return 0
+  fi
+
+  # Test existence and format of source and destination files
+  idest=${dest%%.*}.nc
+  [ "$dest" != "$idest" ] && [ -r "$idest" ] && {
+    rm "$idest"
+    echoerr "Warning: Removing ${idest} (has no day string)."
+  }
+  for file in "${src[@]}"; do
+    [ -r "$file" ] || {  # TODO: test with ncdump? nah...
+      echoerr "Warning: Skipping (source file ${file} is unreadable)."
+      return 0  # do not re-process since source is unavailable!
+    }
+  done
+  [ -r "$dest" ] || {
+    echoerr "Running (${dest##*/} not found)."
+    return 1  # re-process since destination is unavailable!
+  }
+
+  # Test modification dates and validity of source files
+  date=$(date +%s -r "$dest" 2>/dev/null)  # just get this once
+  for file in "${src[@]}"; do
+    idate=$(date +%s -r "$file" 2>/dev/null)
+    [ "$idate" -gt "$date" ] && {
+      echoerr "Running (${dest##*/} older than source file(s))."
+      return 1  # re-process since destination is *not* newer
+    }
+  done
+  ncdump -h "$dest" &>/dev/null || {
+    echoerr "Running (${dest##*/} appears corrupt)."
+    return 1  # re-process since destination is corrupt
+  }
+  ntime=$(ncdump -h "$dest" | grep UNLIMITED | tr -dc 0-9)  # format should be 'time = UMLIMITED; // (0 currently)'
+  [ -n "$ntime" ] && [ "$ntime" -eq 0 ] && {
+    echoerr "Running (${dest##*/} has zero-length time dim)."
+    return 1  # re-process since destination is invalid (prevoius computation error)
+  }
+  if $overwrite; then
+    echoerr "Overwriting up-to-date file."
+    return 1  # re-process since overwrite requested
+  else
+    echoerr "Skipping (${dest##*/} exists and is new)."
+    return 0  # do not re-process since recently done
+  fi
 }

@@ -28,7 +28,7 @@
 ; *quadrature* due to geostrophic wind, we can ignore this.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 print("Reading initial file...")
-load "~/drycore/header.ncl"
+load "~/drycore/utils.ncl"
 exists("filename")
 exists("output")
 exists("means")

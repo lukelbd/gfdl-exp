@@ -6,7 +6,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Read file
 print("Reading initial file and interpolating...")
-load "~/drycore/header.ncl"
+load "~/drycore/utils.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; read data from here, write later

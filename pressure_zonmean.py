@@ -35,7 +35,7 @@ import sys
 import numpy as np
 import netCDF4 as nc4
 
-from header import copy_attrs, copy_variable, make_variable, timer
+from utils import copy_attrs, copy_variable, make_variable, timer
 make_variable = functools.partial(make_variable, lev='plev')
 
 

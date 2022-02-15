@@ -7,7 +7,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Initial stuff
 print("Reading initial file...")
-load "~/drycore/header.ncl"
+load "~/drycore/utils.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; input

@@ -13,7 +13,7 @@ shopt -s nullglob
 # for tstart in 500 1000 1500; do
 for flags in -cp -ci -ts -te; do
   for tstart in 500; do
-    for tend in 7500; do
+    for tend in 7000 7500; do
     # for tend in 5500 6000 6500 7000 7500; do
     # for tend in 5500 6000 6500; do
     # for tend in 5500 3500; do
