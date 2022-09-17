@@ -46,7 +46,7 @@ done
 # Calculate spectral data, *deleting* data as we go
 # NOTE: Ensure home directory has symlink to scratch on every server
 # NOTE: Critical that we proceed one experiment at a time or the disk fills up
-# for dir in ~/scratch1/hs[12]*{base,ntau,ntaumean,tgrad}*; do
+# for dir in ~/scratch*/hs[12]*{base,ntau,ntaumean,tgrad}*; do
 #   # data=(~/data/timescales/$glob/2xdaily_inst_spectral*.*.nc)  # spectral and 'phase' data
 #   # [ "${#data[@]}" -eq 2 ] && { echo "Skipping: $glob"; continue; }
 #   glob="${dir##*/}"

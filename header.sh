@@ -36,7 +36,7 @@ raise() {
 
 # Check if destination file is *newer* than source files
 newer() {
-  local src file date idate
+  local src file
   dest=$1
   src=("${@:2}")
   if [ ${#src[@]} -eq 0 ]; then
@@ -62,10 +62,8 @@ newer() {
   }
 
   # Test modification dates and validity of source files
-  date=$(date +%s -r "$dest" 2>/dev/null)  # just get this once
   for file in "${src[@]}"; do
-    idate=$(date +%s -r "$file" 2>/dev/null)
-    [ "$idate" -gt "$date" ] && {
+    [ "$file" -nt "$dest" ] && {
       echoerr "Running (${dest##*/} older than source file(s))."
       return 1  # re-process since destination is *not* newer
     }

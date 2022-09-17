@@ -217,14 +217,14 @@ force=${force%[0-9]}
 
 # Storage and model path
 storage=$HOME
-scratch=$HOME # on Euclid, home is unmounted/not backed up; so disk I/O is quick
+scratch=$HOME  # on Euclid home is unmounted/not backed up so the disk I/O is quick
 case ${HOSTNAME%%.*} in
   euclid)
     storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
   ;; monde)
     case $reso in
       t42l20?) scratch=/mdata1/ldavis ;;
-      t85l60?) scratch=/mdata2/ldavis ;;
+      t85l60?) scratch=/mdata4/ldavis ;;
       *) raise "Unknown scratch destination for resolution $reso." ;;
     esac
   ;; cheyenne*)

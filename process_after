@@ -69,14 +69,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Files and experiment folders over which we iterate
-case ${HOSTNAME%%.*} in
-  # monde*) scratches=(/mdata1/ldavis /mdata2/ldavis) ;;
-  cheyenne*) scratches=(/glade/scratch/davislu) ;;
-  monde*) scratches=(/mdata1/ldavis) ;;
-  *) raise "Unknown host, must edit batch script before continuing." ;;
-esac
-
 # NCL log check. "Success" is when the grep fails, i.e. no fatal warning messages
 logcheck() { # WARNING: NCL adds '^M' before fatal: messages, so a search for ^fatal: will fail!
   ! cat $1 | grep -v "Execute.c" | grep -v "systemfunc" | grep -E "fatal:|Error" &>/dev/null
@@ -213,15 +205,15 @@ calc_isen() {
 }
 
 # Iterate through experiment folders
-for scratch in "${scratches[@]}"; do
+for scratch in ~/scratch*; do  # symlinks
   for glob in "${globs[@]}"; do
     for dir in $scratch/$glob; do
       # Find full resolution files
       # TODO: Remove hardcoded minimum start day of 500
-      # filenames=($dir/netcdf/$daily*full.d?????-d?????.nc)
       echo
       echo "Experiment: ${dir##*/}"
       t=$(date +%s)
+      # filenames=($dir/netcdf/$daily*full.d?????-d?????.nc)
       filenames=( \
         $dir/netcdf/$daily*full.d00[5-9]??-d?????.nc \
         $dir/netcdf/$daily*full.d0[1-9]???-d?????.nc \
@@ -237,13 +229,13 @@ for scratch in "${scratches[@]}"; do
         # Input file names
         i=$((i + 1))
         dir=${full%/*}
-        summary=${full/full/summary} # YZ file
+        summary=${full/full/summary}  # YZ file
+        summary_base=${summary##*/}  # XYZ file
+        full_base=${full##*/}  # XYZ file
         [ -r $summary ] || { echo "Error: File ${summary##*/} not found."; continue; }
-        summary_base=${summary##*/} # XYZ file
-        full_base=${full##*/} # XYZ file
 
         # For full files
-        # full_qgpv=${full/full/qgpv} # file that only stores 2D QGPV
+        # full_qgpv=${full/full/qgpv}  # file that only stores 2D QGPV
         prefix=${full_base%%.*}
         suffix=${full_base#*.}
         spectral=${full/full/spectral}
@@ -257,8 +249,8 @@ for scratch in "${scratches[@]}"; do
         # For spectral data need the "in-between" files
         if [ -n "$full_prev" ]; then
           days=${full_prev%.nc}
-          days=${days##*.} # should be e.g. d00000-d00100
-          days=(${days//[^0-9]/ }) # store in array variable
+          days=${days##*.}  # should be e.g. d00000-d00100
+          days=(${days//[^0-9]/ })  # store in array variable
           delta=$(bc <<< "(${days[1]} - ${days[0]}) / 2")
           day1=$(bc <<< "${days[0]} + $delta")
           day2=$(bc <<< "${days[1]} + $delta")
