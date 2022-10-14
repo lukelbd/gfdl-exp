@@ -143,13 +143,14 @@ paraminfo=(
 
 # Parse input
 gflags="-p=$cwd/process_inline -pi=$cwd/process_init "
+subname="timescales-exp"  # replaced with 'test'
 while [ $# -gt 0 ]; do  # echo "Flag: $1"
   case "$1" in
     # Flags controlling behavior
     -h|--help)                  echo "$doc" && exit 0 ;;
     -d|--dryrun)                dryrun=true ;;
     -s|--save)                  savetdt=true ;;
-    -t|--test)                  basename=test days=1 dt=1200 ;;
+    -t|--test)                  days=1 dt=1200 subname=timescales-test ;;
     -c=*|--cores=*)             cores=${1#*=} ;;
     -n=*|--nodes=*)             nodes=${1#*=} ;;
     -d=*|--days=*)              days=${1#*=} ;;
@@ -223,8 +224,8 @@ case ${HOSTNAME%%.*} in
     storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
   ;; monde)
     case $reso in
-      t42l20?) scratch=/mdata1/ldavis ;;
-      t85l60?) scratch=/mdata4/ldavis ;;
+      t42l20?) scratch=/mdata1/ldavis/${subname} ;;
+      t85l60?) scratch=/mdata4/ldavis/${subname} ;;
       *) raise "Unknown scratch destination for resolution $reso." ;;
     esac
   ;; cheyenne*)

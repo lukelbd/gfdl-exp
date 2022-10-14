@@ -23,9 +23,7 @@ Optional arguments
 shopt -s nullglob
 source ${0%/*}/header.sh
 cwd=$(pwd)
-storage=$HOME/data
-[ -d $storage ] || mkdir $storage
-storage=$storage/timescales  # put in this subdirectory
+storage=$HOME/data/timescales  # put in this subdirectory
 [ -d $storage ] || mkdir $storage
 
 # Command-line options
@@ -47,13 +45,13 @@ done
 post=$cwd/post_experiment
 $dryrun && post="echo $post"
 
-# Iterate
-# NOTE: May get 'different parameter names' cdo warnings; this generally means
-# the order of parameters or something is different, and cdo has to shuffle
-# them around, but files all have same variables.
+# Iterate over folders
+# NOTE: May get 'different parameter names' cdo warnings; this generally means the
+# order of parameters or something is different, and cdo has to shuffle them around,
+# but files all have same variables.
 t=$(date +%s)
 counter=0
-for scratch in ~/scratch* ~/scratch*/timescales*; do  # query *symlinks*
+for scratch in ~/scratch*/timescales-exp*; do  # query *symlinks*
   for glob in "${globs[@]}"; do
     echo "Glob: $glob"
     unset folder
