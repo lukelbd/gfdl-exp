@@ -6,7 +6,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Read file
 print("Reading initial file and interpolating...")
-load "~/drycore/utils.ncl"
+load "~/gfdl-exp/utils.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; read data from here, write later

@@ -28,7 +28,7 @@
 ; *quadrature* due to geostrophic wind, we can ignore this.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 print("Reading initial file...")
-load "~/drycore/utils.ncl"
+load "~/gfdl-exp/utils.ncl"
 exists("filename")
 exists("output")
 exists("means")

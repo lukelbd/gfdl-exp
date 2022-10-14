@@ -7,7 +7,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Initial stuff
 print("Reading initial file...")
-load "~/drycore/utils.ncl"
+load "~/gfdl-exp/utils.ncl"
 exists("filename")
 exists("output")
 f = addfile(filename, "r") ; input

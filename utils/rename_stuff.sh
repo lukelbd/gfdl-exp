@@ -11,10 +11,10 @@
 shopt -s nullglob
 # maxdepth=2
 maxdepth=3  # 2 is normally sufficient, 3 was needed for forcing files
-dryrun=true
+dryrun=true  # always print before renaming
 # figures=(~/timescales/figures*)
 # data=(~/data/timescales*)
-root=(~/scratch*)
+root=(~/scratch*/timescales-exp)
 
 # Rename *files* before directories or we may be trying to change
 # non-existent paths!
@@ -28,38 +28,38 @@ for src in ${root[@]} ${data[@]} ${figures[@]}; do
     unset dest
     case $name in
       # Lower case
-      hs1C*|hs1L*)
-        dest=${name,,}
-      ;;
+      # hs1C*|hs1L*)
+      #   dest=${name,,}
+      # ;;
 
       # Fix weird naming convention: scheme_param1-param2_reso_pvalue1pvalue2
-      *_base_*|*p[0-9][0-9][0-9][0-9].[0-9][0-9][0-9]*)
-        parts=($(echo $name | tr '_' ' '))
-        [[ ${#parts[@]} -eq 3 || ${#parts[@]} -eq 4 ]] || { echo "Warning: Too many parts in ${name}"; continue; }
-        vars=($(echo ${parts[1]} | tr '-' ' '))
-        vals=($(echo ${parts[3]} | tr 'p' ' '))
-        [ "${vars[*]}" == 'base' ] && vars=()
-        [ ${#vars[@]} -eq ${#vals[@]} ] || { echo "Warning: Mismatched params in ${name}"; continue; }
-        suffix=
-        for i in $(seq 1 ${#vars[@]}); do
-          suffix+=_${vars[i-1]}${vals[i-1]}
-        done
-        dest=${parts[0]}_${parts[2]}${suffix}
-      ;;
+      # *_base_*|*p[0-9][0-9][0-9][0-9].[0-9][0-9][0-9]*)
+      #   parts=($(echo $name | tr '_' ' '))
+      #   [[ ${#parts[@]} -eq 3 || ${#parts[@]} -eq 4 ]] || { echo "Warning: Too many parts in ${name}"; continue; }
+      #   vars=($(echo ${parts[1]} | tr '-' ' '))
+      #   vals=($(echo ${parts[3]} | tr 'p' ' '))
+      #   [ "${vars[*]}" == 'base' ] && vars=()
+      #   [ ${#vars[@]} -eq ${#vals[@]} ] || { echo "Warning: Mismatched params in ${name}"; continue; }
+      #   suffix=
+      #   for i in $(seq 1 ${#vars[@]}); do
+      #     suffix+=_${vars[i-1]}${vals[i-1]}
+      #   done
+      #   dest=${parts[0]}_${parts[2]}${suffix}
+      # ;;
 
       # Put parameter names after resolution in figure filenames
-      *hs*_*_t[0-9][0-9]*|*pk*_*_t[0-9][0-9]*)
-        scheme=$(echo $name | grep -E -o '(hs|pk)[0-9][^_]*')
-        reso=$(echo $name | grep -E -o 't[0-9][0-9]l[0-9][0-9][^_]*')
-        prefix=${name%%$scheme*}
-        suffix=${name##*$reso}
-        params=${name##*$scheme}
-        params=${params%%$reso*}
-        params=${params#_}
-        params=${params%_}
-        dest=${prefix}${scheme}_${reso}_${params}${suffix}
-        [ "$dest" == '__' ] && echo "$name $dest" && exit 1
-      ;;
+      # *hs*_*_t[0-9][0-9]*|*pk*_*_t[0-9][0-9]*)
+      #   scheme=$(echo $name | grep -E -o '(hs|pk)[0-9][^_]*')
+      #   reso=$(echo $name | grep -E -o 't[0-9][0-9]l[0-9][0-9][^_]*')
+      #   prefix=${name%%$scheme*}
+      #   suffix=${name##*$reso}
+      #   params=${name##*$scheme}
+      #   params=${params%%$reso*}
+      #   params=${params#_}
+      #   params=${params%_}
+      #   dest=${prefix}${scheme}_${reso}_${params}${suffix}
+      #   [ "$dest" == '__' ] && echo "$name $dest" && exit 1
+      # ;;
 
       # Rename tdamp to ntau and prefix forcing terms with q
       # *tdamp-arctic*)
@@ -129,11 +129,10 @@ for src in ${root[@]} ${data[@]} ${figures[@]}; do
       #   dest=${name/kstrat/tdampstrat}
       #   ;;
 
-      # Rename tdt files used for constant tdt input to mean_tdt.nc
-      # tdt.*)
-      #   [[ "$name" =~ "mean" ]] && continue
-      #   dest=${name/tdt/mean_tdt}
-      #   ;;
+      # Rename tdt files used for constant tdt input to mean_heating.nc
+      mean_tdt.*)
+        dest=${name/mean_tdt/mean_heating}
+        ;;
 
       # Rename forcing folder and forcing.nc to constants and constants.nc
       # forcing*)

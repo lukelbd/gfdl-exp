@@ -76,8 +76,8 @@ Optional arguments
   -dt=*|--timestep=*    Timestep size in seconds.
   -ts=*|--tstart=*      Initial day.
   -te=*|--tend=*        Final day.
-  -kts=*|--ktstart=*    Initial day for which full-res data is saved.
-  -kte=*|--ktend=*      Final day for which full-res data is saved.
+  -ks=*|--kstart=*      Initial day for which full-resolution data is kept.
+  -ke=*|--kend=*        Final day for which full-resolution data is kept.
 
 Other arguments
 
@@ -110,8 +110,8 @@ dryrun=false
 savetdt=false
 tstart=0
 tend=10000
-ktstart=0 # first day we keep XYZ data (can't keep all, too much data)
-ktend=100000 # last day we keep XYZ data
+kstart=0 # first day we keep XYZ data (can't keep all, too much data)
+kend=100000 # last day we keep XYZ data
 mail=false
 walltime=12:00
 queue=economy
@@ -163,8 +163,8 @@ while [ $# -gt 0 ]; do  # echo "Flag: $1"
     -dt=*|--dt=*|--timestep=*)  dt=${1#*=} ;;
     -ts=*|--tstart=*)           tstart=${1#*=} ;;
     -te=*|--tend=*)             tend=${1#*=} ;;
-    -kts=*|--ktstart=*)         ktstart=${1#*=} ;;
-    -kte=*|--ktend=*)           ktend=${1#*=} ;;
+    -kts=*|--kstart=*)          kstart=${1#*=} ;;
+    -kte=*|--kend=*)            kend=${1#*=} ;;
     # Remaining flags
     -*)
       flag=${1#--}  # trim flag
@@ -339,17 +339,17 @@ exp_setup() {
   if $locked; then
     nml_replace "$nml" locked_heating '.true.'
     unset tdtfiles
-    for tdtfile in "$scratch/$expforcing"/netcdf/mean_tdt.*.nc; do
+    for tdtfile in "$scratch/$expforcing"/netcdf/mean_heating.*.nc; do
       daystring=${tdtfile%.nc}
       daystring=${daystring##*.}
       day1=${daystring%-*}
       day2=${daystring#*-}
-      [ ${day1#d} -ge $ktstart ] && [ ${day2#d} -le $ktend ] && tdtfiles+=("$tdtfile")
+      [ ${day1#d} -ge $kstart ] && [ ${day2#d} -le $kend ] && tdtfiles+=("$tdtfile")
     done
     [ ${#tdtfiles[@]} -eq 0 ] && raise "No tdt files found in $scratch/$expforcing/netcdf directory."
     tdtfile=${expdir}/heating.data.nc
     echo "Locked heating data: ${tdtfiles[*]##*/}"
-    ncra -h -O "${tdtfiles[@]}" "$tdtfile" || raise "Average of $scratch/$expforcing/netcdf/mean_tdt.*.nc files failed."
+    ncra -h -O "${tdtfiles[@]}" "$tdtfile" || raise "Average of $scratch/$expforcing/netcdf/mean_heating.*.nc files failed."
     ncks -h --no-abc -O -v tdt "$tdtfile" "$tdtfile" || raise "Cutting $tdtfile variables failed."
   fi
 
@@ -361,8 +361,8 @@ exp_setup() {
   # other options, and save type (1 = 64-bit, 2 = 32-bit).
   if $savetdt; then
     diag_add "$diag" \
-      '"mean_tdt", -1, "hours", 1, "days", "time",' \
-      '"forcing", "tdt", "tdt", "mean_tdt", "all", .true., "none", 2,'
+      '"mean_heating", -1, "hours", 1, "days", "time",' \
+      '"forcing", "tdt", "tdt", "mean_heating", "all", .true., "none", 2,'
   fi
 }
 
@@ -370,7 +370,7 @@ exp_setup() {
 # concurrent qsub processes, or run serially on a normal server.
 echo "Forcing: $force, Resolution: $reso, Params: ${params[*]}"
 np=$((cores * nodes))
-gflags+=" -c=$np -ts=$tstart -te=$tend -kts=$ktstart -kte=$ktend"
+gflags+=" -c=$np -ts=$tstart -te=$tend -ks=$kstart -ke=$kend"
 for iparams in "${params[@]}"; do
   echo
   # Get experiment names of restart and current directory

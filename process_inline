@@ -239,7 +239,7 @@ for prefix in ${prefixes[@]}; do
   spectra_file="${base}_spectral.${PWD##*/}.nc" # spectral decomposition
 
   # Just want to combine files and exit?
-  if $combine || [ ${base##*/} == "mean_tdt" ]; then
+  if $combine || [ ${base##*/} == "mean_heating" ]; then
     [ -r ${base}.nc ] && rm ${base}.nc
     $mppnccombine ${base}.nc ${ncfiles[@]} || raise "mppnccombine failed."
     $debug || rm ${ncfiles[@]}

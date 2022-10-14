@@ -52,7 +52,7 @@ done
 #   glob="${dir##*/}"
 #   echo
 #   echo "Spectral blocks: $glob"
-#   ./process_after -s -n=8 "$glob" && {
+#   ./process -s -n=8 "$glob" && {
 #     echo
 #     echo "Spectral average: $glob"
 #     ./post_glob -o -cs -c1=500 -c2=5500 "$glob"

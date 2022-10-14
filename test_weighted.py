@@ -4,7 +4,7 @@ Compare the weighted and unweighted eddy heat fluxes using the input file. Used 
 figure out the missing near-surface energy budget. The error can approach 10%% in the
 extratropics -- enough to worry about! Example below is for Held and Suarez T42L20.
 
->>> python ~/drycore/tests/pressure_weighted.py ./2xdaily_inst_full.d00[5-9]* ./2xdaily_inst_full.d0[1-9]*  # noqa: E501
+>>> python ~/gfdl-exp/tests/pressure_weighted.py ./2xdaily_inst_full.d00[5-9]* ./2xdaily_inst_full.d0[1-9]*  # noqa: E501
 Processing file: './2xdaily_inst_full.d00600-d00700.nc'
 Processing file: './2xdaily_inst_full.d00700-d00800.nc'
 ...
@@ -37,7 +37,7 @@ Relative error:
 """
 import sys
 sys.path.insert(0, '/home/ldavis/timescales')
-sys.path.insert(0, '/home/ldavis/drycore')
+sys.path.insert(0, '/home/ldavis/gfdl-exp')
 
 import numpy as np  # noqa: F401
 import xarray as xr
@@ -49,6 +49,13 @@ import definitions  # noqa: F401
 def calculate_fluxes(*args):
     """
     Calculate eddy heat flux.
+
+    Returns
+    -------
+    weighted : xarray.DataArray
+        Lowest-level fluxes weighted by surface pressure.
+    unweighted : xarray.DataArray
+        Lowest-level fluxes unweighted by surface pressure.
     """
     weighted = []
     unweighted = []

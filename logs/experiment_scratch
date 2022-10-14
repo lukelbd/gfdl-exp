@@ -4,7 +4,6 @@
 # namelist parameter values, netcdf files present, and netcdf variables present.
 #-----------------------------------------------------------------------------#
 shopt -s nullglob
-roots=(~/scratch2 ~/scratch1)  # symlinks to scratch
 nmlcheck=true  # set to true to check certain namelist values
 varcheck=true  # set to true to check certain variables
 nccheck=true  # set to true to check netcdf names
@@ -97,7 +96,8 @@ varcheck() {
 # Iterate through experiments
 rm $log 2>/dev/null
 date | tee -a $log
-for root in ${roots[@]}; do
+for root in ~/scratch*; do
+  root="$root/timescales-exp"
   echo | tee -a $log
   echo "Root: $root" | tee -a $log
   unset globs
