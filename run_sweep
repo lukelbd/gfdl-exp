@@ -67,8 +67,8 @@ Optional arguments
   -c=*|--cores=*        Number of cores.
   -n=*|--nodes=*        Number of nodes (used only if this is a supercomputer).
   -d=*|--days=*         Number of days in each restart block.
-  -h=*|--hours=*        Number of hours in each restart block (only available for tests).
-  -m=*|--minutes=*      Number of minutes in each restart block (only available for tests).
+  -h=*|--hours=*        Number of hours in each restart block (used only for tests).
+  -m=*|--minutes=*      Number of minutes in each restart block (used only for tests).
   -f=*|--filename=*     File name for NetCDF data (default is data).
   -b=*|--basename=*     Override name for the experiment directory.
   -fw=*|--freqwrite=*   Time frequency with which NetCDF data is written.
@@ -205,7 +205,7 @@ cold=false
 locked=false
 conserve=true
 fopts=${force#*[0-9]}
-force=${force%${fopts}}
+force=${force%"$fopts"}
 unknown=${fopts}  # track unknown option
 [ -z "$force" ] && raise "Forcing spec must end with a number, indicating the boundary layer damping option."  # e.g. empty
 [[ "$fopts" =~ c ]] && unknown=${unknown/c/} locked=true cold=true savetdt=false
@@ -218,21 +218,7 @@ force=${force%[0-9]}
 
 # Storage and model path
 storage=$HOME
-scratch=$HOME  # on Euclid home is unmounted/not backed up so the disk I/O is quick
-case ${HOSTNAME%%.*} in
-  euclid)
-    storage=/birner-home/ldavis # this directory is backed up; synced with GAUSS home folder
-  ;; monde)
-    case $reso in
-      t42l20?) scratch=/mdata1/ldavis/${subname} ;;
-      t85l60?) scratch=/mdata4/ldavis/${subname} ;;
-      *) raise "Unknown scratch destination for resolution $reso." ;;
-    esac
-  ;; cheyenne*)
-    storage=/glade/u/home/davislu
-    scratch=/glade/scratch/davislu # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
-  ;; *) raise "Unknown host, must edit batch script before continuing." ;;
-esac
+scratch=$HOME/scratch/$subname  # symlink
 [ -d "$storage/data" ] || { mkdir "$storage/data"; echo "Created storage directory."; }
 
 # Function for setting up the namelist and diag table with custom changes

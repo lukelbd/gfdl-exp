@@ -18,10 +18,12 @@ root=(~/scratch*/timescales-exp)
 
 # Rename *files* before directories or we may be trying to change
 # non-existent paths!
+# shellcheck disable=2154
 for src in ${root[@]} ${data[@]} ${figures[@]}; do
   [ -d $src ] || continue
   echo "Source: $src"
-  find -L $src -mindepth 1 -maxdepth $maxdepth -type d -or -type f | while read -r name; do
+  find -L $src -mindepth 1 -maxdepth $maxdepth -type d -or -type f \
+    | while read -r name; do
     # Info
     dir=${name%/*}
     name=${name##*/}

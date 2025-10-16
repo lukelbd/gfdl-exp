@@ -5,7 +5,7 @@
 # Directory with sample data
 cwd=${0%/*}
 log=$cwd/benchmark_parallel.log
-dir=/mdata1/ldavis/hs1_base_t42l20s/netcdf
+dir=$HOME/scratch/timescales-exp/hs1_t42l20s/netcdf
 file=$dir/2xdaily_inst_full.d00500-d00600.nc
 script=$cwd/../pressure_spectra.py
 export TIMEFORMAT=$'real %0Rs user %0Us sys %0Ss (%P%%)'

@@ -77,7 +77,7 @@ newer() {
     echoerr "Running (${dest##*/} has zero-length time dim)."
     return 1  # re-process since destination is invalid (prevoius computation error)
   }
-  if $overwrite; then
+  if ${overwrite:-false}; then
     echoerr "Overwriting up-to-date file."
     return 1  # re-process since overwrite requested
   else

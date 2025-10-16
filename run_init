@@ -6,9 +6,9 @@ shopt -s nullglob
 cmd=$(pwd)/run
 
 # Iterate through *all* experiments!
-scratches=(/mdata2/ldavis /mdata1/ldavis)
-for scratch in "${scratches[@]}"; do
-  for dir in ${scratch}/{hs,pk,dbt}_*; do
+scratch=($HOME/scratch/timescales-exp/)
+for base in "${scratch[@]}"; do
+  for dir in ${base}/{hs,pk,dbt}_*; do
     if ! [ -r $dir/constants.nc ]; then
       echo "Experiment: ${dir##*/}"
 

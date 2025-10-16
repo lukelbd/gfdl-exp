@@ -4,19 +4,8 @@
 source ../header.sh
 time=true
 energy=false
-storage=($HOME/data/timescales*)
-case ${HOSTNAME%%.*} in
-  monde)
-    scratch=(/mdata1/ldavis /mdata2/ldavis)
-  ;;
-  cheyenne*)
-    scratch=(/glade/scratch/davislu) # https://www2.cisl.ucar.edu/resources/storage-and-file-systems/glade-file-spaces
-  ;;
-  *)
-    echo "Error: Unknown host, must edit batch script before continuing."
-    exit 1
-  ;;
-esac
+scratch=($HOME/scratch/timescales-exp/)
+storage=($HOME/data/timescales*/)
 
 # Fix time
 timefix() {

@@ -5,9 +5,9 @@
 shopt -s nullglob
 restart_save_interval=500  # interval by which restart files are saved
 full_res_minday=500
-full_rex_maxday=3500
+full_res_maxday=3500
 storage=~/data
-roots=(~/scratch1 ~/scratch2)  # then symlink to appropriate scratch
+roots=(~/scratch)  # then symlink to appropriate scratch
 dryrun=false
 datas=false  # remove unmatching data directories?
 spinup=false  # delete days that don't match?
@@ -19,7 +19,15 @@ restarts=true  # remove extra restart data?
 # Glob patterns
 # files=('*energy*d0500*' '*_energy.*')
 # files=('*series.nc')
-paths=('*global*p0[40]0[40].000p*' '*surface*p0[40]0[40].000p*' '*arctic*p0[40]0[40].000p*' '*tropical*p0[40]0[40].000p*' '*vortex*p0[40]0[40].000p*' '*katmos*tmean*p0[40]0[40].000p*' '*katmos*tgrad*p0[40]0[40].000p*')  # r and 40
+paths=(  # r and 40
+  '*global*p0[40]0[40].000p*'
+  '*surface*p0[40]0[40].000p*'
+  '*arctic*p0[40]0[40].000p*'
+  '*tropical*p0[40]0[40].000p*'
+  '*vortex*p0[40]0[40].000p*'
+  '*katmos*tmean*p0[40]0[40].000p*'
+  '*katmos*tgrad*p0[40]0[40].000p*'
+)
 paths=('*_katmos?-tgrad*0' '*_katmos?-tmean*0')  # non continuation
 paths=('*vortex*0' '*arctic*0' '*tropical*0' '*xco2*0' '*global*0')
 paths=('*2xdaily_inst_spectral.nc' '*2xdaily_inst_spectral_phase.nc')
@@ -106,7 +114,8 @@ if $datas; then
   for src in $storage/timescales*; do
     for data in $src/hs*; do
       # shellcheck disable=2076
-      if ! [[ " ${dir[*]} " =~ " ${data##*/} " ]] && ! [[ "${data##*/}" =~ 'katmos3' ]]; then
+      if ! [[ " ${dir[*]} " =~ " ${data##*/} " ]] \
+        && ! [[ "${data##*/}" =~ 'katmos3' ]]; then
         echo "rm -r ${data##*/}"
         $dryrun || rm -r "$data"
       fi
